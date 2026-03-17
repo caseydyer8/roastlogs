@@ -345,6 +345,8 @@ function App() {
   const [adjustments, setAdjustments] = React.useState([]);
 
   const [activeNumpad, setActiveNumpad] = React.useState(null); // 'heat', 'fan', or 'temp'
+  const [saveSuccess, setSaveSuccess] = React.useState(false);
+  const [selectedRoast, setSelectedRoast] = React.useState(null); // For history detail view
 
   const handleNumpadDigit = (digit) => {
     if (activeNumpad === "heat") {
@@ -395,6 +397,36 @@ function App() {
 
   const handleStop = () => {
     setIsTimerRunning(false);
+    
+    const newRoast = {
+      id: Date.now(),
+      date: new Date().toLocaleString(),
+      beanName: beanName || "Unnamed Bean",
+      greenWeight: greenWeightGrams,
+      targetLevel: targetRoastLevel,
+      milestones: [...milestones].reverse(), // Store in chronological order
+      adjustments: [...adjustments].reverse(), // Store in chronological order
+      duration: formatTime(elapsedSeconds),
+      totalSeconds: elapsedSeconds,
+    };
+
+    const existingRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+    localStorage.setItem("roasts", JSON.stringify([newRoast, ...existingRoasts]));
+
+    setSaveSuccess(true);
+    setTimeout(() => {
+      setSaveSuccess(false);
+      // Reset state
+      setBeanName("");
+      setGreenWeightGrams("");
+      setTargetRoastLevel(ROAST_LEVEL_OPTIONS[2]);
+      setElapsedSeconds(0);
+      setMilestones([]);
+      setHeat("");
+      setFan("");
+      setTemp("");
+      setAdjustments([]);
+    }, 2000);
   };
 
   const handleLogAdjustment = () => {
@@ -632,37 +664,132 @@ function App() {
             </section>
 
             {/* 5) STOP / END ROAST */}
-            <button
-              type="button"
-              onClick={handleStop}
-              className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-600/90"
-            >
-              STOP / END ROAST
-            </button>
+            <div className="space-y-3">
+              {saveSuccess && (
+                <div className="text-center text-sm font-bold text-green-500 animate-bounce">
+                  Roast Saved!
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleStop}
+                className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-600/90"
+              >
+                STOP / END ROAST
+              </button>
+            </div>
           </div>
         )}
 
         {activeTab === "History" && (
           <div className="space-y-4">
-            <ScreenCard title="Your recent roasts" subtitle="History">
-              Placeholder list screen. This is where past roasts will appear with searchable
-              details.
-            </ScreenCard>
-            <div className="space-y-3">
-              {["Ethiopia • 10:32", "Colombia • 11:05", "Blend • 09:58"].map((item) => (
+            {!selectedRoast ? (
+              <>
+                <ScreenCard title="Your recent roasts" subtitle="History">
+                  Review your past roast sessions and profiles.
+                </ScreenCard>
+                <div className="space-y-3">
+                  {(() => {
+                    const savedRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+                    if (savedRoasts.length === 0) {
+                      return (
+                        <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
+                          <div className="text-zinc-500 text-sm">
+                            No roasts logged yet. Start your first roast!
+                          </div>
+                        </div>
+                      );
+                    }
+                    return savedRoasts.map((roast) => (
+                      <button
+                        key={roast.id}
+                        type="button"
+                        onClick={() => setSelectedRoast(roast)}
+                        className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="text-sm font-bold text-zinc-100">{roast.beanName}</div>
+                            <div className="mt-0.5 text-[11px] text-zinc-500">{roast.date}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono text-sm font-semibold text-amber-400">
+                              {roast.duration}
+                            </div>
+                            <div className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
+                              {roast.targetLevel.split(" ")[0]}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    ));
+                  })()}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4 pb-10">
                 <button
-                  key={item}
-                  type="button"
-                  className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35"
+                  onClick={() => setSelectedRoast(null)}
+                  className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-zinc-100">{item}</div>
-                    <div className="text-xs text-amber-300">View</div>
-                  </div>
-                  <div className="mt-1 text-xs text-zinc-400">Tap to open details (placeholder)</div>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  BACK TO HISTORY
                 </button>
-              ))}
-            </div>
+
+                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedRoast.date}</div>
+                  <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-50">{selectedRoast.beanName}</div>
+                  <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Weight</div>
+                      <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
+                      <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
+                      <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
+                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Phase Timeline</div>
+                  <div className="mt-4 space-y-3">
+                    {selectedRoast.milestones.map((m, i) => (
+                      <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
+                        <div className="text-sm font-semibold text-zinc-200">{m.label}</div>
+                        <div className="font-mono text-xs text-amber-300/80">{formatTime(m.t)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
+                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Adjustment Log</div>
+                  <div className="mt-4 space-y-3">
+                    {selectedRoast.adjustments.length === 0 ? (
+                      <div className="text-xs text-zinc-500">No adjustments logged.</div>
+                    ) : (
+                      selectedRoast.adjustments.map((a, i) => (
+                        <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
+                          <div className="font-mono text-xs text-amber-300/80">{formatTime(a.t)}</div>
+                          <div className="text-[11px] text-zinc-400">
+                            H:<span className="text-zinc-100 ml-0.5">{a.heat || "—"}</span>
+                            <span className="mx-1.5">·</span>
+                            F:<span className="text-zinc-100 ml-0.5">{a.fan || "—"}</span>
+                            <span className="mx-1.5">·</span>
+                            T:<span className="text-zinc-100 ml-0.5">{a.temp || "—"}°</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </div>
+            )}
           </div>
         )}
 
