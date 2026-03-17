@@ -259,6 +259,81 @@ function PrimaryButton({ children, onClick }) {
 function App() {
   const [activeTab, setActiveTab] = React.useState("Roast");
 
+  const ROAST_LEVEL_OPTIONS = [
+    "Cinnamon (Light+)",
+    "City (Light)",
+    "City+ (Light-Medium)",
+    "Full City (Medium)",
+    "Full City+ (Medium-Dark)",
+    "Vienna (Dark)",
+    "French (Very Dark)",
+    "Italian (Darkest)",
+  ];
+
+  const formatTime = (totalSeconds) => {
+    const s = Math.max(0, Math.floor(totalSeconds));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  // Live roast session state (Roast tab only)
+  const [beanName, setBeanName] = React.useState("");
+  const [greenWeightGrams, setGreenWeightGrams] = React.useState("");
+  const [targetRoastLevel, setTargetRoastLevel] = React.useState(ROAST_LEVEL_OPTIONS[2]);
+
+  const [isTimerRunning, setIsTimerRunning] = React.useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
+
+  const [milestones, setMilestones] = React.useState([]);
+
+  const [heat, setHeat] = React.useState("");
+  const [fan, setFan] = React.useState("");
+  const [temp, setTemp] = React.useState("");
+  const [adjustments, setAdjustments] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!isTimerRunning) return undefined;
+    const id = window.setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isTimerRunning]);
+
+  const logMilestone = (label) => {
+    setMilestones((prev) => [{ label, t: elapsedSeconds }, ...prev]);
+  };
+
+  const handleStart = () => {
+    if (!isTimerRunning && elapsedSeconds === 0) {
+      setIsTimerRunning(true);
+      logMilestone("START");
+      return;
+    }
+
+    if (!isTimerRunning && elapsedSeconds > 0) {
+      setIsTimerRunning(true);
+      logMilestone("START (RESUME)");
+      return;
+    }
+
+    logMilestone("START");
+  };
+
+  const handleStop = () => {
+    setIsTimerRunning(false);
+  };
+
+  const handleLogAdjustment = () => {
+    setAdjustments((prev) => [
+      { t: elapsedSeconds, heat, fan, temp },
+      ...prev,
+    ]);
+    setHeat("");
+    setFan("");
+    setTemp("");
+  };
+
   let ActiveIcon = null;
   if (activeTab === "Roast") ActiveIcon = RoasterIcon;
   else if (activeTab === "History") ActiveIcon = ClockIcon;
@@ -280,32 +355,213 @@ function App() {
       <main className="mx-auto max-w-md px-4 pb-28 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            <ScreenCard title="Ready to roast" subtitle="Roast">
-              Start a new roast session and log time/temperature/events. This is a placeholder
-              screen for now, but the layout and navigation are final-form.
-              <div className="mt-5 flex items-center gap-3">
-                <PrimaryButton onClick={() => {}}>Start Roast</PrimaryButton>
+            {/* 1) SESSION HEADER */}
+            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
+              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                Session
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3">
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Bean Name</div>
+                  <input
+                    value={beanName}
+                    onChange={(e) => setBeanName(e.target.value)}
+                    type="text"
+                    placeholder="e.g., Ethiopia Yirgacheffe"
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
+
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Green Weight (g)</div>
+                  <input
+                    value={greenWeightGrams}
+                    onChange={(e) => setGreenWeightGrams(e.target.value)}
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    placeholder="e.g., 250"
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
+
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Target Roast Level</div>
+                  <select
+                    value={targetRoastLevel}
+                    onChange={(e) => setTargetRoastLevel(e.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  >
+                    {ROAST_LEVEL_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            {/* 2) LARGE TIMER */}
+            <section className="rounded-3xl border border-zinc-800/60 bg-gradient-to-b from-zinc-900/35 to-zinc-900/10 p-5 text-center">
+              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                Live Timer
+              </div>
+              <div className="mt-3 font-mono text-6xl font-semibold tracking-tight text-amber-400">
+                {formatTime(elapsedSeconds)}
+              </div>
+              <div className="mt-2 text-xs text-zinc-500">
+                {isTimerRunning ? "Running" : "Paused"}
+              </div>
+            </section>
+
+            {/* 3) PHASE MILESTONES */}
+            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                Phase Milestones
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  className="rounded-2xl border border-zinc-800/70 bg-zinc-900/40 px-4 py-2.5 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/70"
+                  onClick={handleStart}
+                  className="col-span-2 rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
                 >
-                  Quick Log
+                  START
+                </button>
+                {[
+                  "DRYING END",
+                  "MAILLARD END",
+                  "FIRST CRACK",
+                  "COOLING START",
+                ].map((label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => logMilestone(label)}
+                    className="rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Milestone log */}
+              <div className="mt-4 max-h-36 overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
+                {milestones.length === 0 ? (
+                  <div className="px-4 py-3 text-xs text-zinc-500">
+                    Milestones will appear here as you tap them.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-zinc-800/60">
+                    {milestones.map((m, idx) => (
+                      <li key={`${m.label}-${m.t}-${idx}`} className="px-4 py-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold text-zinc-100">{m.label}</div>
+                          <div className="font-mono text-sm text-amber-300">
+                            {formatTime(m.t)}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+
+            {/* 4) ADJUSTMENT LOGGER */}
+            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                Adjustment Logger
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Heat (1–9)</div>
+                  <input
+                    value={heat}
+                    onChange={(e) => setHeat(e.target.value)}
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="9"
+                    placeholder="7"
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Fan (1–9)</div>
+                  <input
+                    value={fan}
+                    onChange={(e) => setFan(e.target.value)}
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="9"
+                    placeholder="8"
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
+                <label className="block">
+                  <div className="text-xs font-medium text-zinc-300">Temp</div>
+                  <input
+                    value={temp}
+                    onChange={(e) => setTemp(e.target.value)}
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="°F"
+                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleLogAdjustment}
+                  className="w-full rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                >
+                  LOG
                 </button>
               </div>
-            </ScreenCard>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
-                <div className="text-xs font-medium text-zinc-400">Target</div>
-                <div className="mt-2 text-lg font-semibold text-zinc-50">City+</div>
-                <div className="mt-1 text-xs text-zinc-400">Example profile</div>
+              <div className="mt-4 max-h-56 overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
+                {adjustments.length === 0 ? (
+                  <div className="px-4 py-3 text-xs text-zinc-500">
+                    Logged adjustments will appear here.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-zinc-800/60">
+                    {adjustments.map((a, idx) => (
+                      <li key={`${a.t}-${idx}`} className="px-4 py-3">
+                        <div className="flex items-center justify-between">
+                          <div className="font-mono text-sm text-amber-300">
+                            {formatTime(a.t)}
+                          </div>
+                          <div className="text-xs text-zinc-400">
+                            Heat{" "}
+                            <span className="font-semibold text-zinc-100">{a.heat || "—"}</span>
+                            {" · "}Fan{" "}
+                            <span className="font-semibold text-zinc-100">{a.fan || "—"}</span>
+                            {" · "}Temp{" "}
+                            <span className="font-semibold text-zinc-100">{a.temp || "—"}</span>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-              <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
-                <div className="text-xs font-medium text-zinc-400">Batch</div>
-                <div className="mt-2 text-lg font-semibold text-zinc-50">250g</div>
-                <div className="mt-1 text-xs text-zinc-400">Example amount</div>
-              </div>
-            </div>
+            </section>
+
+            {/* 5) STOP / END ROAST */}
+            <button
+              type="button"
+              onClick={handleStop}
+              className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-600/90"
+            >
+              STOP / END ROAST
+            </button>
           </div>
         )}
 
