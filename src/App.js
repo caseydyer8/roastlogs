@@ -234,6 +234,58 @@ function TabButton({ label, active, onClick }) {
   );
 }
 
+function NumberPad({ value, onDigit, onDelete, onDone, label }) {
+  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/80 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-200 sm:rounded-3xl sm:border sm:border-zinc-800/60 sm:bg-zinc-900 sm:p-6">
+        <div className="bg-zinc-900 p-6 pb-10 sm:p-0">
+          <div className="mb-6 text-center">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{label}</div>
+            <div className="mt-2 text-4xl font-bold tracking-tight text-amber-400">
+              {value || "—"}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {digits.map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => onDigit(String(d))}
+                className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-2xl font-semibold text-zinc-100 transition active:bg-zinc-700 active:scale-95"
+              >
+                {d}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={onDelete}
+              className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-xl font-semibold text-zinc-400 transition active:bg-zinc-700 active:scale-95"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-backspace"><path d="M9 19c-5 0-7-3-7-3s2-3 7-3h11a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H9Z"/><path d="m12 15 4 4"/><path d="m16 15-4 4"/></svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => onDigit("0")}
+              className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-2xl font-semibold text-zinc-100 transition active:bg-zinc-700 active:scale-95"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              onClick={onDone}
+              className="flex h-16 items-center justify-center rounded-2xl bg-amber-500 text-lg font-bold text-zinc-950 transition active:bg-amber-400 active:scale-95"
+            >
+              DONE
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScreenCard({ title, subtitle, children }) {
   return (
     <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
@@ -291,6 +343,27 @@ function App() {
   const [fan, setFan] = React.useState("");
   const [temp, setTemp] = React.useState("");
   const [adjustments, setAdjustments] = React.useState([]);
+
+  const [activeNumpad, setActiveNumpad] = React.useState(null); // 'heat', 'fan', or 'temp'
+
+  const handleNumpadDigit = (digit) => {
+    if (activeNumpad === "heat") {
+      setHeat(digit); // Max 9, so just replace
+    } else if (activeNumpad === "fan") {
+      setFan(digit); // Max 9, so just replace
+    } else if (activeNumpad === "temp") {
+      setTemp((prev) => {
+        const next = prev + digit;
+        return next.length <= 4 ? next : prev;
+      });
+    }
+  };
+
+  const handleNumpadDelete = () => {
+    if (activeNumpad === "heat") setHeat("");
+    else if (activeNumpad === "fan") setFan("");
+    else if (activeNumpad === "temp") setTemp((prev) => prev.slice(0, -1));
+  };
 
   React.useEffect(() => {
     if (!isTimerRunning) return undefined;
@@ -476,43 +549,47 @@ function App() {
               </div>
 
               <div className="mt-3 grid grid-cols-3 gap-3">
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Heat (1–9)</div>
-                  <input
-                    value={heat}
-                    onChange={(e) => setHeat(e.target.value)}
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="9"
-                    placeholder="7"
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  />
-                </label>
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Fan (1–9)</div>
-                  <input
-                    value={fan}
-                    onChange={(e) => setFan(e.target.value)}
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="9"
-                    placeholder="8"
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  />
-                </label>
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Temp</div>
-                  <input
-                    value={temp}
-                    onChange={(e) => setTemp(e.target.value)}
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="°F"
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  />
-                </label>
+                <button
+                  type="button"
+                  onClick={() => setActiveNumpad("heat")}
+                  className={[
+                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
+                    activeNumpad === "heat" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
+                  ].join(" ")}
+                >
+                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
+                    Heat 1-9
+                  </div>
+                  <div className="mt-1 text-2xl font-bold text-zinc-50">{heat || "—"}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveNumpad("fan")}
+                  className={[
+                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
+                    activeNumpad === "fan" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
+                  ].join(" ")}
+                >
+                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
+                    Fan 1-9
+                  </div>
+                  <div className="mt-1 text-2xl font-bold text-zinc-50">{fan || "—"}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveNumpad("temp")}
+                  className={[
+                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
+                    activeNumpad === "temp" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
+                  ].join(" ")}
+                >
+                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
+                    Temp °F
+                  </div>
+                  <div className="mt-1 text-2xl font-bold text-zinc-50">{temp || "—"}</div>
+                </button>
               </div>
 
               <div className="mt-3 flex items-center justify-end">
@@ -639,6 +716,18 @@ function App() {
           </div>
         </div>
       </nav>
+
+      {activeNumpad && (
+        <NumberPad
+          value={activeNumpad === "heat" ? heat : activeNumpad === "fan" ? fan : temp}
+          label={
+            activeNumpad === "heat" ? "Heat 1-9" : activeNumpad === "fan" ? "Fan 1-9" : "Temp °F"
+          }
+          onDigit={handleNumpadDigit}
+          onDelete={handleNumpadDelete}
+          onDone={() => setActiveNumpad(null)}
+        />
+      )}
     </div>
   );
 }
