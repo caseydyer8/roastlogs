@@ -37,4 +37,9 @@
 ---
 
 ## ✅ Resolved
+- Live Roast Screen built with timer, phase buttons, and adjustment logger — completed March 16 2026
+- Number pad modal added to Heat, Fan, Temp inputs — completed March 16 2026
+- localStorage persistence added for roast sessions — completed March 16 2026
+- History tab built with roast cards and detail view — completed March 16 2026
+- GitHub Pages deployment configured — completed March 16 2026
 - Tailwind CSS gray screen — fixed March 15 2026
