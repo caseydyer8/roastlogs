@@ -347,6 +347,138 @@ function PrimaryButton({ children, onClick }) {
   );
 }
 
+function ProfileBuilder({ bean, onSave, onCancel }) {
+  const [profile, setProfile] = React.useState({ name: "", steps: [], isDefault: false });
+
+  const formatMMSS = (totalSeconds) => {
+    const s = Math.max(0, Math.floor(totalSeconds));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  const parseMMSS = (timeStr) => {
+    if (!timeStr || !timeStr.includes(':')) return 0;
+    const parts = timeStr.split(':');
+    if (parts.length !== 2) return 0;
+    const mm = parseInt(parts[0], 10) || 0;
+    const ss = parseInt(parts[1], 10) || 0;
+    return (mm * 60) + ss;
+  };
+
+  const addStep = () => {
+    setProfile(prev => ({
+      ...prev,
+      steps: [...prev.steps, { totalSeconds: 0, heat: "5", fan: "5" }].sort((a, b) => a.totalSeconds - b.totalSeconds)
+    }));
+  };
+
+  const updateStep = (idx, field, value) => {
+    const newSteps = [...profile.steps];
+    if (field === 'time') {
+      // Temporary string storage for the input field to allow typing
+      newSteps[idx] = { ...newSteps[idx], displayTime: value, totalSeconds: parseMMSS(value) };
+    } else {
+      newSteps[idx] = { ...newSteps[idx], [field]: value };
+    }
+    setProfile(prev => ({ ...prev, steps: newSteps }));
+  };
+
+  const handleSave = () => {
+    // Sort steps by totalSeconds before saving
+    const finalProfile = {
+      ...profile,
+      steps: [...profile.steps]
+        .map(step => ({
+          time: formatMMSS(step.totalSeconds),
+          totalSeconds: step.totalSeconds,
+          heat: step.heat,
+          fan: step.fan
+        }))
+        .sort((a, b) => a.totalSeconds - b.totalSeconds)
+    };
+    onSave(finalProfile);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+        <h3 className="text-xl font-bold text-white mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
+        <input 
+          placeholder="Profile Name (e.g. Light Roast)"
+          value={profile.name}
+          onChange={e => setProfile({...profile, name: e.target.value})}
+          className="w-full rounded-xl bg-zinc-950/40 border border-zinc-800 px-4 py-3 mb-4 text-sm text-zinc-100"
+        />
+        <div className="space-y-3 mb-6">
+          {profile.steps.map((step, idx) => (
+            <div key={idx} className="flex gap-2 items-center bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
+              <input 
+                type="text" 
+                value={step.displayTime !== undefined ? step.displayTime : formatMMSS(step.totalSeconds)} 
+                placeholder="MM:SS"
+                onChange={e => updateStep(idx, 'time', e.target.value)}
+                onBlur={() => {
+                  // Clean up displayTime on blur to snap to formatted MM:SS
+                  const newSteps = [...profile.steps];
+                  newSteps[idx] = { ...newSteps[idx], displayTime: undefined };
+                  setProfile(prev => ({ ...prev, steps: newSteps }));
+                }}
+                className="w-20 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center font-mono text-xs text-zinc-100"
+              />
+              <div className="flex-1 grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
+                  <input type="number" min="1" max="9" value={step.heat} onChange={e => updateStep(idx, 'heat', e.target.value)} className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
+                  <input type="number" min="1" max="9" value={step.fan} onChange={e => updateStep(idx, 'fan', e.target.value)} className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100" />
+                </div>
+              </div>
+              <button onClick={() => setProfile({...profile, steps: profile.steps.filter((_, i) => i !== idx)})} className="text-red-500 p-2 text-xl">×</button>
+            </div>
+          ))}
+          <button onClick={addStep} className="w-full py-3 rounded-2xl border-2 border-dashed border-zinc-800 text-zinc-500 text-xs font-bold hover:border-zinc-700 hover:text-zinc-400">+ ADD STEP</button>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold">CANCEL</button>
+          <button onClick={handleSave} className="flex-1 py-3 rounded-2xl bg-amber-500 text-zinc-950 font-bold">SAVE PROFILE</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
+        <h3 className="text-xl font-bold text-white mb-6 text-center">Start Roast</h3>
+        <div className="space-y-3">
+          {profiles.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">Follow a saved profile</div>
+              {profiles.map(p => (
+                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
+                  <div className="font-bold text-zinc-100">{p.name}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="pt-2">
+            <button onClick={onSelectManual} className="w-full p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold hover:bg-amber-500/20 transition">
+              MANUAL ROAST
+            </button>
+          </div>
+          <button onClick={onCancel} className="w-full py-3 text-zinc-500 text-xs font-bold uppercase tracking-widest">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = React.useState("Roast");
 
@@ -388,12 +520,25 @@ function App() {
 
   const [roastLog, setRoastLog] = React.useState(() => JSON.parse(localStorage.getItem("live_roastLog") || "[]"));
 
+  const [adjustments, setAdjustments] = React.useState(() => JSON.parse(localStorage.getItem("live_adjustments") || "[]"));
+
+  const [activeProfile, setActiveProfile] = React.useState(null);
+  const [nextProfileStep, setNextProfileStep] = React.useState(null);
+  const [profileBuilder, setProfileBuilder] = React.useState({ name: "", steps: [], isDefault: false });
+  const [isProfileBuilderOpen, setIsProfileBuilderOpen] = React.useState(false);
+  const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
+
   const [heat, setHeat] = React.useState("");
   const [fan, setFan] = React.useState("");
   const [temp, setTemp] = React.useState("");
   const [isAdjPopupOpen, setIsAdjPopupOpen] = React.useState(false);
   const [adjPopupTimestamp, setAdjPopupTimestamp] = React.useState(null);
   const [activeNumpad, setActiveNumpad] = React.useState(null); // 'heat', 'fan', or 'temp'
+  
+  // Roast Profile Logic
+  const [profileFollowing, setProfileFollowing] = React.useState(null);
+  const [currentProfileStepIdx, setCurrentProfileStepIdx] = React.useState(-1);
+  const [profiles, setProfiles] = React.useState(() => JSON.parse(localStorage.getItem("global_profiles") || "[]"));
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   const [selectedRoast, setSelectedRoast] = React.useState(null); // For history detail view
 
@@ -418,6 +563,15 @@ function App() {
   const [showTastingHistory, setShowTastingHistory] = React.useState(false);
   const [historySegment, setHistorySegment] = React.useState("ROASTS");
   const [historySearch, setHistorySearch] = React.useState("");
+  const [isEditingRoast, setIsEditingRoast] = React.useState(false);
+  const [editedRoast, setEditedRoast] = React.useState(null);
+  const [hasChanges, setHasChanges] = React.useState(false);
+
+  const startEditing = (roast) => {
+    setEditedRoast(JSON.parse(JSON.stringify(roast))); // Deep clone
+    setHasChanges(false);
+    setIsEditingRoast(true);
+  };
   
   // Beans tab state
   const [beansView, setBeansView] = React.useState("list"); // 'list', 'addBean', 'beanDetail', 'roastDetail', 'tastingDetail'
@@ -479,6 +633,18 @@ function App() {
     localStorage.setItem("live_roastLog", JSON.stringify(roastLog));
   }, [roastLog]);
 
+  React.useEffect(() => {
+    localStorage.setItem("global_profiles", JSON.stringify(profiles));
+  }, [profiles]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_profileFollowing", JSON.stringify(profileFollowing));
+  }, [profileFollowing]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_currentProfileStepIdx", currentProfileStepIdx);
+  }, [currentProfileStepIdx]);
+
   const clearLiveSession = () => {
     const keys = [
       "live_beanName",
@@ -491,7 +657,9 @@ function App() {
       "live_devSeconds",
       "live_firstCrackTime",
       "live_coolingStartTime",
-      "live_roastLog"
+      "live_roastLog",
+      "live_profileFollowing",
+      "live_currentProfileStepIdx"
     ];
     keys.forEach(k => localStorage.removeItem(k));
     
@@ -507,6 +675,9 @@ function App() {
     setCoolingStartTime(null);
     setIsDevTimerRunning(false);
     setRoastLog([]);
+    setProfileFollowing(null);
+    setCurrentProfileStepIdx(-1);
+    setNextProfileStep(null);
     setHeat("");
     setFan("");
     setTemp("");
@@ -540,6 +711,45 @@ function App() {
   }, [isTimerRunning]);
 
   React.useEffect(() => {
+    if (!isTimerRunning || !profileFollowing) return;
+
+    const checkProfileStep = () => {
+      const nextIdx = currentProfileStepIdx + 1;
+      if (nextIdx >= profileFollowing.steps.length) return;
+
+      const nextStep = profileFollowing.steps[nextIdx];
+      const nextStepSeconds = nextStep.totalSeconds !== undefined ? nextStep.totalSeconds : parseMMSS(nextStep.time);
+
+      // Flash logic: last 5 seconds
+      if (elapsedSeconds >= nextStepSeconds - 5 && elapsedSeconds < nextStepSeconds) {
+        setNextProfileStep(nextStep);
+      } else {
+        setNextProfileStep(null);
+      }
+
+      // Trigger logic: exact moment
+      if (elapsedSeconds === nextStepSeconds) {
+        // Auto-log if not manually logged for this timestamp
+        const alreadyLogged = roastLog.some(entry => entry.t === elapsedSeconds && entry.type === 'adjustment');
+        if (!alreadyLogged) {
+          setRoastLog((prev) => [
+            { type: 'adjustment', t: elapsedSeconds, heat: nextStep.heat, fan: nextStep.fan, temp: "", label: "Profile" },
+            ...prev,
+          ]);
+        }
+        setCurrentProfileStepIdx(nextIdx);
+      }
+    };
+
+    checkProfileStep();
+  }, [elapsedSeconds, isTimerRunning, profileFollowing, currentProfileStepIdx, roastLog]);
+
+  const parseMMSS = (timeStr) => {
+    const [mm, ss] = timeStr.split(':').map(Number);
+    return (mm * 60) + ss;
+  };
+
+  React.useEffect(() => {
     if (!isDevTimerRunning || !isTimerRunning) return undefined;
     const id = window.setInterval(() => {
       setDevSeconds((s) => s + 1);
@@ -561,11 +771,27 @@ function App() {
   };
 
   const handleStart = () => {
-    if (isTimerRunning) return; // Already running
+    if (isTimerRunning) return;
+    
+    // Find profiles for the current bean
+    const beanProfiles = profiles.filter(p => p.beanName === beanName);
+    if (beanProfiles.length > 0 || profiles.some(p => !p.beanName)) {
+      setShowRoastModeDialog(true);
+    } else {
+      startRoast(null);
+    }
+  };
 
+  const startRoast = (profile) => {
+    setShowRoastModeDialog(false);
+    setIsTimerRunning(true);
+    
     if (elapsedSeconds === 0) {
-      setIsTimerRunning(true);
-      // Log starting settings as the first entry
+      if (profile) {
+        setProfileFollowing(profile);
+        setCurrentProfileStepIdx(-1);
+      }
+      // Log starting settings
       setRoastLog([{ 
         type: 'start_settings', 
         t: 0, 
@@ -574,11 +800,9 @@ function App() {
         temp: startingTemp,
         label: "Start"
       }]);
-      return;
+    } else {
+      setRoastLog((prev) => [{ type: 'phase', label: "START (RESUME)", t: elapsedSeconds }, ...prev]);
     }
-
-    setIsTimerRunning(true);
-    setRoastLog((prev) => [{ type: 'phase', label: "START (RESUME)", t: elapsedSeconds }, ...prev]);
   };
 
   const handleStop = () => {
@@ -595,6 +819,7 @@ function App() {
       duration: formatTime(elapsedSeconds),
       totalSeconds: elapsedSeconds,
       devSeconds: devSeconds,
+      profile: profileFollowing,
       startingSettings: {
         heat: startingHeat,
         fan: startingFan,
@@ -621,6 +846,26 @@ function App() {
     setFan("");
     setTemp("");
     setAdjPopupTimestamp(null);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editedRoast) return;
+    const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+    const updated = roasts.map(r => r.id === editedRoast.id ? editedRoast : r);
+    localStorage.setItem("roasts", JSON.stringify(updated));
+    setSelectedRoast(editedRoast);
+    setHasChanges(false);
+  };
+
+  const updateEditedRoast = (field, value) => {
+    setEditedRoast(prev => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+  };
+
+  const updateLogEntry = (idx, field, value) => {
+    const newLog = [...editedRoast.roastLog];
+    newLog[idx] = { ...newLog[idx], [field]: value };
+    updateEditedRoast('roastLog', newLog);
   };
 
   const handleDeleteRoast = (id) => {
@@ -833,9 +1078,50 @@ function App() {
 
             {/* 3) PHASE MILESTONES */}
             <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
-              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Phase Milestones
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                  Phase Milestones
+                </div>
+                {elapsedSeconds === 0 && !isTimerRunning && (
+                  <button
+                    onClick={() => setIsProfileBuilderOpen(true)}
+                    className="rounded-lg bg-zinc-800 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-200 transition"
+                  >
+                    BUILD PROFILE
+                  </button>
+                )}
               </div>
+              
+              {profileFollowing && (
+                <div className="mt-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10">
+                  <div className="text-[10px] font-bold text-amber-500/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing.name}</div>
+                  <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    {profileFollowing.steps.map((step, idx) => {
+                      const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
+                      const isPast = elapsedSeconds > stepSeconds;
+                      const isCurrent = currentProfileStepIdx === idx || (elapsedSeconds === stepSeconds);
+                      const isNext = idx === currentProfileStepIdx + 1;
+                      const isFlashing = isNext && nextProfileStep;
+                      
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`flex-shrink-0 px-3 py-2 rounded-xl border transition-all duration-500 ${
+                            isCurrent ? "bg-amber-500 border-amber-600 text-zinc-950 scale-105 shadow-lg shadow-amber-500/20" : 
+                            isFlashing ? "bg-amber-500/40 border-amber-500 animate-pulse text-amber-100" :
+                            isPast ? "bg-zinc-800/30 border-zinc-800/50 text-zinc-600" :
+                            "bg-zinc-900/50 border-zinc-800/50 text-zinc-400"
+                          }`}
+                        >
+                          <div className="text-[10px] font-mono font-bold">{step.time}</div>
+                          <div className="text-xs font-black">H{step.heat} F{step.fan}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -866,6 +1152,29 @@ function App() {
                 </button>
               </div>
             </section>
+
+            {/* Profile Builder & Dialogs */}
+            {isProfileBuilderOpen && (
+              <ProfileBuilder 
+                bean={selectedBean} 
+                onCancel={() => setIsProfileBuilderOpen(false)}
+                onSave={(newProfile) => {
+                  const p = { ...newProfile, id: Date.now(), beanName: beanName };
+                  setProfiles(prev => [...prev, p]);
+                  setIsProfileBuilderOpen(false);
+                }}
+              />
+            )}
+
+            {showRoastModeDialog && (
+              <RoastModeDialog 
+                bean={selectedBean}
+                profiles={profiles.filter(p => !p.beanName || p.beanName === beanName)}
+                onCancel={() => setShowRoastModeDialog(false)}
+                onSelectManual={() => startRoast(null)}
+                onSelectProfile={(p) => startRoast(p)}
+              />
+            )}
 
             {/* 4) UNIFIED ROAST TIMELINE */}
             <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
@@ -1577,60 +1886,237 @@ function App() {
                     BACK TO HISTORY
                   </button>
 
+                  <div className="flex items-center justify-between">
+                    <div className="flex gap-2">
+                      {!isEditingRoast ? (
+                        <button
+                          onClick={() => startEditing(selectedRoast)}
+                          className="rounded-xl bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-700 transition"
+                        >
+                          EDIT ROAST
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setIsEditingRoast(false);
+                            setEditedRoast(null);
+                            setHasChanges(false);
+                          }}
+                          className="rounded-xl bg-red-900/20 px-4 py-2 text-xs font-bold text-red-400 hover:bg-red-900/30 transition"
+                        >
+                          CANCEL EDIT
+                        </button>
+                      )}
+                    </div>
+                    {hasChanges && (
+                      <button
+                        onClick={handleSaveEdit}
+                        className="rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-600/20 animate-pulse hover:bg-green-500 transition"
+                      >
+                        SAVE CHANGES
+                      </button>
+                    )}
+                  </div>
+
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
-                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedRoast.date}</div>
-                    <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-50">{selectedRoast.beanName}</div>
+                    {!isEditingRoast ? (
+                      <>
+                        <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedRoast.date}</div>
+                        <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-50">{selectedRoast.beanName}</div>
+                      </>
+                    ) : (
+                      <div className="space-y-3">
+                        <label className="block">
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Date/Time</div>
+                          <input 
+                            type="text" 
+                            value={editedRoast.date} 
+                            onChange={(e) => updateEditedRoast('date', e.target.value)}
+                            className="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-zinc-100"
+                          />
+                        </label>
+                        <label className="block">
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Bean Name</div>
+                          <input 
+                            type="text" 
+                            value={editedRoast.beanName} 
+                            onChange={(e) => updateEditedRoast('beanName', e.target.value)}
+                            className="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-zinc-100"
+                          />
+                        </label>
+                      </div>
+                    )}
                     <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
                       <div>
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Weight</div>
-                        <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
+                        {!isEditingRoast ? (
+                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input 
+                              type="number" 
+                              value={editedRoast.greenWeight} 
+                              onChange={(e) => updateEditedRoast('greenWeight', e.target.value)}
+                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-zinc-100"
+                            />
+                            <span className="text-sm text-zinc-500">g</span>
+                          </div>
+                        )}
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
-                        <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
+                        {!isEditingRoast ? (
+                          <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
+                        ) : (
+                          <input 
+                            type="text" 
+                            value={editedRoast.duration} 
+                            onChange={(e) => updateEditedRoast('duration', e.target.value)}
+                            className="w-24 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-amber-400"
+                          />
+                        )}
                       </div>
                       <div className="col-span-2">
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
-                        <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
+                        {!isEditingRoast ? (
+                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
+                        ) : (
+                          <select
+                            value={editedRoast.targetLevel}
+                            onChange={(e) => updateEditedRoast('targetLevel', e.target.value)}
+                            className="mt-1 w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100"
+                          >
+                            {ROAST_LEVEL_OPTIONS.map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
-                      {selectedRoast.devSeconds !== undefined && (
-                        <div className="col-span-2 border-t border-zinc-800/50 pt-4">
-                          <div className="text-[10px] uppercase tracking-widest text-red-500">Development Time</div>
+                      <div className="col-span-2 border-t border-zinc-800/50 pt-4">
+                        <div className="text-[10px] uppercase tracking-widest text-red-500">Development Time</div>
+                        {!isEditingRoast ? (
                           <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
-                        </div>
-                      )}
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input 
+                              type="number" 
+                              value={editedRoast.devSeconds} 
+                              onChange={(e) => updateEditedRoast('devSeconds', e.target.value)}
+                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-red-400"
+                            />
+                            <span className="text-sm text-red-500/60">s</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </section>
+
+                  {selectedRoast.profile && (
+                    <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
+                      <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-4">Profile vs Actual</div>
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-2">
+                          <div>Planned</div>
+                          <div>Actual Adjustment</div>
+                        </div>
+                        {selectedRoast.profile.steps.map((step, idx) => {
+                          const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
+                          const actual = selectedRoast.roastLog.find(e => e.t === stepSeconds && e.type === 'adjustment');
+                          
+                          return (
+                            <div key={idx} className="grid grid-cols-2 gap-2">
+                              <div className="bg-zinc-950/30 border border-zinc-800/50 rounded-xl p-2">
+                                <div className="text-[10px] font-mono text-zinc-500">{step.time}</div>
+                                <div className="text-xs font-bold text-zinc-300">H{step.heat} F{step.fan}</div>
+                              </div>
+                              <div className={`rounded-xl p-2 border ${actual ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/5 border-red-500/10 opacity-50"}`}>
+                                {actual ? (
+                                  <>
+                                    <div className="text-[10px] font-mono text-amber-500/60">{formatTime(actual.t)}</div>
+                                    <div className="text-xs font-bold text-amber-400">H{actual.heat} F{actual.fan}</div>
+                                  </>
+                                ) : (
+                                  <div className="text-[10px] italic text-red-400/60 mt-1">Missed</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
 
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
                     <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Roast Timeline</div>
                     <div className="mt-4 space-y-3">
-                      {!selectedRoast.roastLog || selectedRoast.roastLog.length === 0 ? (
+                      {!(!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog) || (!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog).length === 0 ? (
                         <div className="text-xs text-zinc-500">No events logged.</div>
                       ) : (
-                        selectedRoast.roastLog.map((entry, i) => (
+                        (!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog).map((entry, i) => (
                           <div key={i} className="border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
                             {entry.type === 'phase' ? (
                               <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
-                                <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
-                                  {entry.label}
-                                </div>
-                                <div className="font-mono text-sm font-semibold text-amber-300">
-                                  {formatTime(entry.t)}
-                                </div>
+                                {!isEditingRoast ? (
+                                  <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
+                                    {entry.label}
+                                  </div>
+                                ) : (
+                                  <input 
+                                    type="text" 
+                                    value={entry.label} 
+                                    onChange={(e) => updateLogEntry(i, 'label', e.target.value)}
+                                    className="bg-transparent border-none p-0 text-sm font-bold uppercase tracking-wide text-amber-400 focus:ring-0 w-32"
+                                  />
+                                )}
+                                {!isEditingRoast ? (
+                                  <div className="font-mono text-sm font-semibold text-amber-300">
+                                    {formatTime(entry.t)}
+                                  </div>
+                                ) : (
+                                  <input 
+                                    type="number" 
+                                    value={entry.t} 
+                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16 text-right"
+                                  />
+                                )}
                               </div>
                             ) : entry.type === 'start_settings' ? (
                               <div className="flex items-center justify-between px-1">
-                                <div className="font-mono text-sm text-amber-300">
-                                  {formatTime(entry.t)}
-                                </div>
+                                {!isEditingRoast ? (
+                                  <div className="font-mono text-sm text-amber-300">
+                                    {formatTime(entry.t)}
+                                  </div>
+                                ) : (
+                                  <input 
+                                    type="number" 
+                                    value={entry.t} 
+                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
+                                  />
+                                )}
                                 <div className="flex items-center gap-2">
-                                  <div className="text-xs text-zinc-400">
-                                    H:<span className="text-zinc-100 ml-0.5">{entry.heat || "—"}</span>
-                                    <span className="mx-1.5">·</span>
-                                    F:<span className="text-zinc-100 ml-0.5">{entry.fan || "—"}</span>
-                                    <span className="mx-1.5">·</span>
-                                    T:<span className="text-zinc-100 ml-0.5">{entry.temp || "—"}°</span>
+                                  <div className="text-xs text-zinc-400 flex items-center gap-1">
+                                    H:
+                                    {!isEditingRoast ? (
+                                      <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                    ) : (
+                                      <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    )}
+                                    <span className="mx-0.5">·</span>
+                                    F:
+                                    {!isEditingRoast ? (
+                                      <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                    ) : (
+                                      <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    )}
+                                    <span className="mx-0.5">·</span>
+                                    T:
+                                    {!isEditingRoast ? (
+                                      <span className="font-semibold text-zinc-100">{entry.temp || "—"}°</span>
+                                    ) : (
+                                      <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    )}
                                   </div>
                                   <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
                                     {entry.label}
@@ -1639,15 +2125,39 @@ function App() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-between px-1">
-                                <div className="font-mono text-sm text-amber-300">
-                                  {formatTime(entry.t)}
-                                </div>
-                                <div className="text-xs text-zinc-400">
-                                  H:<span className="text-zinc-100 ml-0.5">{entry.heat || "—"}</span>
-                                  <span className="mx-1.5">·</span>
-                                  F:<span className="text-zinc-100 ml-0.5">{entry.fan || "—"}</span>
-                                  <span className="mx-1.5">·</span>
-                                  T:<span className="text-zinc-100 ml-0.5">{entry.temp || "—"}°</span>
+                                {!isEditingRoast ? (
+                                  <div className="font-mono text-sm text-amber-300">
+                                    {formatTime(entry.t)}
+                                  </div>
+                                ) : (
+                                  <input 
+                                    type="number" 
+                                    value={entry.t} 
+                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
+                                  />
+                                )}
+                                <div className="text-xs text-zinc-400 flex items-center gap-1">
+                                  H:
+                                  {!isEditingRoast ? (
+                                    <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                  ) : (
+                                    <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                  )}
+                                  <span className="mx-0.5">·</span>
+                                  F:
+                                  {!isEditingRoast ? (
+                                    <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                  ) : (
+                                    <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                  )}
+                                  <span className="mx-0.5">·</span>
+                                  T:
+                                  {!isEditingRoast ? (
+                                    <span className="font-semibold text-zinc-100">{entry.temp || "—"}°</span>
+                                  ) : (
+                                    <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                  )}
                                 </div>
                               </div>
                             )}
@@ -2023,6 +2533,69 @@ function App() {
                     </div>
                   )}
                 </header>
+
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Saved Profiles</h3>
+                    <button
+                      onClick={() => setIsProfileBuilderOpen(true)}
+                      className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-400 hover:bg-amber-500/20 transition"
+                    >
+                      + NEW PROFILE
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {profiles.filter(p => p.beanName === selectedBean.name).length === 0 ? (
+                      <p className="text-sm text-zinc-600 italic py-2">No profiles saved for this bean.</p>
+                    ) : (
+                      profiles.filter(p => p.beanName === selectedBean.name).map(p => (
+                        <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
+                          <div>
+                            <div className="font-bold text-zinc-100 flex items-center gap-2">
+                              {p.name}
+                              {p.isDefault && <span className="text-[8px] bg-amber-500 text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                          </div>
+                          <div className="flex gap-2">
+                            {!p.isDefault && (
+                              <button 
+                                onClick={() => {
+                                  const updated = profiles.map(profile => ({
+                                    ...profile,
+                                    isDefault: profile.id === p.id && profile.beanName === selectedBean.name
+                                  }));
+                                  setProfiles(updated);
+                                }}
+                                className="text-[10px] font-bold text-zinc-500 hover:text-amber-500 transition"
+                              >
+                                SET DEFAULT
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => setProfiles(profiles.filter(profile => profile.id !== p.id))}
+                              className="text-[10px] font-bold text-red-500/60 hover:text-red-500 transition"
+                            >
+                              DELETE
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                {isProfileBuilderOpen && (
+                  <ProfileBuilder 
+                    bean={selectedBean} 
+                    onCancel={() => setIsProfileBuilderOpen(false)}
+                    onSave={(newProfile) => {
+                      const p = { ...newProfile, id: Date.now(), beanName: selectedBean.name };
+                      setProfiles(prev => [...prev, p]);
+                      setIsProfileBuilderOpen(false);
+                    }}
+                  />
+                )}
 
                 {selectedBean.purchaseDate && (
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
