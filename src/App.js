@@ -373,16 +373,26 @@ function App() {
   const [greenWeightGrams, setGreenWeightGrams] = React.useState(() => localStorage.getItem("live_greenWeightGrams") || "");
   const [targetRoastLevel, setTargetRoastLevel] = React.useState(() => localStorage.getItem("live_targetRoastLevel") || ROAST_LEVEL_OPTIONS[2]);
 
+  const [startingHeat, setStartingHeat] = React.useState(() => localStorage.getItem("live_startingHeat") || "");
+  const [startingFan, setStartingFan] = React.useState(() => localStorage.getItem("live_startingFan") || "");
+  const [startingTemp, setStartingTemp] = React.useState(() => localStorage.getItem("live_startingTemp") || "");
+
   const [isTimerRunning, setIsTimerRunning] = React.useState(false);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(() => Number(localStorage.getItem("live_elapsedSeconds")) || 0);
 
-  const [milestones, setMilestones] = React.useState(() => JSON.parse(localStorage.getItem("live_milestones") || "[]"));
+  // New Development Timer state
+  const [isDevTimerRunning, setIsDevTimerRunning] = React.useState(false);
+  const [devSeconds, setDevSeconds] = React.useState(() => Number(localStorage.getItem("live_devSeconds")) || 0);
+  const [firstCrackTime, setFirstCrackTime] = React.useState(() => Number(localStorage.getItem("live_firstCrackTime")) || null);
+  const [coolingStartTime, setCoolingStartTime] = React.useState(() => Number(localStorage.getItem("live_coolingStartTime")) || null);
+
+  const [roastLog, setRoastLog] = React.useState(() => JSON.parse(localStorage.getItem("live_roastLog") || "[]"));
 
   const [heat, setHeat] = React.useState("");
   const [fan, setFan] = React.useState("");
   const [temp, setTemp] = React.useState("");
-  const [adjustments, setAdjustments] = React.useState(() => JSON.parse(localStorage.getItem("live_adjustments") || "[]"));
-
+  const [isAdjPopupOpen, setIsAdjPopupOpen] = React.useState(false);
+  const [adjPopupTimestamp, setAdjPopupTimestamp] = React.useState(null);
   const [activeNumpad, setActiveNumpad] = React.useState(null); // 'heat', 'fan', or 'temp'
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   const [selectedRoast, setSelectedRoast] = React.useState(null); // For history detail view
@@ -438,37 +448,68 @@ function App() {
   }, [targetRoastLevel]);
 
   React.useEffect(() => {
+    localStorage.setItem("live_startingHeat", startingHeat);
+  }, [startingHeat]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_startingFan", startingFan);
+  }, [startingFan]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_startingTemp", startingTemp);
+  }, [startingTemp]);
+
+  React.useEffect(() => {
     localStorage.setItem("live_elapsedSeconds", elapsedSeconds);
   }, [elapsedSeconds]);
 
   React.useEffect(() => {
-    localStorage.setItem("live_milestones", JSON.stringify(milestones));
-  }, [milestones]);
+    localStorage.setItem("live_devSeconds", devSeconds);
+  }, [devSeconds]);
 
   React.useEffect(() => {
-    localStorage.setItem("live_adjustments", JSON.stringify(adjustments));
-  }, [adjustments]);
+    localStorage.setItem("live_firstCrackTime", firstCrackTime);
+  }, [firstCrackTime]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_coolingStartTime", coolingStartTime);
+  }, [coolingStartTime]);
+
+  React.useEffect(() => {
+    localStorage.setItem("live_roastLog", JSON.stringify(roastLog));
+  }, [roastLog]);
 
   const clearLiveSession = () => {
     const keys = [
       "live_beanName",
       "live_greenWeightGrams",
       "live_targetRoastLevel",
+      "live_startingHeat",
+      "live_startingFan",
+      "live_startingTemp",
       "live_elapsedSeconds",
-      "live_milestones",
-      "live_adjustments"
+      "live_devSeconds",
+      "live_firstCrackTime",
+      "live_coolingStartTime",
+      "live_roastLog"
     ];
     keys.forEach(k => localStorage.removeItem(k));
     
     setBeanName("");
     setGreenWeightGrams("");
     setTargetRoastLevel(ROAST_LEVEL_OPTIONS[2]);
+    setStartingHeat("");
+    setStartingFan("");
+    setStartingTemp("");
     setElapsedSeconds(0);
-    setMilestones([]);
+    setDevSeconds(0);
+    setFirstCrackTime(null);
+    setCoolingStartTime(null);
+    setIsDevTimerRunning(false);
+    setRoastLog([]);
     setHeat("");
     setFan("");
     setTemp("");
-    setAdjustments([]);
   };
 
   const handleNumpadDigit = (digit) => {
@@ -498,25 +539,51 @@ function App() {
     return () => window.clearInterval(id);
   }, [isTimerRunning]);
 
+  React.useEffect(() => {
+    if (!isDevTimerRunning || !isTimerRunning) return undefined;
+    const id = window.setInterval(() => {
+      setDevSeconds((s) => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isDevTimerRunning, isTimerRunning]);
+
   const logMilestone = (label) => {
-    setMilestones((prev) => [{ label, t: elapsedSeconds }, ...prev]);
+    setRoastLog((prev) => [{ type: 'phase', label, t: elapsedSeconds }, ...prev]);
+    
+    if (label === "FIRST CRACK") {
+      setIsDevTimerRunning(true);
+      setFirstCrackTime(elapsedSeconds);
+    } else if (label === "COOLING START") {
+      setIsTimerRunning(false);
+      setIsDevTimerRunning(false);
+      setCoolingStartTime(elapsedSeconds);
+    }
   };
 
   const handleStart = () => {
-    if (isTimerRunning) return; // Already running, don't log a new START milestone
+    if (isTimerRunning) return; // Already running
 
     if (elapsedSeconds === 0) {
       setIsTimerRunning(true);
-      logMilestone("START");
+      // Log starting settings as the first entry
+      setRoastLog([{ 
+        type: 'start_settings', 
+        t: 0, 
+        heat: startingHeat, 
+        fan: startingFan, 
+        temp: startingTemp,
+        label: "Start"
+      }]);
       return;
     }
 
     setIsTimerRunning(true);
-    logMilestone("START (RESUME)");
+    setRoastLog((prev) => [{ type: 'phase', label: "START (RESUME)", t: elapsedSeconds }, ...prev]);
   };
 
   const handleStop = () => {
     setIsTimerRunning(false);
+    setIsDevTimerRunning(false);
     
     const newRoast = {
       id: Date.now(),
@@ -524,10 +591,15 @@ function App() {
       beanName: beanName || "Unnamed Bean",
       greenWeight: greenWeightGrams,
       targetLevel: targetRoastLevel,
-      milestones: [...milestones].reverse(), // Store in chronological order
-      adjustments: [...adjustments].reverse(), // Store in chronological order
+      roastLog: [...roastLog].reverse(), // Store in chronological order
       duration: formatTime(elapsedSeconds),
       totalSeconds: elapsedSeconds,
+      devSeconds: devSeconds,
+      startingSettings: {
+        heat: startingHeat,
+        fan: startingFan,
+        temp: startingTemp
+      }
     };
 
     const existingRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
@@ -541,13 +613,14 @@ function App() {
   };
 
   const handleLogAdjustment = () => {
-    setAdjustments((prev) => [
-      { t: elapsedSeconds, heat, fan, temp },
+    setRoastLog((prev) => [
+      { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp },
       ...prev,
     ]);
     setHeat("");
     setFan("");
     setTemp("");
+    setAdjPopupTimestamp(null);
   };
 
   const handleDeleteRoast = (id) => {
@@ -659,7 +732,46 @@ function App() {
                 Session
               </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-3">
+              {/* Starting Settings */}
+              {elapsedSeconds === 0 && !isTimerRunning && (
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  <label className="block">
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Heat (1-9)</div>
+                    <input
+                      value={startingHeat}
+                      onChange={(e) => setStartingHeat(e.target.value.slice(0, 1))}
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="—"
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Fan (1-9)</div>
+                    <input
+                      value={startingFan}
+                      onChange={(e) => setStartingFan(e.target.value.slice(0, 1))}
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="—"
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Temp</div>
+                    <input
+                      value={startingTemp}
+                      onChange={(e) => setStartingTemp(e.target.value)}
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="—"
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <div className={`${elapsedSeconds === 0 && !isTimerRunning ? "mt-6 border-t border-zinc-800/50 pt-4" : "mt-2"} grid grid-cols-1 gap-3`}>
                 <label className="block">
                   <div className="text-xs font-medium text-zinc-300">Bean Name</div>
                   <input
@@ -709,6 +821,11 @@ function App() {
               <div className="mt-3 font-mono text-6xl font-semibold tracking-tight text-amber-400">
                 {formatTime(elapsedSeconds)}
               </div>
+              {firstCrackTime !== null && (
+                <div className="mt-2 text-2xl font-bold tracking-tight text-red-500 animate-in fade-in slide-in-from-top-2 duration-300">
+                  DEV: {devSeconds}s
+                </div>
+              )}
               <div className="mt-2 text-xs text-zinc-500">
                 {isTimerRunning ? "Running" : "Paused"}
               </div>
@@ -728,10 +845,8 @@ function App() {
                   START
                 </button>
                 {[
-                  "DRYING END",
-                  "MAILLARD END",
+                  "YELLOWING",
                   "FIRST CRACK",
-                  "COOLING START",
                 ].map((label) => (
                   <button
                     key={label}
@@ -742,113 +857,74 @@ function App() {
                     {label}
                   </button>
                 ))}
-              </div>
-
-              {/* Milestone log */}
-              <div className="mt-4 max-h-36 overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
-                {milestones.length === 0 ? (
-                  <div className="px-4 py-3 text-xs text-zinc-500">
-                    Milestones will appear here as you tap them.
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-zinc-800/60">
-                    {milestones.map((m, idx) => (
-                      <li key={`${m.label}-${m.t}-${idx}`} className="px-4 py-3">
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-semibold text-zinc-100">{m.label}</div>
-                          <div className="font-mono text-sm text-amber-300">
-                            {formatTime(m.t)}
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <button
+                  type="button"
+                  onClick={() => logMilestone("COOLING START")}
+                  className="col-span-2 rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
+                >
+                  COOLING START
+                </button>
               </div>
             </section>
 
-            {/* 4) ADJUSTMENT LOGGER */}
+            {/* 4) UNIFIED ROAST TIMELINE */}
             <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
               <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Adjustment Logger
+                Roast Timeline
               </div>
 
-              <div className="mt-3 grid grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setActiveNumpad("heat")}
-                  className={[
-                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
-                    activeNumpad === "heat" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
-                  ].join(" ")}
-                >
-                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
-                    Heat 1-9
-                  </div>
-                  <div className="mt-1 text-2xl font-bold text-zinc-50">{heat || "—"}</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveNumpad("fan")}
-                  className={[
-                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
-                    activeNumpad === "fan" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
-                  ].join(" ")}
-                >
-                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
-                    Fan 1-9
-                  </div>
-                  <div className="mt-1 text-2xl font-bold text-zinc-50">{fan || "—"}</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveNumpad("temp")}
-                  className={[
-                    "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-3 transition active:scale-95",
-                    activeNumpad === "temp" ? "border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]" : "border-zinc-800/70",
-                  ].join(" ")}
-                >
-                  <div className="text-[10px] font-medium uppercase tracking-tight text-zinc-400">
-                    Temp °F
-                  </div>
-                  <div className="mt-1 text-2xl font-bold text-zinc-50">{temp || "—"}</div>
-                </button>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={handleLogAdjustment}
-                  className="w-full rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
-                >
-                  LOG
-                </button>
-              </div>
-
-              <div className="mt-4 max-h-56 overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
-                {adjustments.length === 0 ? (
+              <div className="mt-4 max-h-[400px] overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
+                {roastLog.length === 0 ? (
                   <div className="px-4 py-3 text-xs text-zinc-500">
-                    Logged adjustments will appear here.
+                    Timeline events will appear here as they occur.
                   </div>
                 ) : (
                   <ul className="divide-y divide-zinc-800/60">
-                    {adjustments.map((a, idx) => (
-                      <li key={`${a.t}-${idx}`} className="px-4 py-3">
-                        <div className="flex items-center justify-between">
-                          <div className="font-mono text-sm text-amber-300">
-                            {formatTime(a.t)}
+                    {roastLog.map((entry, idx) => (
+                      <li key={`${entry.t}-${idx}`} className="px-4 py-3">
+                        {entry.type === 'phase' ? (
+                          <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
+                            <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
+                              {entry.label}
+                            </div>
+                            <div className="font-mono text-sm font-semibold text-amber-300">
+                              {formatTime(entry.t)}
+                            </div>
                           </div>
-                          <div className="text-xs text-zinc-400">
-                            Heat{" "}
-                            <span className="font-semibold text-zinc-100">{a.heat || "—"}</span>
-                            {" · "}Fan{" "}
-                            <span className="font-semibold text-zinc-100">{a.fan || "—"}</span>
-                            {" · "}Temp{" "}
-                            <span className="font-semibold text-zinc-100">{a.temp || "—"}</span>
+                        ) : entry.type === 'start_settings' ? (
+                          <div className="flex items-center justify-between px-1">
+                            <div className="font-mono text-sm text-amber-300">
+                              {formatTime(entry.t)}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs text-zinc-400">
+                                Heat{" "}
+                                <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                {" · "}Fan{" "}
+                                <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                {" · "}Temp{" "}
+                                <span className="font-semibold text-zinc-100">{entry.temp || "—"}</span>
+                              </div>
+                              <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
+                                {entry.label}
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="flex items-center justify-between px-1">
+                            <div className="font-mono text-sm text-amber-300">
+                              {formatTime(entry.t)}
+                            </div>
+                            <div className="text-xs text-zinc-400">
+                              Heat{" "}
+                              <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                              {" · "}Fan{" "}
+                              <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                              {" · "}Temp{" "}
+                              <span className="font-semibold text-zinc-100">{entry.temp || "—"}</span>
+                            </div>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -856,20 +932,114 @@ function App() {
               </div>
             </section>
 
-            {/* 5) STOP / END ROAST */}
+            {/* Floating Adjustment Log Button */}
+            {isTimerRunning && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeat("");
+                  setFan("");
+                  setTemp("");
+                  setAdjPopupTimestamp(elapsedSeconds);
+                  setIsAdjPopupOpen(true);
+                }}
+                className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl shadow-amber-500/20 transition active:scale-95"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+            )}
+
+            {/* Adjustment Log Popup */}
+            {isAdjPopupOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
+                  <div className="mb-6 flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Log Adjustment</div>
+                      <div className="mt-1 font-mono text-sm text-amber-400">{formatTime(adjPopupTimestamp ?? elapsedSeconds)}</div>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setIsAdjPopupOpen(false);
+                        setActiveNumpad(null);
+                      }}
+                      className="rounded-full bg-zinc-800 p-2 text-zinc-400"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveNumpad("heat")}
+                      className={[
+                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
+                        activeNumpad === "heat" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                      ].join(" ")}
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Heat</div>
+                      <div className="mt-1 text-2xl font-black text-zinc-100">{heat || "—"}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveNumpad("fan")}
+                      className={[
+                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
+                        activeNumpad === "fan" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                      ].join(" ")}
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Fan</div>
+                      <div className="mt-1 text-2xl font-black text-zinc-100">{fan || "—"}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveNumpad("temp")}
+                      className={[
+                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
+                        activeNumpad === "temp" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                      ].join(" ")}
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Temp</div>
+                      <div className="mt-1 text-2xl font-black text-zinc-100">{temp || "—"}</div>
+                    </button>
+                  </div>
+
+                  <div className="mt-6">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleLogAdjustment();
+                        setIsAdjPopupOpen(false);
+                        setActiveNumpad(null);
+                      }}
+                      className="w-full rounded-2xl bg-amber-500 py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition active:scale-[0.98]"
+                    >
+                      SAVE ENTRY
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 5) SAVE ROAST */}
             <div className="space-y-3">
               {saveSuccess && (
                 <div className="text-center text-sm font-bold text-green-500 animate-bounce">
                   Roast Saved!
                 </div>
               )}
-              <button
-                type="button"
-                onClick={handleStop}
-                className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-600/90"
-              >
-                STOP / END ROAST
-              </button>
+              {coolingStartTime !== null && (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="w-full rounded-3xl bg-green-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-green-500 active:bg-green-600/90"
+                >
+                  SAVE ROAST
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1423,37 +1593,64 @@ function App() {
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
                         <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
                       </div>
-                    </div>
-                  </section>
-
-                  <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Phase Timeline</div>
-                    <div className="mt-4 space-y-3">
-                      {selectedRoast.milestones.map((m, i) => (
-                        <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
-                          <div className="text-sm font-semibold text-zinc-200">{m.label}</div>
-                          <div className="font-mono text-xs text-amber-300/80">{formatTime(m.t)}</div>
+                      {selectedRoast.devSeconds !== undefined && (
+                        <div className="col-span-2 border-t border-zinc-800/50 pt-4">
+                          <div className="text-[10px] uppercase tracking-widest text-red-500">Development Time</div>
+                          <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
                         </div>
-                      ))}
+                      )}
                     </div>
                   </section>
 
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Adjustment Log</div>
+                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Roast Timeline</div>
                     <div className="mt-4 space-y-3">
-                      {selectedRoast.adjustments.length === 0 ? (
-                        <div className="text-xs text-zinc-500">No adjustments logged.</div>
+                      {!selectedRoast.roastLog || selectedRoast.roastLog.length === 0 ? (
+                        <div className="text-xs text-zinc-500">No events logged.</div>
                       ) : (
-                        selectedRoast.adjustments.map((a, i) => (
-                          <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
-                            <div className="font-mono text-xs text-amber-300/80">{formatTime(a.t)}</div>
-                            <div className="text-[11px] text-zinc-400">
-                              H:<span className="text-zinc-100 ml-0.5">{a.heat || "—"}</span>
-                              <span className="mx-1.5">·</span>
-                              F:<span className="text-zinc-100 ml-0.5">{a.fan || "—"}</span>
-                              <span className="mx-1.5">·</span>
-                              T:<span className="text-zinc-100 ml-0.5">{a.temp || "—"}°</span>
-                            </div>
+                        selectedRoast.roastLog.map((entry, i) => (
+                          <div key={i} className="border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
+                            {entry.type === 'phase' ? (
+                              <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
+                                <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
+                                  {entry.label}
+                                </div>
+                                <div className="font-mono text-sm font-semibold text-amber-300">
+                                  {formatTime(entry.t)}
+                                </div>
+                              </div>
+                            ) : entry.type === 'start_settings' ? (
+                              <div className="flex items-center justify-between px-1">
+                                <div className="font-mono text-sm text-amber-300">
+                                  {formatTime(entry.t)}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="text-xs text-zinc-400">
+                                    H:<span className="text-zinc-100 ml-0.5">{entry.heat || "—"}</span>
+                                    <span className="mx-1.5">·</span>
+                                    F:<span className="text-zinc-100 ml-0.5">{entry.fan || "—"}</span>
+                                    <span className="mx-1.5">·</span>
+                                    T:<span className="text-zinc-100 ml-0.5">{entry.temp || "—"}°</span>
+                                  </div>
+                                  <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
+                                    {entry.label}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between px-1">
+                                <div className="font-mono text-sm text-amber-300">
+                                  {formatTime(entry.t)}
+                                </div>
+                                <div className="text-xs text-zinc-400">
+                                  H:<span className="text-zinc-100 ml-0.5">{entry.heat || "—"}</span>
+                                  <span className="mx-1.5">·</span>
+                                  F:<span className="text-zinc-100 ml-0.5">{entry.fan || "—"}</span>
+                                  <span className="mx-1.5">·</span>
+                                  T:<span className="text-zinc-100 ml-0.5">{entry.temp || "—"}°</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))
                       )}
