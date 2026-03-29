@@ -1,6 +1,150 @@
 import React from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  Label,
+} from "recharts";
 
 const TABS = ["Roast", "History", "Brew", "Beans", "Settings"];
+
+const formatMMSS = (s) => {
+  const mm = String(Math.floor(s / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+};
+
+function RoastSparkline({ data }) {
+  if (!data || data.length === 0) return null;
+  return (
+    <div className="h-20 w-32">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}>
+          <Line
+            type="monotone"
+            dataKey="temp"
+            stroke="#ef4444"
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function RoastDetailChart({ roast }) {
+  if (!roast || !roast.roastLog) return null;
+
+  const chartData = [];
+  const startEntry = roast.roastLog.find((e) => e.type === "start_settings" || (e.type === "adjustment" && e.t === 0));
+  
+  let currentHeat = startEntry?.heat || 0;
+  let currentFan = startEntry?.fan || 0;
+  let currentTemp = startEntry?.temp || 0;
+
+  for (let t = 0; t <= (roast.totalSeconds || 0); t++) {
+    const logEntry = roast.roastLog.find((e) => e.t === t && (e.type === "adjustment" || e.type === "start_settings"));
+    if (logEntry) {
+      if (logEntry.heat) currentHeat = Number(logEntry.heat);
+      if (logEntry.fan) currentFan = Number(logEntry.fan);
+      if (logEntry.temp) currentTemp = Number(logEntry.temp);
+    }
+
+    // Calculate RoR (Rate of Rise) per 30 seconds
+    let ror = null;
+    if (t >= 30) {
+      const prevTempEntry = chartData[t - 30];
+      if (prevTempEntry && prevTempEntry.temp && currentTemp) {
+        ror = currentTemp - prevTempEntry.temp;
+      }
+    }
+
+    chartData.push({
+      t,
+      displayTime: formatMMSS(t),
+      heat: currentHeat,
+      fan: currentFan,
+      temp: currentTemp ? Number(currentTemp) : null,
+      ror: ror,
+    });
+  }
+
+  const phases = roast.roastLog.filter((e) => e.type === "phase" && ["YELLOWING", "FIRST CRACK", "COOLING START"].includes(e.label));
+
+  const totalTime = formatMMSS(roast.totalSeconds || 0);
+  
+  const firstCrack = roast.roastLog.find(e => e.label === "FIRST CRACK");
+  const coolingStart = roast.roastLog.find(e => e.label === "COOLING START");
+  
+  let dtr = "—";
+  if (firstCrack && coolingStart && (roast.totalSeconds || 0) > 0) {
+    const devTime = coolingStart.t - firstCrack.t;
+    dtr = `${((devTime / roast.totalSeconds) * 100).toFixed(1)}%`;
+  }
+
+  const weightLoss = roast.greenWeight && roast.roastedWeight 
+    ? `${(((Number(roast.greenWeight) - Number(roast.roastedWeight)) / Number(roast.greenWeight)) * 100).toFixed(1)}%`
+    : "—";
+
+  return (
+    <div className="space-y-6">
+      <div className="h-64 w-full bg-zinc-950/50 rounded-3xl p-4 border border-zinc-800/50">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+            <XAxis 
+              dataKey="t" 
+              tickFormatter={formatMMSS} 
+              stroke="#52525b" 
+              fontSize={10} 
+              tick={{fill: '#71717a'}}
+              minTickGap={30}
+            />
+            <YAxis stroke="#52525b" fontSize={10} tick={{fill: '#71717a'}} />
+            <Tooltip
+              contentStyle={{ backgroundColor: "#09090b", border: "1px solid #27272a", borderRadius: "12px", fontSize: "12px" }}
+              labelFormatter={formatMMSS}
+              itemStyle={{ padding: "2px 0" }}
+            />
+            
+            {phases.map((p, idx) => (
+              <ReferenceLine key={idx} x={p.t} stroke="#52525b" strokeDasharray="3 3">
+                <Label value={p.label} position="top" fill="#71717a" fontSize={10} offset={10} />
+              </ReferenceLine>
+            ))}
+
+            <Line type="monotone" dataKey="temp" stroke="#ef4444" strokeWidth={2} dot={false} name="Temp" />
+            <Line type="stepAfter" dataKey="heat" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Heat" />
+            <Line type="stepAfter" dataKey="fan" stroke="#f97316" strokeWidth={1.5} dot={false} name="Fan" />
+            <Line type="monotone" dataKey="ror" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="RoR" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Total Time</div>
+          <div className="text-sm font-bold text-zinc-100 font-mono">{totalTime}</div>
+        </div>
+        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">DTR</div>
+          <div className="text-sm font-bold text-red-400 font-mono">{dtr}</div>
+        </div>
+        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Weight Loss</div>
+          <div className="text-sm font-bold text-amber-400 font-mono">{weightLoss}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
   const outerFill = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
@@ -566,6 +710,7 @@ function App() {
   const [isEditingRoast, setIsEditingRoast] = React.useState(false);
   const [editedRoast, setEditedRoast] = React.useState(null);
   const [hasChanges, setHasChanges] = React.useState(false);
+  const [showDiscardModal, setShowDiscardModal] = React.useState(false);
 
   const startEditing = (roast) => {
     setEditedRoast(JSON.parse(JSON.stringify(roast))); // Deep clone
@@ -813,12 +958,13 @@ function App() {
       id: Date.now(),
       date: new Date().toLocaleString(),
       beanName: beanName || "Unnamed Bean",
-      greenWeight: greenWeightGrams,
+      greenWeight: greenWeightGrams ? parseFloat(greenWeightGrams) : 0,
+      roastedWeight: 0,
       targetLevel: targetRoastLevel,
-      roastLog: [...roastLog].reverse(), // Store in chronological order
+      roastLog: [...roastLog].reverse(),
       duration: formatTime(elapsedSeconds),
-      totalSeconds: elapsedSeconds,
-      devSeconds: devSeconds,
+      totalSeconds: elapsedSeconds || 0,
+      devSeconds: devSeconds || 0,
       profile: profileFollowing,
       startingSettings: {
         heat: startingHeat,
@@ -827,7 +973,23 @@ function App() {
       }
     };
 
-    const existingRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+    const existingRoasts = [];
+    try {
+      const stored = localStorage.getItem("roasts");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(r => {
+            if (r && typeof r === 'object') {
+              existingRoasts.push(r);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to parse roasts from localStorage, starting fresh", e);
+    }
+
     localStorage.setItem("roasts", JSON.stringify([newRoast, ...existingRoasts]));
 
     setSaveSuccess(true);
@@ -850,8 +1012,36 @@ function App() {
 
   const handleSaveEdit = () => {
     if (!editedRoast) return;
-    const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
-    const updated = roasts.map(r => r.id === editedRoast.id ? editedRoast : r);
+    const existingRoasts = [];
+    try {
+      const stored = localStorage.getItem("roasts");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(r => {
+            if (r && typeof r === 'object') {
+              existingRoasts.push(r);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to parse roasts for edit", e);
+    }
+
+    const updated = existingRoasts.map(r => {
+      if (r.id === editedRoast.id) {
+        return {
+          ...editedRoast,
+          greenWeight: editedRoast.greenWeight ? parseFloat(editedRoast.greenWeight) : 0,
+          roastedWeight: editedRoast.roastedWeight ? parseFloat(editedRoast.roastedWeight) : 0,
+          totalSeconds: editedRoast.totalSeconds || 0,
+          devSeconds: editedRoast.devSeconds || 0
+        };
+      }
+      return r;
+    });
+
     localStorage.setItem("roasts", JSON.stringify(updated));
     setSelectedRoast(editedRoast);
     setHasChanges(false);
@@ -1082,14 +1272,24 @@ function App() {
                 <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                   Phase Milestones
                 </div>
-                {elapsedSeconds === 0 && !isTimerRunning && (
-                  <button
-                    onClick={() => setIsProfileBuilderOpen(true)}
-                    className="rounded-lg bg-zinc-800 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-200 transition"
-                  >
-                    BUILD PROFILE
-                  </button>
-                )}
+                <div className="flex gap-2">
+                  {isTimerRunning && (
+                    <button
+                      onClick={() => setShowDiscardModal(true)}
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-bold text-zinc-500 hover:text-red-400 hover:border-red-900/50 transition"
+                    >
+                      DISCARD
+                    </button>
+                  )}
+                  {elapsedSeconds === 0 && !isTimerRunning && (
+                    <button
+                      onClick={() => setIsProfileBuilderOpen(true)}
+                      className="rounded-lg bg-zinc-800 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-200 transition"
+                    >
+                      BUILD PROFILE
+                    </button>
+                  )}
+                </div>
               </div>
               
               {profileFollowing && (
@@ -1143,13 +1343,22 @@ function App() {
                     {label}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => logMilestone("COOLING START")}
-                  className="col-span-2 rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
-                >
-                  COOLING START
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => logMilestone("COOLING START")}
+                    className="rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
+                  >
+                    COOLING START
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiscardModal(true)}
+                    className="rounded-3xl border border-zinc-700 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-500 transition hover:bg-red-900/20 hover:text-red-400 active:bg-red-900/30"
+                  >
+                    DISCARD
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -1164,6 +1373,37 @@ function App() {
                   setIsProfileBuilderOpen(false);
                 }}
               />
+            )}
+
+            {showDiscardModal && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/90 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-900/20 text-red-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Discard this roast?</h3>
+                  <p className="text-sm text-zinc-400 mb-6">All logged data will be lost.</p>
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setShowDiscardModal(false)}
+                      className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition"
+                    >
+                      CANCEL
+                    </button>
+                    <button 
+                      onClick={() => {
+                        clearLiveSession();
+                        setShowDiscardModal(false);
+                        setIsTimerRunning(false);
+                        setIsDevTimerRunning(false);
+                      }}
+                      className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                    >
+                      DISCARD
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {showRoastModeDialog && (
@@ -1858,10 +2098,18 @@ function App() {
                         onClick={() => setSelectedRoast(roast)}
                         className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
                       >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <div className="text-sm font-bold text-zinc-100">{roast.beanName}</div>
-                            <div className="mt-0.5 text-[11px] text-zinc-500">{roast.date}</div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <RoastSparkline 
+                              data={roast.roastLog
+                                .filter(e => (e.type === 'adjustment' || e.type === 'start_settings') && e.temp)
+                                .map(e => ({ temp: Number(e.temp) }))
+                              } 
+                            />
+                            <div>
+                              <div className="text-sm font-bold text-zinc-100">{roast.beanName}</div>
+                              <div className="mt-0.5 text-[11px] text-zinc-500">{roast.date}</div>
+                            </div>
                           </div>
                           <div className="text-right">
                             <div className="font-mono text-sm font-semibold text-amber-400">
@@ -1948,7 +2196,7 @@ function App() {
                     )}
                     <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Weight</div>
+                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Green Weight</div>
                         {!isEditingRoast ? (
                           <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
                         ) : (
@@ -1963,7 +2211,24 @@ function App() {
                           </div>
                         )}
                       </div>
-                      <div>
+                      <div className="col-span-1">
+                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roasted Weight</div>
+                        {!isEditingRoast ? (
+                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.roastedWeight ? selectedRoast.roastedWeight + "g" : "—"}</div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input 
+                              type="number" 
+                              value={editedRoast.roastedWeight || ""} 
+                              onChange={(e) => updateEditedRoast('roastedWeight', e.target.value)}
+                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-zinc-100"
+                              placeholder="0"
+                            />
+                            <span className="text-sm text-zinc-500">g</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-1">
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
                         {!isEditingRoast ? (
                           <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
@@ -1974,6 +2239,22 @@ function App() {
                             onChange={(e) => updateEditedRoast('duration', e.target.value)}
                             className="w-24 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-amber-400"
                           />
+                        )}
+                      </div>
+                      <div className="col-span-1">
+                        <div className="text-[10px] uppercase tracking-widest text-red-500">Dev Time</div>
+                        {!isEditingRoast ? (
+                          <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input 
+                              type="number" 
+                              value={editedRoast.devSeconds} 
+                              onChange={(e) => updateEditedRoast('devSeconds', e.target.value)}
+                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-red-400"
+                            />
+                            <span className="text-sm text-red-500/60">s</span>
+                          </div>
                         )}
                       </div>
                       <div className="col-span-2">
@@ -1992,23 +2273,13 @@ function App() {
                           </select>
                         )}
                       </div>
-                      <div className="col-span-2 border-t border-zinc-800/50 pt-4">
-                        <div className="text-[10px] uppercase tracking-widest text-red-500">Development Time</div>
-                        {!isEditingRoast ? (
-                          <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <input 
-                              type="number" 
-                              value={editedRoast.devSeconds} 
-                              onChange={(e) => updateEditedRoast('devSeconds', e.target.value)}
-                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-red-400"
-                            />
-                            <span className="text-sm text-red-500/60">s</span>
-                          </div>
-                        )}
-                      </div>
                     </div>
+
+                    {!isEditingRoast && (
+                      <div className="mt-6 border-t border-zinc-800/50 pt-6">
+                        <RoastDetailChart roast={selectedRoast} />
+                      </div>
+                    )}
                   </section>
 
                   {selectedRoast.profile && (
