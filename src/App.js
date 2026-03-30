@@ -10,6 +10,7 @@ import {
   ReferenceLine,
   Label,
 } from "recharts";
+import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase } from "./syncService";
 
 const TABS = ["Roast", "History", "Brew", "Beans", "Settings"];
 
@@ -662,9 +663,23 @@ function App() {
   const [firstCrackTime, setFirstCrackTime] = React.useState(() => Number(localStorage.getItem("live_firstCrackTime")) || null);
   const [coolingStartTime, setCoolingStartTime] = React.useState(() => Number(localStorage.getItem("live_coolingStartTime")) || null);
 
-  const [roastLog, setRoastLog] = React.useState(() => JSON.parse(localStorage.getItem("live_roastLog") || "[]"));
+  const [roastLog, setRoastLog] = React.useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("live_roastLog") || "[]");
+    } catch (e) {
+      console.warn("Failed to parse live_roastLog", e);
+      return [];
+    }
+  });
 
-  const [adjustments, setAdjustments] = React.useState(() => JSON.parse(localStorage.getItem("live_adjustments") || "[]"));
+  const [adjustments, setAdjustments] = React.useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("live_adjustments") || "[]");
+    } catch (e) {
+      console.warn("Failed to parse live_adjustments", e);
+      return [];
+    }
+  });
 
   const [activeProfile, setActiveProfile] = React.useState(null);
   const [nextProfileStep, setNextProfileStep] = React.useState(null);
@@ -682,7 +697,14 @@ function App() {
   // Roast Profile Logic
   const [profileFollowing, setProfileFollowing] = React.useState(null);
   const [currentProfileStepIdx, setCurrentProfileStepIdx] = React.useState(-1);
-  const [profiles, setProfiles] = React.useState(() => JSON.parse(localStorage.getItem("global_profiles") || "[]"));
+  const [profiles, setProfiles] = React.useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("global_profiles") || "[]");
+    } catch (e) {
+      console.warn("Failed to parse global_profiles", e);
+      return [];
+    }
+  });
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   const [selectedRoast, setSelectedRoast] = React.useState(null); // For history detail view
 
@@ -711,6 +733,41 @@ function App() {
   const [editedRoast, setEditedRoast] = React.useState(null);
   const [hasChanges, setHasChanges] = React.useState(false);
   const [showDiscardModal, setShowDiscardModal] = React.useState(false);
+  const [syncStatus, setSyncStatus] = React.useState('idle'); // 'idle', 'syncing', 'success', 'error'
+
+  // Supabase sync on mount
+  React.useEffect(() => {
+    const performInitialSync = async () => {
+      setSyncStatus('syncing');
+      const cloudRoasts = await fetchRoastsFromSupabase();
+      
+      const localRoasts = (() => {
+        try {
+          return JSON.parse(localStorage.getItem("roasts") || "[]");
+        } catch (e) {
+          return [];
+        }
+      })();
+
+      const mergedRoasts = [...localRoasts];
+      let hasNewData = false;
+
+      cloudRoasts.forEach(cloudRoast => {
+        const localIndex = mergedRoasts.findIndex(r => Number(r.id) === Number(cloudRoast.id));
+        if (localIndex === -1) {
+          mergedRoasts.push(cloudRoast);
+          hasNewData = true;
+        }
+      });
+
+      if (hasNewData) {
+        mergedRoasts.sort((a, b) => b.id - a.id);
+        localStorage.setItem("roasts", JSON.stringify(mergedRoasts));
+      }
+      setSyncStatus(cloudRoasts.length > 0 || localRoasts.length > 0 ? 'success' : 'idle');
+    };
+    performInitialSync();
+  }, []);
 
   const startEditing = (roast) => {
     setEditedRoast(JSON.parse(JSON.stringify(roast))); // Deep clone
@@ -992,6 +1049,12 @@ function App() {
 
     localStorage.setItem("roasts", JSON.stringify([newRoast, ...existingRoasts]));
 
+    // Supabase Sync
+    setSyncStatus('syncing');
+    syncRoastToSupabase(newRoast).then(success => {
+      setSyncStatus(success ? 'success' : 'error');
+    });
+
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
@@ -1033,8 +1096,8 @@ function App() {
       if (r.id === editedRoast.id) {
         return {
           ...editedRoast,
-          greenWeight: editedRoast.greenWeight ? parseFloat(editedRoast.greenWeight) : 0,
-          roastedWeight: editedRoast.roastedWeight ? parseFloat(editedRoast.roastedWeight) : 0,
+          greenWeight: parseFloat(editedRoast.greenWeight) || 0,
+          roastedWeight: parseFloat(editedRoast.roastedWeight) || 0,
           totalSeconds: editedRoast.totalSeconds || 0,
           devSeconds: editedRoast.devSeconds || 0
         };
@@ -1043,6 +1106,13 @@ function App() {
     });
 
     localStorage.setItem("roasts", JSON.stringify(updated));
+    
+    // Supabase Sync
+    setSyncStatus('syncing');
+    syncRoastToSupabase(editedRoast).then(success => {
+      setSyncStatus(success ? 'success' : 'error');
+    });
+
     setSelectedRoast(editedRoast);
     setHasChanges(false);
   };
@@ -1061,9 +1131,25 @@ function App() {
   const handleDeleteRoast = (id) => {
     if (!window.confirm("Are you sure you want to delete this roast?")) return;
     
-    const existingRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+    const existingRoasts = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("roasts") || "[]");
+      } catch (e) {
+        console.warn("Failed to parse roasts", e);
+        return [];
+      }
+    })();
     const updatedRoasts = existingRoasts.filter((r) => r.id !== id);
     localStorage.setItem("roasts", JSON.stringify(updatedRoasts));
+    
+    // Supabase Sync
+    setSyncStatus('syncing');
+    deleteRoastFromSupabase(id).then(() => {
+      setSyncStatus('success');
+    }).catch(() => {
+      setSyncStatus('error');
+    });
+
     setSelectedRoast(null);
   };
 
@@ -1121,7 +1207,14 @@ function App() {
       notes: brewNotes
     };
 
-    const existingBrews = JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+    const existingBrews = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+      } catch (e) {
+        console.warn("Failed to parse tastingNotes", e);
+        return [];
+      }
+    })();
     localStorage.setItem("tastingNotes", JSON.stringify([newBrew, ...existingBrews]));
     setBrewStep(0);
     // Reset wizard
@@ -1153,6 +1246,14 @@ function App() {
           <div className="flex items-center gap-2">
             {ActiveIcon && <ActiveIcon active sizeClass="h-7 w-7" />}
             <div className="text-lg font-semibold tracking-tight">{activeTab}</div>
+            <div 
+              className={`h-2 w-2 rounded-full ml-1 ${
+                syncStatus === 'success' ? 'bg-green-500' :
+                syncStatus === 'syncing' ? 'bg-yellow-500' :
+                syncStatus === 'error' ? 'bg-red-500' : 'bg-zinc-600'
+              }`}
+              title={`Sync status: ${syncStatus}`}
+            />
           </div>
           <div className="text-xs font-medium text-zinc-400">RoastLogs</div>
         </div>
@@ -1273,14 +1374,6 @@ function App() {
                   Phase Milestones
                 </div>
                 <div className="flex gap-2">
-                  {isTimerRunning && (
-                    <button
-                      onClick={() => setShowDiscardModal(true)}
-                      className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-bold text-zinc-500 hover:text-red-400 hover:border-red-900/50 transition"
-                    >
-                      DISCARD
-                    </button>
-                  )}
                   {elapsedSeconds === 0 && !isTimerRunning && (
                     <button
                       onClick={() => setIsProfileBuilderOpen(true)}
@@ -1343,22 +1436,13 @@ function App() {
                     {label}
                   </button>
                 ))}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => logMilestone("COOLING START")}
-                    className="rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
-                  >
-                    COOLING START
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowDiscardModal(true)}
-                    className="rounded-3xl border border-zinc-700 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-500 transition hover:bg-red-900/20 hover:text-red-400 active:bg-red-900/30"
-                  >
-                    DISCARD
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => logMilestone("COOLING START")}
+                  className="col-span-2 rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
+                >
+                  COOLING START
+                </button>
               </div>
             </section>
 
@@ -1577,17 +1661,26 @@ function App() {
             <div className="space-y-3">
               {saveSuccess && (
                 <div className="text-center text-sm font-bold text-green-500 animate-bounce">
-                  Roast Saved!
+                  Roast saved to history!
                 </div>
               )}
               {coolingStartTime !== null && (
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  className="w-full rounded-3xl bg-green-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-green-500 active:bg-green-600/90"
-                >
-                  SAVE ROAST
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowDiscardModal(true)}
+                    className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-700"
+                  >
+                    DISCARD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="w-full rounded-3xl bg-green-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-green-500 active:bg-green-600/90"
+                  >
+                    SAVE ROAST
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1608,7 +1701,14 @@ function App() {
                           const id = e.target.value;
                           setBrewLinkedRoastId(id);
                           if (id) {
-                            const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+                            const roasts = (() => {
+                              try {
+                                return JSON.parse(localStorage.getItem("roasts") || "[]");
+                              } catch (e) {
+                                console.warn("Failed to parse roasts", e);
+                                return [];
+                              }
+                            })();
                             const roast = roasts.find(r => String(r.id) === id);
                             if (roast) setBrewBeanName(roast.beanName);
                           }
@@ -1616,7 +1716,13 @@ function App() {
                         className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       >
                         <option value="">None (Manual Entry)</option>
-                        {JSON.parse(localStorage.getItem("roasts") || "[]").map(r => (
+                        {(() => {
+                          try {
+                            return JSON.parse(localStorage.getItem("roasts") || "[]");
+                          } catch (e) {
+                            return [];
+                          }
+                        })().map(r => (
                           <option key={r.id} value={r.id}>{r.beanName} ({r.date})</option>
                         ))}
                       </select>
@@ -1967,7 +2073,13 @@ function App() {
                     <h3 className="text-2xl font-black uppercase tracking-tight mb-0.5">{brewBeanName}</h3>
                     {(() => {
                       if (brewLinkedRoastId) {
-                        const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+                        const roasts = (() => {
+                          try {
+                            return JSON.parse(localStorage.getItem("roasts") || "[]");
+                          } catch (e) {
+                            return [];
+                          }
+                        })();
                         const roast = roasts.find(r => String(r.id) === brewLinkedRoastId);
                         if (roast) return <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-6">{roast.targetLevel}</div>;
                       }
@@ -2078,7 +2190,14 @@ function App() {
               !selectedRoast ? (
                 <div className="space-y-3">
                   {(() => {
-                    let savedRoasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+                    let savedRoasts = (() => {
+                      try {
+                        return JSON.parse(localStorage.getItem("roasts") || "[]");
+                      } catch (e) {
+                        console.warn("Failed to parse roasts", e);
+                        return [];
+                      }
+                    })();
                     if (historySearch) {
                       savedRoasts = savedRoasts.filter(r => r.beanName.toLowerCase().includes(historySearch.toLowerCase()));
                     }
@@ -2453,7 +2572,14 @@ function App() {
               !selectedTastingNote ? (
                 <div className="space-y-3">
                   {(() => {
-                    let savedTastings = JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+                    let savedTastings = (() => {
+                      try {
+                        return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+                      } catch (e) {
+                        console.warn("Failed to parse tastingNotes", e);
+                        return [];
+                      }
+                    })();
                     if (historySearch) {
                       savedTastings = savedTastings.filter(t => (t.beanName || "Unknown Bean").toLowerCase().includes(historySearch.toLowerCase()));
                     }
@@ -2612,20 +2738,40 @@ function App() {
             {beansView === "list" && (
               <div className="space-y-6">
                 <header className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">Your Beans</h2>
-                  <button
-                    onClick={() => setBeansView("addBean")}
-                    className="rounded-2xl bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
-                  >
-                    ADD BEAN
-                  </button>
+                  <h1 className="text-3xl font-black tracking-tight text-white">RoastLogs</h1>
+                  <div className="flex gap-2">        
+                    <button
+                      onClick={() => setBeansView("addBean")}
+                      className="rounded-2xl bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
+                    >
+                      ADD BEAN
+                    </button>
+                  </div>
                 </header>
 
                 <div className="space-y-3">
                   {(() => {
-                    const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
-                    const tastings = JSON.parse(localStorage.getItem("tastingNotes") || "[]");
-                    const manualBeans = JSON.parse(localStorage.getItem("beans") || "[]");
+                    const roasts = (() => {
+                      try {
+                        return JSON.parse(localStorage.getItem("roasts") || "[]");
+                      } catch (e) {
+                        return [];
+                      }
+                    })();
+                    const tastings = (() => {
+                      try {
+                        return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+                      } catch (e) {
+                        return [];
+                      }
+                    })();
+                    const manualBeans = (() => {
+                      try {
+                        return JSON.parse(localStorage.getItem("beans") || "[]");
+                      } catch (e) {
+                        return [];
+                      }
+                    })();
 
                     // Gather all unique bean names
                     const allBeanNames = Array.from(new Set([
@@ -2772,7 +2918,14 @@ function App() {
                   <button
                     disabled={!newBean.name}
                     onClick={() => {
-                      const existing = JSON.parse(localStorage.getItem("beans") || "[]");
+                      const existing = (() => {
+                        try {
+                          return JSON.parse(localStorage.getItem("beans") || "[]");
+                        } catch (e) {
+                          console.warn("Failed to parse beans", e);
+                          return [];
+                        }
+                      })();
                       localStorage.setItem("beans", JSON.stringify([...existing, { ...newBean, id: Date.now() }]));
                       setNewBean({ name: "", origin: "", farm: "", purchaseDate: "", purchaseWeight: "" });
                       setBeansView("list");
@@ -2879,7 +3032,13 @@ function App() {
                         <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Stock</div>
                         <div className="text-sm font-bold text-zinc-200">
                           {(() => {
-                            const roasts = JSON.parse(localStorage.getItem("roasts") || "[]");
+                            const roasts = (() => {
+                              try {
+                                return JSON.parse(localStorage.getItem("roasts") || "[]");
+                              } catch (e) {
+                                return [];
+                              }
+                            })();
                             const usedWeight = roasts
                               .filter(r => r.beanName === selectedBean.name)
                               .reduce((sum, r) => sum + (Number(r.greenWeight) || 0), 0);
@@ -2896,13 +3055,25 @@ function App() {
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Roast Sessions</h3>
                     {(() => {
-                      const roasts = JSON.parse(localStorage.getItem("roasts") || "[]").filter(r => r.beanName === selectedBean.name);
+                      const roasts = (() => {
+                        try {
+                          return JSON.parse(localStorage.getItem("roasts") || "[]");
+                        } catch (e) {
+                          return [];
+                        }
+                      })().filter(r => r.beanName === selectedBean.name);
                       return <span className="text-[10px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full">{roasts.length} sessions</span>;
                     })()}
                   </div>
                   <div className="space-y-2">
                     {(() => {
-                      const roasts = JSON.parse(localStorage.getItem("roasts") || "[]").filter(r => r.beanName === selectedBean.name);
+                      const roasts = (() => {
+                        try {
+                          return JSON.parse(localStorage.getItem("roasts") || "[]");
+                        } catch (e) {
+                          return [];
+                        }
+                      })().filter(r => r.beanName === selectedBean.name);
                       if (roasts.length === 0) return <p className="text-sm text-zinc-600 italic py-2">No roast sessions found for this bean.</p>;
                       return roasts.map(r => (
                         <button
@@ -2932,13 +3103,25 @@ function App() {
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Tasting Notes</h3>
                     {(() => {
-                      const tastings = JSON.parse(localStorage.getItem("tastingNotes") || "[]").filter(t => t.beanName === selectedBean.name);
+                      const tastings = (() => {
+                        try {
+                          return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+                        } catch (e) {
+                          return [];
+                        }
+                      })().filter(t => t.beanName === selectedBean.name);
                       return <span className="text-[10px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full">{tastings.length} notes</span>;
                     })()}
                   </div>
                   <div className="space-y-2">
                     {(() => {
-                      const tastings = JSON.parse(localStorage.getItem("tastingNotes") || "[]").filter(t => t.beanName === selectedBean.name);
+                      const tastings = (() => {
+                        try {
+                          return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+                        } catch (e) {
+                          return [];
+                        }
+                      })().filter(t => t.beanName === selectedBean.name);
                       if (tastings.length === 0) return <p className="text-sm text-zinc-600 italic py-2">No tasting notes found for this bean.</p>;
                       return tastings.map(t => (
                         <button
@@ -3012,7 +3195,7 @@ function App() {
                 <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
                   <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Phase Timeline</div>
                   <div className="mt-4 space-y-3">
-                    {selectedRoast.milestones.map((m, i) => (
+                    {selectedRoast.roastLog.filter(e => e.type === "phase").map((m, i) => (
                       <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
                         <div className="text-sm font-semibold text-zinc-200">{m.label}</div>
                         <div className="font-mono text-xs text-amber-300/80">{formatTime(m.t)}</div>
@@ -3024,10 +3207,10 @@ function App() {
                 <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
                   <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Adjustment Log</div>
                   <div className="mt-4 space-y-3">
-                    {selectedRoast.adjustments.length === 0 ? (
+                    {selectedRoast.roastLog.filter(e => e.type === "adjustment" || e.type === "start_settings").length === 0 ? (
                       <div className="text-xs text-zinc-500">No adjustments logged.</div>
                     ) : (
-                      selectedRoast.adjustments.map((a, i) => (
+                      selectedRoast.roastLog.filter(e => e.type === "adjustment" || e.type === "start_settings").map((a, i) => (
                         <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
                           <div className="font-mono text-xs text-amber-300/80">{formatTime(a.t)}</div>
                           <div className="text-[11px] text-zinc-400">
