@@ -44,14 +44,14 @@ function RoastDetailChart({ roast }) {
   if (!roast || !roast.roastLog) return null;
 
   const chartData = [];
-  const startEntry = roast.roastLog.find((e) => e.type === "start_settings" || (e.type === "adjustment" && e.t === 0));
+  const startEntry = (roast.roastLog || []).find((e) => e.type === "start_settings" || (e.type === "adjustment" && e.t === 0));
   
   let currentHeat = startEntry?.heat || 0;
   let currentFan = startEntry?.fan || 0;
   let currentTemp = startEntry?.temp || 0;
 
   for (let t = 0; t <= (roast.totalSeconds || 0); t++) {
-    const logEntry = roast.roastLog.find((e) => e.t === t && (e.type === "adjustment" || e.type === "start_settings"));
+    const logEntry = (roast.roastLog || []).find((e) => e.t === t && (e.type === "adjustment" || e.type === "start_settings"));
     if (logEntry) {
       if (logEntry.heat) currentHeat = Number(logEntry.heat);
       if (logEntry.fan) currentFan = Number(logEntry.fan);
@@ -77,12 +77,12 @@ function RoastDetailChart({ roast }) {
     });
   }
 
-  const phases = roast.roastLog.filter((e) => e.type === "phase" && ["YELLOWING", "FIRST CRACK", "COOLING START"].includes(e.label));
+  const phases = (roast.roastLog || []).filter((e) => e.type === "phase" && ["YELLOWING", "FIRST CRACK", "COOLING START"].includes(e.label));
 
   const totalTime = formatMMSS(roast.totalSeconds || 0);
   
-  const firstCrack = roast.roastLog.find(e => e.label === "FIRST CRACK");
-  const coolingStart = roast.roastLog.find(e => e.label === "COOLING START");
+  const firstCrack = (roast.roastLog || []).find(e => e.label === "FIRST CRACK");
+  const coolingStart = (roast.roastLog || []).find(e => e.label === "COOLING START");
   
   let dtr = "—";
   if (firstCrack && coolingStart && (roast.totalSeconds || 0) > 0) {
@@ -115,7 +115,7 @@ function RoastDetailChart({ roast }) {
               itemStyle={{ padding: "2px 0" }}
             />
             
-            {phases.map((p, idx) => (
+            {phases?.map((p, idx) => (
               <ReferenceLine key={idx} x={p.t} stroke="#52525b" strokeDasharray="3 3">
                 <Label value={p.label} position="top" fill="#71717a" fontSize={10} offset={10} />
               </ReferenceLine>
@@ -741,9 +741,16 @@ function App() {
       setSyncStatus('syncing');
       const cloudRoasts = await fetchRoastsFromSupabase();
       
+      if (!cloudRoasts || !Array.isArray(cloudRoasts)) {
+        setSyncStatus('idle');
+        return;
+      }
+
       const localRoasts = (() => {
         try {
-          return JSON.parse(localStorage.getItem("roasts") || "[]");
+          const stored = localStorage.getItem("roasts");
+          const parsed = JSON.parse(stored || "[]");
+          return Array.isArray(parsed) ? parsed : [];
         } catch (e) {
           return [];
         }
@@ -976,8 +983,8 @@ function App() {
     if (isTimerRunning) return;
     
     // Find profiles for the current bean
-    const beanProfiles = profiles.filter(p => p.beanName === beanName);
-    if (beanProfiles.length > 0 || profiles.some(p => !p.beanName)) {
+    const beanProfiles = (profiles || []).filter(p => p.beanName === beanName);
+    if (beanProfiles.length > 0 || (profiles || []).some(p => !p.beanName)) {
       setShowRoastModeDialog(true);
     } else {
       startRoast(null);
@@ -1065,7 +1072,7 @@ function App() {
   const handleLogAdjustment = () => {
     setRoastLog((prev) => [
       { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp },
-      ...prev,
+      ...(prev || []),
     ]);
     setHeat("");
     setFan("");
@@ -1092,7 +1099,7 @@ function App() {
       console.warn("Failed to parse roasts for edit", e);
     }
 
-    const updated = existingRoasts.map(r => {
+    const updated = (existingRoasts || []).map(r => {
       if (r.id === editedRoast.id) {
         return {
           ...editedRoast,
@@ -1139,7 +1146,7 @@ function App() {
         return [];
       }
     })();
-    const updatedRoasts = existingRoasts.filter((r) => r.id !== id);
+    const updatedRoasts = (existingRoasts || []).filter((r) => r.id !== id);
     localStorage.setItem("roasts", JSON.stringify(updatedRoasts));
     
     // Supabase Sync
@@ -1387,9 +1394,9 @@ function App() {
               
               {profileFollowing && (
                 <div className="mt-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10">
-                  <div className="text-[10px] font-bold text-amber-500/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing.name}</div>
+                  <div className="text-[10px] font-bold text-amber-500/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
                   <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                    {profileFollowing.steps.map((step, idx) => {
+                    {(profileFollowing?.steps || []).map((step, idx) => {
                       const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
                       const isPast = elapsedSeconds > stepSeconds;
                       const isCurrent = currentProfileStepIdx === idx || (elapsedSeconds === stepSeconds);
@@ -1493,7 +1500,7 @@ function App() {
             {showRoastModeDialog && (
               <RoastModeDialog 
                 bean={selectedBean}
-                profiles={profiles.filter(p => !p.beanName || p.beanName === beanName)}
+                profiles={(profiles || []).filter(p => !p.beanName || p.beanName === beanName)}
                 onCancel={() => setShowRoastModeDialog(false)}
                 onSelectManual={() => startRoast(null)}
                 onSelectProfile={(p) => startRoast(p)}
@@ -1513,7 +1520,7 @@ function App() {
                   </div>
                 ) : (
                   <ul className="divide-y divide-zinc-800/60">
-                    {roastLog.map((entry, idx) => (
+                    {(roastLog || []).map((entry, idx) => (
                       <li key={`${entry.t}-${idx}`} className="px-4 py-3">
                         {entry.type === 'phase' ? (
                           <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
@@ -1709,7 +1716,7 @@ function App() {
                                 return [];
                               }
                             })();
-                            const roast = roasts.find(r => String(r.id) === id);
+                            const roast = (roasts || []).find(r => String(r.id) === id);
                             if (roast) setBrewBeanName(roast.beanName);
                           }
                         }}
@@ -2192,51 +2199,56 @@ function App() {
                   {(() => {
                     let savedRoasts = (() => {
                       try {
-                        return JSON.parse(localStorage.getItem("roasts") || "[]");
+                        const stored = localStorage.getItem("roasts");
+                        const parsed = JSON.parse(stored || "[]");
+                        return Array.isArray(parsed) ? parsed : [];
                       } catch (e) {
                         console.warn("Failed to parse roasts", e);
                         return [];
                       }
                     })();
                     if (historySearch) {
-                      savedRoasts = savedRoasts.filter(r => r.beanName.toLowerCase().includes(historySearch.toLowerCase()));
+                      savedRoasts = (savedRoasts || []).filter(r => r.beanName?.toLowerCase().includes(historySearch.toLowerCase()));
                     }
-                    if (savedRoasts.length === 0) {
+                    if (!savedRoasts || savedRoasts.length === 0) {
                       return (
                         <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
                           <div className="text-zinc-500 text-sm">
-                            {historySearch ? "No matching roasts found." : "No roasts logged yet. Start your first roast!"}
+                            No roast history found matching your search.
                           </div>
                         </div>
                       );
                     }
-                    return savedRoasts.map((roast) => (
+
+                    return (savedRoasts || []).map((roast) => (
                       <button
                         key={roast.id}
                         type="button"
                         onClick={() => setSelectedRoast(roast)}
-                        className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
+                        className="group relative flex w-full items-center justify-between rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 transition hover:bg-zinc-800/50 active:scale-[0.98]"
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <RoastSparkline 
-                              data={roast.roastLog
-                                .filter(e => (e.type === 'adjustment' || e.type === 'start_settings') && e.temp)
-                                .map(e => ({ temp: Number(e.temp) }))
-                              } 
-                            />
-                            <div>
-                              <div className="text-sm font-bold text-zinc-100">{roast.beanName}</div>
-                              <div className="mt-0.5 text-[11px] text-zinc-500">{roast.date}</div>
+                        <div className="flex items-center gap-4">
+                          <RoastSparkline 
+                            data={(roast.roastLog || [])
+                              .filter(e => (e.type === 'adjustment' || e.type === 'start_settings') && e.temp)
+                              .map(e => ({ temp: Number(e.temp) }))
+                            } 
+                          />
+                          <div className="text-left">
+                            <div className="text-xs font-bold uppercase tracking-widest text-zinc-500 group-hover:text-zinc-400 transition">
+                              {roast.date}
+                            </div>
+                            <div className="mt-0.5 text-lg font-bold tracking-tight text-zinc-100 group-hover:text-amber-400 transition">
+                              {roast.beanName}
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="font-mono text-sm font-semibold text-amber-400">
-                              {roast.duration}
-                            </div>
-                            <div className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
-                              {roast.targetLevel.split(" ")[0]}
-                            </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-mono text-sm font-semibold text-amber-400">
+                            {roast.duration}
+                          </div>
+                          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
+                            {roast.targetLevel?.split(" ")[0]}
                           </div>
                         </div>
                       </button>
@@ -2581,9 +2593,9 @@ function App() {
                       }
                     })();
                     if (historySearch) {
-                      savedTastings = savedTastings.filter(t => (t.beanName || "Unknown Bean").toLowerCase().includes(historySearch.toLowerCase()));
+                      savedTastings = (savedTastings || []).filter(t => (t.beanName || "Unknown Bean").toLowerCase().includes(historySearch.toLowerCase()));
                     }
-                    if (savedTastings.length === 0) {
+                    if (!savedTastings || savedTastings.length === 0) {
                       return (
                         <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
                           <div className="text-zinc-500 text-sm">
@@ -2692,12 +2704,12 @@ function App() {
                               {FLAVOR_FAMILIES.find(f => f.id === familyId)?.label}
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              {selectedTastingNote.descriptors?.filter(d => {
+                              {(selectedTastingNote.descriptors || [])?.filter(d => {
                                 const familyOptions = FLAVOR_DRILLDOWN[familyId];
                                 if (typeof familyOptions === 'object' && !Array.isArray(familyOptions)) {
                                   return Object.values(familyOptions).flat().includes(d);
                                 }
-                                return familyOptions.includes(d);
+                                return (familyOptions || []).includes(d);
                               }).map((d, i) => (
                                 <span key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300">
                                   {d}
@@ -2775,9 +2787,9 @@ function App() {
 
                     // Gather all unique bean names
                     const allBeanNames = Array.from(new Set([
-                      ...roasts.map(r => r.beanName),
-                      ...tastings.map(t => t.beanName),
-                      ...manualBeans.map(b => b.name)
+                      ...(roasts || []).map(r => r.beanName),
+                      ...(tastings || []).map(t => t.beanName),
+                      ...(manualBeans || []).map(b => b.name)
                     ])).filter(Boolean);
 
                     if (allBeanNames.length === 0) {
@@ -2793,12 +2805,12 @@ function App() {
                     }
 
                     return allBeanNames.map(name => {
-                      const beanRoasts = roasts.filter(r => r.beanName === name);
-                      const beanTastings = tastings.filter(t => t.beanName === name);
-                      const manualData = manualBeans.find(b => b.name === name);
+                      const beanRoasts = (roasts || []).filter(r => r.beanName === name);
+                      const beanTastings = (tastings || []).filter(t => t.beanName === name);
+                      const manualData = (manualBeans || []).find(b => b.name === name);
                       
                       // Calculate average rating
-                      const ratings = beanTastings.map(t => t.rating).filter(r => r > 0);
+                      const ratings = (beanTastings || []).map(t => t.rating).filter(r => r > 0);
                       const avgRating = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : null;
                       
                       // Find most recent activity date
@@ -2969,10 +2981,10 @@ function App() {
                     </button>
                   </div>
                   <div className="space-y-2">
-                    {profiles.filter(p => p.beanName === selectedBean.name).length === 0 ? (
+                    {(profiles || []).filter(p => p.beanName === selectedBean.name).length === 0 ? (
                       <p className="text-sm text-zinc-600 italic py-2">No profiles saved for this bean.</p>
                     ) : (
-                      profiles.filter(p => p.beanName === selectedBean.name).map(p => (
+                      (profiles || []).filter(p => p.beanName === selectedBean.name).map(p => (
                         <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
                           <div>
                             <div className="font-bold text-zinc-100 flex items-center gap-2">
@@ -2997,7 +3009,7 @@ function App() {
                               </button>
                             )}
                             <button 
-                              onClick={() => setProfiles(profiles.filter(profile => profile.id !== p.id))}
+                              onClick={() => setProfiles((profiles || []).filter(profile => profile.id !== p.id))}
                               className="text-[10px] font-bold text-red-500/60 hover:text-red-500 transition"
                             >
                               DELETE
@@ -3039,7 +3051,7 @@ function App() {
                                 return [];
                               }
                             })();
-                            const usedWeight = roasts
+                            const usedWeight = (roasts || [])
                               .filter(r => r.beanName === selectedBean.name)
                               .reduce((sum, r) => sum + (Number(r.greenWeight) || 0), 0);
                             const remaining = (Number(selectedBean.purchaseWeight) || 0) - usedWeight;
@@ -3195,7 +3207,7 @@ function App() {
                 <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
                   <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Phase Timeline</div>
                   <div className="mt-4 space-y-3">
-                    {selectedRoast.roastLog.filter(e => e.type === "phase").map((m, i) => (
+                    {(selectedRoast.roastLog || []).filter(e => e.type === "phase").map((m, i) => (
                       <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
                         <div className="text-sm font-semibold text-zinc-200">{m.label}</div>
                         <div className="font-mono text-xs text-amber-300/80">{formatTime(m.t)}</div>
@@ -3207,10 +3219,10 @@ function App() {
                 <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
                   <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Adjustment Log</div>
                   <div className="mt-4 space-y-3">
-                    {selectedRoast.roastLog.filter(e => e.type === "adjustment" || e.type === "start_settings").length === 0 ? (
+                    {((selectedRoast.roastLog || []).filter(e => e.type === "adjustment" || e.type === "start_settings")).length === 0 ? (
                       <div className="text-xs text-zinc-500">No adjustments logged.</div>
                     ) : (
-                      selectedRoast.roastLog.filter(e => e.type === "adjustment" || e.type === "start_settings").map((a, i) => (
+                      (selectedRoast.roastLog || []).filter(e => e.type === "adjustment" || e.type === "start_settings").map((a, i) => (
                         <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
                           <div className="font-mono text-xs text-amber-300/80">{formatTime(a.t)}</div>
                           <div className="text-[11px] text-zinc-400">
@@ -3286,18 +3298,18 @@ function App() {
                     </div>
 
                     <div className="space-y-4">
-                      {selectedTastingNote.families?.map(familyId => (
+                      {(selectedTastingNote.families || [])?.map(familyId => (
                         <div key={familyId}>
                           <div className="text-[10px] uppercase tracking-widest font-black text-zinc-400 mb-2">
                             {FLAVOR_FAMILIES.find(f => f.id === familyId)?.label}
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {selectedTastingNote.descriptors?.filter(d => {
+                            {(selectedTastingNote.descriptors || [])?.filter(d => {
                               const familyOptions = FLAVOR_DRILLDOWN[familyId];
                               if (typeof familyOptions === 'object' && !Array.isArray(familyOptions)) {
                                 return Object.values(familyOptions).flat().includes(d);
                               }
-                              return familyOptions.includes(d);
+                              return (familyOptions || []).includes(d);
                             }).map((d, i) => (
                               <span key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300">
                                 {d}
@@ -3314,7 +3326,7 @@ function App() {
                         <h3 className="text-xl font-black uppercase tracking-tight mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
                         <div className="w-10 h-[2px] bg-amber-500 my-4" />
                         <div className="text-base font-bold text-amber-600 tracking-tight italic leading-relaxed">
-                          {selectedTastingNote.descriptors?.slice(0, 5).join(' · ')}
+                          {(selectedTastingNote.descriptors || [])?.slice(0, 5).join(' · ')}
                         </div>
                       </div>
                     </section>
