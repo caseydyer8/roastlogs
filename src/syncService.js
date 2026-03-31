@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
 export async function syncRoastToSupabase(roast) {
+  console.log('syncRoastToSupabase called with id:', roast.id)
   try {
     const { data, error } = await supabase
       .from('roasts')
@@ -46,9 +47,16 @@ export async function fetchRoastsFromSupabase() {
       .from('roasts')
       .select('*');
 
-    if (error) throw error;
+    if (error) {
+      console.warn("Supabase error fetching roasts:", error);
+      return [];
+    }
 
-    return (data || []).map(r => ({
+    if (!data || !Array.isArray(data)) {
+      return [];
+    }
+
+    return data.map(r => ({
       id: r.id,
       date: r.date,
       beanName: r.bean_name,
