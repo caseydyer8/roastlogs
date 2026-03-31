@@ -1238,6 +1238,7 @@ function App() {
       ratio: brewRatio === "Custom" ? customRatio : brewRatio,
       grindSize: brewGrindSize,
       temp: brewTemp,
+      photo: brewPhoto,
       acidity: acidityRating,
       body: bodyRating,
       families: selectedFamilies,
@@ -1271,6 +1272,7 @@ function App() {
     setBrewAgain(null);
     setBrewNotes("");
     setCustomRatio("");
+    setBrewPhoto(null);
   };
 
   let ActiveIcon = null;
@@ -1846,13 +1848,51 @@ function App() {
                       />
                     </label>
 
-                    <button
-                      type="button"
-                      className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-800 bg-zinc-950/20 py-8 text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-400"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-                      <span className="text-xs font-medium">Tap to add photo</span>
-                    </button>
+                    <div className="text-xs font-medium text-zinc-300">Photo</div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      id="brewPhotoInput"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onloadend = () => setBrewPhoto(reader.result);
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                    {!brewPhoto ? (
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('brewPhotoInput').click()}
+                        className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-800 bg-zinc-950/20 py-8 text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-400"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                        <span className="text-xs font-medium">Tap to add photo</span>
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="relative rounded-3xl overflow-hidden border border-zinc-800">
+                          <img src={brewPhoto} alt="Brew" className="w-full h-48 object-cover" />
+                          <button 
+                            type="button"
+                            onClick={() => setBrewPhoto(null)}
+                            className="absolute top-2 right-2 rounded-full bg-zinc-950/60 p-2 text-white hover:bg-zinc-950 transition"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                          </button>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => setBrewPhoto(null)}
+                          className="text-red-400 text-xs font-bold"
+                        >
+                          REMOVE PHOTO
+                        </button>
+                      </div>
+                    )}
 
                     <button
                       onClick={() => setBrewStep(1)}
@@ -2713,6 +2753,15 @@ function App() {
                   </button>
 
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
+                    {selectedTastingNote.photo && (
+                      <div className="mb-6 rounded-3xl overflow-hidden border border-zinc-800/50 shadow-lg">
+                        <img 
+                          src={selectedTastingNote.photo} 
+                          alt="Brew" 
+                          className="w-full h-48 object-cover"
+                        />
+                      </div>
+                    )}
                     <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedTastingNote.date}</div>
                     <h2 className="mt-2 text-3xl font-bold text-zinc-50 leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
                     <div className="mt-1 text-sm font-medium text-amber-500/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
