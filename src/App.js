@@ -514,7 +514,7 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
   const addStep = () => {
     setProfile(prev => ({
       ...prev,
-      steps: [...prev.steps, { totalSeconds: 0, heat: "5", fan: "5" }].sort((a, b) => a.totalSeconds - b.totalSeconds)
+      steps: [...prev.steps, { totalSeconds: 0, heat: "5", fan: "5" }]
     }));
   };
 
@@ -574,11 +574,31 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
               <div className="flex-1 grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
-                  <input type="number" min="1" max="9" value={step.heat} onChange={e => updateStep(idx, 'heat', e.target.value)} className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100" />
+                  <input
+                    type="number"
+                    min="1"
+                    max="9"
+                    value={step.heat}
+                    onChange={e => {
+                      const val = Math.min(9, Math.max(1, Number(e.target.value)));
+                      updateStep(idx, "heat", String(val));
+                    }}
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  />
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
-                  <input type="number" min="1" max="9" value={step.fan} onChange={e => updateStep(idx, 'fan', e.target.value)} className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100" />
+                  <input
+                    type="number"
+                    min="1"
+                    max="9"
+                    value={step.fan}
+                    onChange={e => {
+                      const val = Math.min(9, Math.max(1, Number(e.target.value)));
+                      updateStep(idx, "fan", String(val));
+                    }}
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  />
                 </div>
               </div>
               <button onClick={() => setProfile({...profile, steps: profile.steps.filter((_, i) => i !== idx)})} className="text-red-500 p-2 text-xl">×</button>
@@ -717,6 +737,7 @@ function App() {
   const [brewRatio, setBrewRatio] = React.useState("1:16");
   const [brewGrindSize, setBrewGrindSize] = React.useState("Medium");
   const [brewTemp, setBrewTemp] = React.useState("");
+  const [customRatio, setCustomRatio] = React.useState("");
   const [brewPhoto, setBrewPhoto] = React.useState(null);
   
   // New Tasting wizard state
@@ -1082,6 +1103,24 @@ function App() {
 
   const handleSaveEdit = () => {
     if (!editedRoast) return;
+
+    // Recalculate duration and dev seconds based on roastLog
+    const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
+    const firstCrack = editedRoast.roastLog.find(e => e.label === "FIRST CRACK");
+    
+    const totalSeconds = coolingStart ? coolingStart.t : editedRoast.totalSeconds;
+    const duration = formatTime(totalSeconds);
+    const devSeconds = (firstCrack && coolingStart) ? (coolingStart.t - firstCrack.t) : editedRoast.devSeconds;
+
+    const roastToSave = {
+      ...editedRoast,
+      totalSeconds,
+      duration,
+      devSeconds,
+      greenWeight: parseFloat(editedRoast.greenWeight) || 0,
+      roastedWeight: parseFloat(editedRoast.roastedWeight) || 0
+    };
+
     const existingRoasts = [];
     try {
       const stored = localStorage.getItem("roasts");
@@ -1100,14 +1139,8 @@ function App() {
     }
 
     const updated = (existingRoasts || []).map(r => {
-      if (r.id === editedRoast.id) {
-        return {
-          ...editedRoast,
-          greenWeight: parseFloat(editedRoast.greenWeight) || 0,
-          roastedWeight: parseFloat(editedRoast.roastedWeight) || 0,
-          totalSeconds: editedRoast.totalSeconds || 0,
-          devSeconds: editedRoast.devSeconds || 0
-        };
+      if (r.id === roastToSave.id) {
+        return roastToSave;
       }
       return r;
     });
@@ -1116,11 +1149,11 @@ function App() {
     
     // Supabase Sync
     setSyncStatus('syncing');
-    syncRoastToSupabase(editedRoast).then(success => {
+    syncRoastToSupabase(roastToSave).then(success => {
       setSyncStatus(success ? 'success' : 'error');
     });
 
-    setSelectedRoast(editedRoast);
+    setSelectedRoast(roastToSave);
     setHasChanges(false);
   };
 
@@ -1202,7 +1235,7 @@ function App() {
       beanName: brewBeanName,
       method: brewMethod,
       device: brewDevice,
-      ratio: brewRatio,
+      ratio: brewRatio === "Custom" ? customRatio : brewRatio,
       grindSize: brewGrindSize,
       temp: brewTemp,
       acidity: acidityRating,
@@ -1237,6 +1270,7 @@ function App() {
     setBrewRating(0);
     setBrewAgain(null);
     setBrewNotes("");
+    setCustomRatio("");
   };
 
   let ActiveIcon = null;
@@ -1779,6 +1813,15 @@ function App() {
                         >
                           {WATER_RATIOS.map(r => <option key={r} value={r}>{r}</option>)}
                         </select>
+                        {brewRatio === "Custom" && (
+                          <input
+                            type="text"
+                            placeholder="e.g. 1:15.5"
+                            value={customRatio}
+                            onChange={(e) => setCustomRatio(e.target.value)}
+                            className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          />
+                        )}
                       </label>
                       <label className="block">
                         <div className="text-xs font-medium text-zinc-300">Grind Size</div>
@@ -2363,30 +2406,30 @@ function App() {
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
                         {!isEditingRoast ? (
                           <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
-                        ) : (
-                          <input 
-                            type="text" 
-                            value={editedRoast.duration} 
-                            onChange={(e) => updateEditedRoast('duration', e.target.value)}
-                            className="w-24 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-amber-400"
-                          />
-                        )}
+                        ) : (() => {
+                          const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
+                          const durationSeconds = coolingStart ? coolingStart.t : editedRoast.totalSeconds;
+                          return (
+                            <div className="text-sm font-bold text-amber-400 font-mono">
+                              {formatTime(durationSeconds)}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="col-span-1">
                         <div className="text-[10px] uppercase tracking-widest text-red-500">Dev Time</div>
                         {!isEditingRoast ? (
                           <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <input 
-                              type="number" 
-                              value={editedRoast.devSeconds} 
-                              onChange={(e) => updateEditedRoast('devSeconds', e.target.value)}
-                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-red-400"
-                            />
-                            <span className="text-sm text-red-500/60">s</span>
-                          </div>
-                        )}
+                        ) : (() => {
+                          const firstCrack = editedRoast.roastLog.find(e => e.label === "FIRST CRACK");
+                          const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
+                          const devSeconds = (firstCrack && coolingStart) ? (coolingStart.t - firstCrack.t) : editedRoast.devSeconds;
+                          return (
+                            <div className="text-sm font-bold text-red-400 font-mono">
+                              {devSeconds}s
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="col-span-2">
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
@@ -2476,9 +2519,15 @@ function App() {
                                   </div>
                                 ) : (
                                   <input 
-                                    type="number" 
-                                    value={entry.t} 
-                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    type="text" 
+                                    value={formatTime(entry.t)} 
+                                    onChange={(e) => {
+                                      const parts = e.target.value.split(':');
+                                      if (parts.length === 2) {
+                                        const seconds = (parseInt(parts[0]) * 60) + parseInt(parts[1]);
+                                        updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
+                                      }
+                                    }}
                                     className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16 text-right"
                                   />
                                 )}
@@ -2491,9 +2540,15 @@ function App() {
                                   </div>
                                 ) : (
                                   <input 
-                                    type="number" 
-                                    value={entry.t} 
-                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    type="text" 
+                                    value={formatTime(entry.t)} 
+                                    onChange={(e) => {
+                                      const parts = e.target.value.split(':');
+                                      if (parts.length === 2) {
+                                        const seconds = (parseInt(parts[0]) * 60) + parseInt(parts[1]);
+                                        updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
+                                      }
+                                    }}
                                     className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
                                   />
                                 )}
@@ -2533,9 +2588,15 @@ function App() {
                                   </div>
                                 ) : (
                                   <input 
-                                    type="number" 
-                                    value={entry.t} 
-                                    onChange={(e) => updateLogEntry(i, 't', Number(e.target.value))}
+                                    type="text" 
+                                    value={formatTime(entry.t)} 
+                                    onChange={(e) => {
+                                      const parts = e.target.value.split(':');
+                                      if (parts.length === 2) {
+                                        const seconds = (parseInt(parts[0]) * 60) + parseInt(parts[1]);
+                                        updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
+                                      }
+                                    }}
                                     className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
                                   />
                                 )}
