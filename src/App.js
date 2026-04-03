@@ -746,7 +746,7 @@ function App() {
   const [bodyRating, setBodyRating] = React.useState(3);
   const [selectedFamilies, setSelectedFamilies] = React.useState([]);
   const [selectedDescriptors, setSelectedDescriptors] = React.useState([]);
-  const [expandedFruitType, setExpandedFruitType] = React.useState(null);
+  const [expandedFruitType, setExpandedFruitType] = React.useState([]);
   const [selectedTastingNote, setSelectedTastingNote] = React.useState(null);
   const [selectedTastingPhotoDataUrl, setSelectedTastingPhotoDataUrl] = React.useState(null);
   const [showTastingHistory, setShowTastingHistory] = React.useState(false);
@@ -1381,7 +1381,7 @@ function App() {
     setBodyRating(3);
     setSelectedFamilies([]);
     setSelectedDescriptors([]);
-    setExpandedFruitType(null);
+    setExpandedFruitType([]);
     setBrewRating(0);
     setBrewAgain(null);
     setBrewNotes("");
@@ -2060,12 +2060,12 @@ function App() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex justify-between px-1 text-[10px] uppercase tracking-tighter text-zinc-500">
-                      <span>Flat</span>
-                      <span>Low</span>
-                      <span>Medium</span>
-                      <span>Bright</span>
-                      <span>Vibrant</span>
+                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-zinc-500">
+                      <span className="text-center">Delicate</span>
+                      <span className="text-center">Mild</span>
+                      <span className="text-center">Balanced</span>
+                      <span className="text-center">Bright</span>
+                      <span className="text-center">Sharp</span>
                     </div>
                   </div>
 
@@ -2084,12 +2084,12 @@ function App() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex justify-between px-1 text-[10px] uppercase tracking-tighter text-zinc-500">
-                      <span>Watery</span>
-                      <span>Light</span>
-                      <span>Medium</span>
-                      <span>Full</span>
-                      <span>Syrupy</span>
+                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-zinc-500">
+                      <span className="text-center">Watery</span>
+                      <span className="text-center">Delicate</span>
+                      <span className="text-center">Medium</span>
+                      <span className="text-center">Round</span>
+                      <span className="text-center">Syrupy</span>
                     </div>
                   </div>
                 </div>
@@ -2187,18 +2187,26 @@ function App() {
                             {Object.keys(options).map(type => (
                               <button
                                 key={type}
-                                onClick={() => setExpandedFruitType(expandedFruitType === type ? null : type)}
+                                onClick={() => {
+                                  if (expandedFruitType.includes(type)) {
+                                    setExpandedFruitType(expandedFruitType.filter(t => t !== type));
+                                  } else {
+                                    setExpandedFruitType([...expandedFruitType, type]);
+                                  }
+                                }}
                                 className={`rounded-xl border px-3 py-2 text-[10px] font-bold tracking-widest transition ${
-                                  expandedFruitType === type ? "border-amber-500 bg-amber-500/20 text-amber-300" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                                  expandedFruitType.includes(type) ? "border-amber-500 bg-amber-500/20 text-amber-300" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
                                 }`}
                               >
                                 {type.replace('_', ' ')}
                               </button>
                             ))}
                           </div>
-                          {expandedFruitType && (
-                            <div className="flex flex-wrap gap-2 rounded-2xl bg-zinc-950/30 p-4 border border-zinc-800/40">
-                              {options[expandedFruitType].map(opt => (
+                          {expandedFruitType.length > 0 && (
+                            <>
+                              {expandedFruitType.map(type => (
+                                <div key={type} className="flex flex-wrap gap-2 rounded-2xl bg-zinc-950/30 p-4 border border-zinc-800/40">
+                                  {options[type].map(opt => (
                                 <button
                                   key={opt}
                                   onClick={() => {
@@ -2214,7 +2222,9 @@ function App() {
                                   {opt}
                                 </button>
                               ))}
-                            </div>
+                                </div>
+                              ))}
+                            </>
                           )}
                         </div>
                       );
@@ -2302,8 +2312,13 @@ function App() {
                     
                     <div className="w-12 h-[2px] bg-amber-500 mb-6" />
                     
-                    <div className="text-lg font-bold text-amber-600 tracking-tight leading-relaxed italic">
-                      {selectedDescriptors?.slice(0, 5).join(' · ')}
+                    <div className="space-y-2">
+                      <div className="text-lg font-bold text-amber-600 tracking-tight leading-relaxed italic">
+                        {selectedDescriptors?.join(' · ')}
+                      </div>
+                      <div className="text-sm font-medium text-zinc-600">
+                        Acidity: {["Delicate", "Mild", "Balanced", "Bright", "Sharp"][acidityRating-1]} <span className="mx-2">·</span> Body: {["Watery", "Delicate", "Medium", "Round", "Syrupy"][bodyRating-1]}
+                      </div>
                     </div>
                   </div>
                 </section>
