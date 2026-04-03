@@ -10,7 +10,7 @@ import {
   ReferenceLine,
   Label,
 } from "recharts";
-import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase } from "./syncService";
+import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
 
 const TABS = ["Roast", "History", "Brew", "Beans", "Settings"];
 
@@ -833,6 +833,8 @@ function App() {
   React.useEffect(() => {
     const performInitialSync = async () => {
       setSyncStatus('syncing');
+      
+      // Sync roasts
       const cloudRoasts = await fetchRoastsFromSupabase();
       
       if (!cloudRoasts || !Array.isArray(cloudRoasts)) {
@@ -865,7 +867,39 @@ function App() {
         mergedRoasts.sort((a, b) => b.id - a.id);
         localStorage.setItem("roasts", JSON.stringify(mergedRoasts));
       }
-      setSyncStatus(cloudRoasts.length > 0 || localRoasts.length > 0 ? 'success' : 'idle');
+      
+      // Sync brews/tasting notes
+      const cloudBrews = await fetchBrewsFromSupabase();
+      
+      if (cloudBrews && Array.isArray(cloudBrews)) {
+        const localBrews = (() => {
+          try {
+            const stored = localStorage.getItem("tastingNotes");
+            const parsed = JSON.parse(stored || "[]");
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (e) {
+            return [];
+          }
+        })();
+
+        const mergedBrews = [...localBrews];
+        let hasNewBrewData = false;
+
+        cloudBrews.forEach(cloudBrew => {
+          const localIndex = mergedBrews.findIndex(b => Number(b.id) === Number(cloudBrew.id));
+          if (localIndex === -1) {
+            mergedBrews.push(cloudBrew);
+            hasNewBrewData = true;
+          }
+        });
+
+        if (hasNewBrewData) {
+          mergedBrews.sort((a, b) => b.id - a.id);
+          localStorage.setItem("tastingNotes", JSON.stringify(mergedBrews));
+        }
+      }
+      
+      setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
     };
     performInitialSync();
   }, []);
@@ -1330,6 +1364,13 @@ function App() {
       }
     })();
     localStorage.setItem("tastingNotes", JSON.stringify([newBrew, ...existingBrews]));
+    
+    // Supabase Sync
+    setSyncStatus('syncing');
+    syncBrewToSupabase(newBrew).then(success => {
+      setSyncStatus(success ? 'success' : 'error');
+    });
+    
     setBrewStep(0);
     // Reset wizard
     setBrewLinkedRoastId("");
