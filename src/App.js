@@ -739,6 +739,7 @@ function App() {
   const [brewTemp, setBrewTemp] = React.useState("");
   const [customRatio, setCustomRatio] = React.useState("");
   const [brewPhoto, setBrewPhoto] = React.useState(null);
+  const [brewPhotoDataUrl, setBrewPhotoDataUrl] = React.useState(null);
   
   // New Tasting wizard state
   const [acidityRating, setAcidityRating] = React.useState(3);
@@ -747,6 +748,7 @@ function App() {
   const [selectedDescriptors, setSelectedDescriptors] = React.useState([]);
   const [expandedFruitType, setExpandedFruitType] = React.useState(null);
   const [selectedTastingNote, setSelectedTastingNote] = React.useState(null);
+  const [selectedTastingPhotoDataUrl, setSelectedTastingPhotoDataUrl] = React.useState(null);
   const [showTastingHistory, setShowTastingHistory] = React.useState(false);
   const [historySegment, setHistorySegment] = React.useState("ROASTS");
   const [historySearch, setHistorySearch] = React.useState("");
@@ -755,6 +757,77 @@ function App() {
   const [hasChanges, setHasChanges] = React.useState(false);
   const [showDiscardModal, setShowDiscardModal] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState('idle'); // 'idle', 'syncing', 'success', 'error'
+
+  // IndexedDB photo storage functions
+  async function savePhotoLocally(key, base64) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('roastlogs-photos', 1);
+      request.onupgradeneeded = (e) => {
+        e.target.result.createObjectStore('photos');
+      };
+      request.onsuccess = (e) => {
+        const db = e.target.result;
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').put(base64, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function getPhotoLocally(key) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('roastlogs-photos', 1);
+      request.onupgradeneeded = (e) => {
+        e.target.result.createObjectStore('photos');
+      };
+      request.onsuccess = (e) => {
+        const db = e.target.result;
+        const tx = db.transaction('photos', 'readonly');
+        const req = tx.objectStore('photos').get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  // Load photo data when photo key changes
+  React.useEffect(() => {
+    const loadPhoto = async () => {
+      if (brewPhoto) {
+        try {
+          const dataUrl = await getPhotoLocally(brewPhoto);
+          setBrewPhotoDataUrl(dataUrl);
+        } catch (error) {
+          console.error('Failed to load photo:', error);
+          setBrewPhotoDataUrl(null);
+        }
+      } else {
+        setBrewPhotoDataUrl(null);
+      }
+    };
+    loadPhoto();
+  }, [brewPhoto]);
+
+  // Load tasting note photo data when tasting note changes
+  React.useEffect(() => {
+    const loadTastingPhoto = async () => {
+      if (selectedTastingNote?.photo) {
+        try {
+          const dataUrl = await getPhotoLocally(selectedTastingNote.photo);
+          setSelectedTastingPhotoDataUrl(dataUrl);
+        } catch (error) {
+          console.error('Failed to load tasting photo:', error);
+          setSelectedTastingPhotoDataUrl(null);
+        }
+      } else {
+        setSelectedTastingPhotoDataUrl(null);
+      }
+    };
+    loadTastingPhoto();
+  }, [selectedTastingNote]);
 
   // Supabase sync on mount
   React.useEffect(() => {
@@ -1273,6 +1346,7 @@ function App() {
     setBrewNotes("");
     setCustomRatio("");
     setBrewPhoto(null);
+    setBrewPhotoDataUrl(null);
   };
 
   let ActiveIcon = null;
@@ -1855,15 +1929,24 @@ function App() {
                       capture="environment"
                       id="brewPhotoInput"
                       className="hidden"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files[0];
                         if (!file) return;
                         const reader = new FileReader();
-                        reader.onloadend = () => setBrewPhoto(reader.result);
+                        reader.onloadend = async () => {
+                          const base64 = reader.result;
+                          const photoKey = `brew-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                          try {
+                            await savePhotoLocally(photoKey, base64);
+                            setBrewPhoto(photoKey);
+                          } catch (error) {
+                            console.error('Failed to save photo:', error);
+                          }
+                        };
                         reader.readAsDataURL(file);
                       }}
                     />
-                    {!brewPhoto ? (
+                    {!brewPhotoDataUrl ? (
                       <button
                         type="button"
                         onClick={() => document.getElementById('brewPhotoInput').click()}
@@ -1875,7 +1958,7 @@ function App() {
                     ) : (
                       <div className="space-y-2">
                         <div className="relative rounded-3xl overflow-hidden border border-zinc-800">
-                          <img src={brewPhoto} alt="Brew" className="w-full h-48 object-cover" />
+                          <img src={brewPhotoDataUrl} alt="Brew" className="w-full h-48 object-cover" />
                           <button 
                             type="button"
                             onClick={() => setBrewPhoto(null)}
@@ -2753,10 +2836,10 @@ function App() {
                   </button>
 
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                    {selectedTastingNote.photo && (
+                    {selectedTastingPhotoDataUrl && (
                       <div className="mb-6 rounded-3xl overflow-hidden border border-zinc-800/50 shadow-lg">
                         <img 
-                          src={selectedTastingNote.photo} 
+                          src={selectedTastingPhotoDataUrl} 
                           alt="Brew" 
                           className="w-full h-48 object-cover"
                         />
