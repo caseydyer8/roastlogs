@@ -616,15 +616,19 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 }
 
 function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCancel }) {
+  // Filter profiles from the already-filtered props
+  const beanSpecificProfiles = (profiles || []).filter(p => p.beanName && p.beanName !== "");
+  const genericProfiles = (profiles || []).filter(p => !p.beanName || p.beanName === "");
+  
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
       <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
         <h3 className="text-xl font-bold text-white mb-6 text-center">Start Roast</h3>
         <div className="space-y-3">
-          {profiles.length > 0 && (
+          {beanSpecificProfiles.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">Follow a saved profile</div>
-              {profiles.map(p => (
+              <div className="text-[10px] font-bold uppercase tracking-widest text-amber-500 ml-1">FOR THIS BEAN</div>
+              {beanSpecificProfiles.map(p => (
                 <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
                   <div className="font-bold text-zinc-100">{p.name}</div>
                   <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
@@ -632,6 +636,21 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
               ))}
             </div>
           )}
+          
+          {genericProfiles.length > 0 && (
+            <div className="space-y-2">
+              {beanSpecificProfiles.length > 0 && (
+                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">GENERIC PROFILES</div>
+              )}
+              {genericProfiles.map(p => (
+                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
+                  <div className="font-bold text-zinc-100">{p.name}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                </button>
+              ))}
+            </div>
+          )}
+          
           <div className="pt-2">
             <button onClick={onSelectManual} className="w-full p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold hover:bg-amber-500/20 transition">
               MANUAL ROAST
@@ -706,6 +725,7 @@ function App() {
   const [profileBuilder, setProfileBuilder] = React.useState({ name: "", steps: [], isDefault: false });
   const [isProfileBuilderOpen, setIsProfileBuilderOpen] = React.useState(false);
   const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
+  const [deleteConfirmModal, setDeleteConfirmModal] = React.useState({ show: false, profileName: '', isDeleteAll: false });
 
   const [heat, setHeat] = React.useState("");
   const [fan, setFan] = React.useState("");
@@ -1507,6 +1527,33 @@ function App() {
               </div>
             </section>
 
+            {/* PROMINENT PROFILE BUILDER CARD */}
+            {elapsedSeconds === 0 && !isTimerRunning && (
+              <section 
+                onClick={() => setIsProfileBuilderOpen(true)}
+                className="rounded-3xl bg-amber-500/10 border border-amber-500/20 p-4 cursor-pointer hover:bg-amber-500/15 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="text-amber-500">
+                      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="font-bold text-amber-400">Build Profile</div>
+                      <div className="text-xs text-zinc-400">Create a step-by-step heat & fan plan before you roast</div>
+                    </div>
+                  </div>
+                  <div className="text-amber-500">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </div>
+              </section>
+            )}
+
             {/* 2) LARGE TIMER */}
             <section className="rounded-3xl border border-zinc-800/60 bg-gradient-to-b from-zinc-900/35 to-zinc-900/10 p-5 text-center">
               <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -1530,16 +1577,6 @@ function App() {
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                   Phase Milestones
-                </div>
-                <div className="flex gap-2">
-                  {elapsedSeconds === 0 && !isTimerRunning && (
-                    <button
-                      onClick={() => setIsProfileBuilderOpen(true)}
-                      className="rounded-lg bg-zinc-800 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-200 transition"
-                    >
-                      BUILD PROFILE
-                    </button>
-                  )}
                 </div>
               </div>
               
@@ -1651,7 +1688,7 @@ function App() {
             {showRoastModeDialog && (
               <RoastModeDialog 
                 bean={selectedBean}
-                profiles={(profiles || []).filter(p => !p.beanName || p.beanName === beanName)}
+                profiles={(profiles || []).filter(p => !p.beanName || p.beanName === "" || p.beanName === beanName)}
                 onCancel={() => setShowRoastModeDialog(false)}
                 onSelectManual={() => startRoast(null)}
                 onSelectProfile={(p) => startRoast(p)}
@@ -3608,6 +3645,43 @@ function App() {
                 </button>
               </div>
             </ScreenCard>
+            
+            <ScreenCard title="Manage Profiles" subtitle="Profile Management">
+              <div className="space-y-3">
+                {(profiles || []).map(p => (
+                  <div key={p.id} className="flex items-center justify-between p-3 bg-zinc-900/30 rounded-2xl border border-zinc-800/40">
+                    <div className="flex-1">
+                      <div className="font-medium text-zinc-100">{p.name}</div>
+                      <div className="text-xs text-zinc-400 mt-1">
+                        {p.beanName ? `Bean: ${p.beanName}` : <span className="italic text-zinc-500">No bean linked</span>}
+                        <span className="ml-2">• {p.steps.length} steps</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setDeleteConfirmModal({ show: true, profileName: p.name, isDeleteAll: false })}
+                      className="px-3 py-1 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl hover:bg-red-500/20 transition"
+                    >
+                      DELETE
+                    </button>
+                  </div>
+                ))}
+                
+                {profiles.length === 0 && (
+                  <div className="text-center py-8 text-zinc-500 text-sm">
+                    No saved profiles yet.
+                  </div>
+                )}
+                
+                {profiles.length > 0 && (
+                  <button
+                    onClick={() => setDeleteConfirmModal({ show: true, profileName: '', isDeleteAll: true })}
+                    className="w-full py-3 text-sm font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-2xl hover:bg-red-500/20 transition"
+                  >
+                    DELETE ALL PROFILES
+                  </button>
+                )}
+              </div>
+            </ScreenCard>
           </div>
         )}
       </main>
@@ -3637,6 +3711,40 @@ function App() {
           onDelete={handleNumpadDelete}
           onDone={() => setActiveNumpad(null)}
         />
+      )}
+
+      {deleteConfirmModal.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-4">
+              {deleteConfirmModal.isDeleteAll 
+                ? `Delete all ${profiles.length} profiles? This cannot be undone.`
+                : `Delete '${deleteConfirmModal.profileName}'? This cannot be undone.`
+              }
+            </h3>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setDeleteConfirmModal({ show: false, profileName: '', isDeleteAll: false })}
+                className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold"
+              >
+                CANCEL
+              </button>
+              <button 
+                onClick={() => {
+                  if (deleteConfirmModal.isDeleteAll) {
+                    setProfiles([]);
+                  } else {
+                    setProfiles(profiles.filter(p => p.name !== deleteConfirmModal.profileName));
+                  }
+                  setDeleteConfirmModal({ show: false, profileName: '', isDeleteAll: false });
+                }}
+                className="flex-1 py-3 rounded-2xl bg-red-500 text-white font-bold"
+              >
+                {deleteConfirmModal.isDeleteAll ? 'DELETE ALL' : 'DELETE'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
