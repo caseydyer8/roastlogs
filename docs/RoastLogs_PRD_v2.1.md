@@ -214,3 +214,14 @@ Then reinstall PWA on iPhone: Safari → caseydyer8.github.io/roastlogs → Shar
 ---
 
 *RoastLogs PRD v2.1 — Happy Roasting ☕*
+
+---
+
+## Session Notes — May 4, 2026
+
+### BUG-001 — COMPLETED
+Supabase sync red dot fixed. Root causes: missing REACT_APP_SUPABASE_ANON_KEY in .env, Supabase project was paused after inactivity, and tasting_notes table was missing columns (acidity, body, brew_again, roast_id, method, device, temp, families, descriptors, rating, notes, date). All columns added via SQL ALTER TABLE statements.
+
+### IDEA-003 — COMPLETED
+Profile Builder redesigned as a prominent full-width amber card placed between the Session Header and Live Timer on the Roast screen. Only visible before a roast starts. Profile filtering updated to show "FOR THIS BEAN" (amber) and "GENERIC PROFILES" (zinc) sections. Profile cleanup tool added to Settings tab with confirmation modals to prevent accidental deletion.
+
