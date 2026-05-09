@@ -575,13 +575,13 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
                   <input
-                    type="number"
-                    min="1"
-                    max="9"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[1-9]"
                     value={step.heat}
                     onChange={e => {
-                      const val = Math.min(9, Math.max(1, Number(e.target.value)));
-                      updateStep(idx, "heat", String(val));
+                      const val = Number(e.target.value);
+                      if (val >= 1 && val <= 9) updateStep(idx, "heat", String(val));
                     }}
                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
                   />
@@ -589,13 +589,13 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
                   <input
-                    type="number"
-                    min="1"
-                    max="9"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[1-9]"
                     value={step.fan}
                     onChange={e => {
-                      const val = Math.min(9, Math.max(1, Number(e.target.value)));
-                      updateStep(idx, "fan", String(val));
+                      const val = Number(e.target.value);
+                      if (val >= 1 && val <= 9) updateStep(idx, "fan", String(val));
                     }}
                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
                   />
