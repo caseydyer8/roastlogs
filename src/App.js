@@ -492,6 +492,84 @@ function PrimaryButton({ children, onClick }) {
   );
 }
 
+function DrumRollPicker({ values, selectedValue, onChange, label, displayFn }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const listRef = React.useRef(null);
+  const ITEM_HEIGHT = 52;
+  const VISIBLE_COUNT = 5;
+
+  React.useEffect(() => {
+    if (isOpen && listRef.current) {
+      const idx = values.indexOf(selectedValue);
+      if (idx >= 0) {
+        const scrollTo = Math.max(0, (idx - Math.floor(VISIBLE_COUNT / 2)) * ITEM_HEIGHT);
+        listRef.current.scrollTop = scrollTo;
+      }
+    }
+  }, [isOpen]);
+
+  const display = displayFn ? displayFn(selectedValue) : String(selectedValue);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-center text-zinc-100 font-mono font-bold text-sm transition active:bg-zinc-800 active:scale-95"
+      >
+        {display}
+      </button>
+
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/85 backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-t-3xl border-t border-x border-zinc-700/60 bg-zinc-900 shadow-2xl overflow-hidden"
+            style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Label */}
+            <div className="px-4 py-3 border-b border-zinc-800/60 text-center">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">{label}</span>
+            </div>
+
+            {/* Picker list with amber center-highlight band */}
+            <div className="relative">
+              <div
+                className="pointer-events-none absolute left-0 right-0 bg-amber-500/10 border-t border-b border-amber-500/25 z-10"
+                style={{ height: ITEM_HEIGHT, top: ITEM_HEIGHT * Math.floor(VISIBLE_COUNT / 2) }}
+              />
+              <div
+                ref={listRef}
+                className="overflow-y-auto overscroll-contain"
+                style={{ height: ITEM_HEIGHT * VISIBLE_COUNT }}
+              >
+                {values.map(v => {
+                  const isSelected = v === selectedValue;
+                  return (
+                    <div
+                      key={v}
+                      style={{ height: ITEM_HEIGHT }}
+                      className={`flex items-center justify-center cursor-pointer select-none text-xl font-bold transition-colors
+                        ${isSelected ? "text-amber-400" : "text-white"}`}
+                      onClick={() => { onChange(v); setIsOpen(false); }}
+                    >
+                      {displayFn ? displayFn(v) : String(v)}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="h-4" />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ProfileBuilder({ bean, onSave, onCancel }) {
   const [profile, setProfile] = React.useState({ name: "", steps: [], isDefault: false });
 
@@ -520,9 +598,12 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 
   const updateStep = (idx, field, value) => {
     const newSteps = [...profile.steps];
-    if (field === 'time') {
-      // Temporary string storage for the input field to allow typing
-      newSteps[idx] = { ...newSteps[idx], displayTime: value, totalSeconds: parseMMSS(value) };
+    if (field === 'minutes') {
+      const currentSecs = (newSteps[idx].totalSeconds || 0) % 60;
+      newSteps[idx] = { ...newSteps[idx], totalSeconds: value * 60 + currentSecs };
+    } else if (field === 'seconds') {
+      const currentMins = Math.floor((newSteps[idx].totalSeconds || 0) / 60);
+      newSteps[idx] = { ...newSteps[idx], totalSeconds: currentMins * 60 + value };
     } else {
       newSteps[idx] = { ...newSteps[idx], [field]: value };
     }
@@ -558,46 +639,42 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
         <div className="space-y-3 mb-6">
           {profile.steps.map((step, idx) => (
             <div key={idx} className="flex gap-2 items-center bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
-              <input 
-                type="text" 
-                value={step.displayTime !== undefined ? step.displayTime : formatMMSS(step.totalSeconds)} 
-                placeholder="MM:SS"
-                onChange={e => updateStep(idx, 'time', e.target.value)}
-                onBlur={() => {
-                  // Clean up displayTime on blur to snap to formatted MM:SS
-                  const newSteps = [...profile.steps];
-                  newSteps[idx] = { ...newSteps[idx], displayTime: undefined };
-                  setProfile(prev => ({ ...prev, steps: newSteps }));
-                }}
-                className="w-20 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center font-mono text-xs text-zinc-100"
-              />
+              {/* Time: MM and SS side-by-side drum roll pickers */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                <DrumRollPicker
+                  values={Array.from({ length: 26 }, (_, i) => i)}
+                  selectedValue={Math.floor((step.totalSeconds || 0) / 60)}
+                  onChange={v => updateStep(idx, 'minutes', v)}
+                  label="MINUTES"
+                  displayFn={v => String(v).padStart(2, '0')}
+                />
+                <span className="text-zinc-500 font-mono text-sm">:</span>
+                <DrumRollPicker
+                  values={Array.from({ length: 60 }, (_, i) => i)}
+                  selectedValue={(step.totalSeconds || 0) % 60}
+                  onChange={v => updateStep(idx, 'seconds', v)}
+                  label="SECONDS"
+                  displayFn={v => String(v).padStart(2, '0')}
+                />
+              </div>
+              {/* Heat and Fan drum roll pickers */}
               <div className="flex-1 grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[1-9]"
-                    value={step.heat}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      if (val >= 1 && val <= 9) updateStep(idx, "heat", String(val));
-                    }}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  <DrumRollPicker
+                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    selectedValue={parseInt(step.heat) || 5}
+                    onChange={v => updateStep(idx, "heat", String(v))}
+                    label="HEAT"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[1-9]"
-                    value={step.fan}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      if (val >= 1 && val <= 9) updateStep(idx, "fan", String(val));
-                    }}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  <DrumRollPicker
+                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    selectedValue={parseInt(step.fan) || 5}
+                    onChange={v => updateStep(idx, "fan", String(v))}
+                    label="FAN"
                   />
                 </div>
               </div>
