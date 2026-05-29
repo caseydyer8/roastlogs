@@ -13,12 +13,10 @@ import {
 } from "recharts";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
-import ForgeTab from "./components/ForgeTab"; // FORGE: AI roast profile generator
 import "./lightMode.css"; // IDEA-008: light mode theme overrides
 
-// Bottom nav order (FORGE): Roast · History · Brew · Beans · Forge.
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
-const TABS = ["Roast", "History", "Brew", "Beans", "Forge"];
+const TABS = ["Roast", "History", "Brew", "Beans"];
 
 const formatMMSS = (s) => {
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
@@ -466,35 +464,12 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
   );
 }
 
-// FORGE: anvil + hammer icon for the bottom nav, matching the existing two-tone icon style.
-function ForgeIcon({ active, sizeClass = "h-6 w-6" }) {
-  const c = active ? "#f59e0b" : "#52525b";
-  return (
-    <svg aria-hidden="true" className={sizeClass} viewBox="0 0 150 200" fill="none">
-      {/* Hammer */}
-      <g transform="rotate(34 95 30)">
-        <rect x="60" y="6" width="26" height="34" rx="5" fill={c}/>
-        <rect x="84" y="17" width="64" height="11" rx="5.5" fill={c}/>
-      </g>
-      {/* Anvil top with horn (left) and heel (right) */}
-      <path fill={c} d="M 2 78 C 18 76, 30 72, 48 70 C 58 69, 70 68, 84 68 L 128 68 C 136 68, 140 72, 140 78 L 140 84 C 140 90, 136 92, 130 92 L 110 92 L 110 96 L 30 96 L 30 92 C 18 92, 8 86, 2 78 Z"/>
-      {/* Pedestal waist pulled flush into face */}
-      <path fill={c} d="M 40 96 L 100 96 C 100 112, 90 124, 70 126 C 50 124, 40 112, 40 96 Z"/>
-      {/* Trapezoid to base */}
-      <path fill={c} d="M 58 124 L 82 124 L 96 156 L 44 156 Z"/>
-      {/* Base */}
-      <rect x="18" y="156" width="104" height="26" rx="3" fill={c}/>
-    </svg>
-  );
-}
-
 function TabButton({ label, active, onClick }) {
   let Icon;
   if (label === "Roast") Icon = RoasterIcon;
   else if (label === "Brew") Icon = CoffeeIcon;
   else if (label === "History") Icon = ClockIcon;
   else if (label === "Beans") Icon = BeanIcon;
-  else if (label === "Forge") Icon = ForgeIcon;
   else if (label === "Settings") Icon = GearIcon;
 
   return (
@@ -804,10 +779,7 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
               <div className="text-[10px] font-bold uppercase tracking-widest text-amber-500 ml-1">FOR THIS BEAN</div>
               {beanSpecificProfiles.map(p => (
                 <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
-                  <div className="font-bold text-zinc-100 flex items-center gap-2">
-                    {p.name}
-                    {p.isAiGenerated && <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded font-black uppercase">AI ✦</span>}
-                  </div>
+                  <div className="font-bold text-zinc-100">{p.name}</div>
                   <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
                 </button>
               ))}
@@ -821,10 +793,7 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
               )}
               {genericProfiles.map(p => (
                 <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
-                  <div className="font-bold text-zinc-100 flex items-center gap-2">
-                    {p.name}
-                    {p.isAiGenerated && <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded font-black uppercase">AI ✦</span>}
-                  </div>
+                  <div className="font-bold text-zinc-100">{p.name}</div>
                   <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
                 </button>
               ))}
@@ -1537,6 +1506,33 @@ function App() {
     setSelectedRoast(null);
   };
 
+  const handleDeleteTasting = (id) => {
+    if (!window.confirm("Delete this tasting? This cannot be undone.")) return;
+
+    const existingBrews = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+      } catch (e) {
+        console.warn("Failed to parse tastingNotes", e);
+        return [];
+      }
+    })();
+    const updatedBrews = (existingBrews || []).filter((t) => t.id !== id);
+    localStorage.setItem("tastingNotes", JSON.stringify(updatedBrews));
+
+    // TODO: Casey review — orphaned IndexedDB photo cleanup (no deletePhotoLocally helper exists yet)
+
+    // Supabase Sync
+    setSyncStatus('syncing');
+    deleteBrewFromSupabase(id).then(() => {
+      setSyncStatus('success');
+    }).catch(() => {
+      setSyncStatus('error');
+    });
+
+    setSelectedTastingNote(null);
+  };
+
   const BREW_METHODS = ["Pour Over", "Espresso Machine", "Chemex", "French Press", "AeroPress", "Moka Pot", "Hario V60"];
   const GRIND_SIZES = ["Extra Fine", "Fine", "Medium-Fine", "Medium", "Medium-Coarse", "Coarse"];
   const WATER_RATIOS = ["1:14", "1:15", "1:16", "1:17", "1:18", "Custom"];
@@ -1777,57 +1773,11 @@ function App() {
     }
   };
 
-  // FORGE: persist a generated profile into the same local profile store the Profile Builder uses.
-  // TODO: Casey review — the master prompt described a Supabase `roast_profiles` table, but this app
-  // keeps profiles in localStorage (`global_profiles`). Saving locally so it shows in Profile Builder.
-  const handleSaveForgeProfile = (forgeProfile) => {
-    const parseTime = (str) => {
-      if (typeof str === "string" && str.includes(":")) {
-        const [m, s] = str.split(":");
-        return (parseInt(m, 10) || 0) * 60 + (parseInt(s, 10) || 0);
-      }
-      const n = Number(str);
-      return Number.isNaN(n) ? 0 : n;
-    };
-    const steps = (forgeProfile.timeline || [])
-      .map((e) => ({
-        time: typeof e.time === "string" ? e.time : formatTime(parseTime(e.time)),
-        totalSeconds: parseTime(e.time),
-        heat: String(e.heat),
-        fan: String(e.fan),
-        note: e.note || "",
-      }))
-      .sort((a, b) => a.totalSeconds - b.totalSeconds);
-
-    // NO PHOTOS rule: there are no image/base64 fields on a Forge profile; nothing to strip.
-    const newProfile = {
-      id: Date.now(),
-      name: forgeProfile.profileName || forgeProfile.beanName || "AI Profile",
-      beanName: forgeProfile.beanName || "",
-      isDefault: false,
-      isAiGenerated: true, // drives the "AI ✦" badge in profile lists
-      steps,
-      aiMetadata: {
-        flavorNotes: forgeProfile.flavorNotes,
-        sr540Warnings: forgeProfile.sr540Warnings,
-        generalNotes: forgeProfile.generalNotes,
-        estimatedTotalTime: forgeProfile.estimatedTotalTime,
-        expectedFirstCrack: forgeProfile.expectedFirstCrack,
-        origin: forgeProfile.origin,
-        processingMethod: forgeProfile.processingMethod,
-        targetRoastLevel: forgeProfile.targetRoastLevel,
-        phases: forgeProfile.phases,
-      },
-    };
-    setProfiles((prev) => [...prev, newProfile]);
-  };
-
   let ActiveIcon = null;
   if (activeTab === "Roast") ActiveIcon = RoasterIcon;
   else if (activeTab === "Brew") ActiveIcon = CoffeeIcon;
   else if (activeTab === "History") ActiveIcon = ClockIcon;
   else if (activeTab === "Beans") ActiveIcon = BeanIcon;
-  else if (activeTab === "Forge") ActiveIcon = ForgeIcon;
   else if (activeTab === "Settings") ActiveIcon = GearIcon;
 
   return (
@@ -3441,6 +3391,16 @@ function App() {
                       )}
                     </div>
                   </section>
+
+                  <div className="pt-4">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTasting(selectedTastingNote.id)}
+                      className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
+                    >
+                      DELETE TASTING
+                    </button>
+                  </div>
                 </div>
               )
             )}
@@ -3692,7 +3652,6 @@ function App() {
                             <div className="font-bold text-zinc-100 flex items-center gap-2">
                               {p.name}
                               {p.isDefault && <span className="text-[8px] bg-amber-500 text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
-                              {p.isAiGenerated && <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded font-black uppercase">AI ✦</span>}
                             </div>
                             <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
                           </div>
@@ -4059,10 +4018,6 @@ function App() {
           </div>
         )}
 
-        {activeTab === "Forge" && (
-          <ForgeTab onSaveProfile={handleSaveForgeProfile} showToast={showToast} />
-        )}
-
         {activeTab === "Settings" && (
           <div className="space-y-4">
             <ScreenCard title="Preferences" subtitle="Settings">
@@ -4147,10 +4102,7 @@ function App() {
                 {(profiles || []).map(p => (
                   <div key={p.id} className="flex items-center justify-between p-3 bg-zinc-900/30 rounded-2xl border border-zinc-800/40">
                     <div className="flex-1">
-                      <div className="font-medium text-zinc-100 flex items-center gap-2">
-                        {p.name}
-                        {p.isAiGenerated && <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded font-black uppercase">AI ✦</span>}
-                      </div>
+                      <div className="font-medium text-zinc-100">{p.name}</div>
                       <div className="text-xs text-zinc-400 mt-1">
                         {p.beanName ? `Bean: ${p.beanName}` : <span className="italic text-zinc-500">No bean linked</span>}
                         <span className="ml-2">• {p.steps.length} steps</span>
@@ -4303,7 +4255,6 @@ function App() {
                 <li>• Full roast history with heat/fan/temp charts</li>
                 <li>• Green bean inventory with auto-deduction</li>
                 <li>• Brew &amp; tasting session notes</li>
-                <li>• AI-powered roast profile generation (Forge)</li>
               </ul>
             </div>
             <div className="my-5 border-t border-zinc-800/60" />
