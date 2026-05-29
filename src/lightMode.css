@@ -1,0 +1,33 @@
+/* RoastLogs Light Mode — warm parchment/kraft-paper aesthetic            */
+/* IDEA-008: light mode toggle. Amber accents stay identical to dark mode. */
+/* TODO: Casey review — adjust these hex values to taste before launch     */
+
+[data-theme="light"] {
+  --bg-primary:    #fdf6e3;   /* warm cream */
+  --bg-surface:    #f5e6c8;   /* light kraft paper */
+  --bg-card:       #ede0c4;   /* card background */
+  --text-primary:  #2c1a0e;   /* dark espresso */
+  --text-secondary:#5c3d2e;   /* medium roast brown */
+  --text-muted:    #8b6347;   /* light roast tan */
+  --border-color:  #d4a96a;   /* warm tan */
+}
+
+/* App-wide page background (index.css / body uses zinc-950) */
+[data-theme="light"] body,
+[data-theme="light"] .bg-zinc-950 { background-color: var(--bg-primary) !important; }
+
+/* Override Tailwind zinc surfaces in light mode */
+[data-theme="light"] .bg-zinc-900     { background-color: var(--bg-primary)  !important; }
+[data-theme="light"] .bg-zinc-800     { background-color: var(--bg-surface)  !important; }
+[data-theme="light"] .bg-zinc-700     { background-color: var(--bg-card)     !important; }
+[data-theme="light"] .text-white      { color: var(--text-primary)          !important; }
+[data-theme="light"] .text-zinc-100   { color: var(--text-primary)          !important; }
+[data-theme="light"] .text-zinc-200   { color: var(--text-secondary)        !important; }
+[data-theme="light"] .text-zinc-300   { color: var(--text-secondary)        !important; }
+[data-theme="light"] .text-zinc-400   { color: var(--text-muted)            !important; }
+[data-theme="light"] .text-zinc-500   { color: var(--text-muted)            !important; }
+[data-theme="light"] .border-zinc-700 { border-color: var(--border-color)   !important; }
+[data-theme="light"] .border-zinc-600 { border-color: var(--border-color)   !important; }
+[data-theme="light"] .border-zinc-800 { border-color: var(--border-color)   !important; }
+
+/* Amber accents: UNCHANGED — same as dark mode (no overrides here on purpose) */
