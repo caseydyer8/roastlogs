@@ -983,6 +983,23 @@ function App() {
     });
   }
 
+  async function deletePhotoLocally(key) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('roastlogs-photos', 1);
+      request.onupgradeneeded = (e) => {
+        e.target.result.createObjectStore('photos');
+      };
+      request.onsuccess = (e) => {
+        const db = e.target.result;
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   // Load photo data when photo key changes
   React.useEffect(() => {
     const loadPhoto = async () => {
@@ -1506,7 +1523,7 @@ function App() {
     setSelectedRoast(null);
   };
 
-  const handleDeleteTasting = (id) => {
+  const handleDeleteTasting = async (id) => {
     if (!window.confirm("Delete this tasting? This cannot be undone.")) return;
 
     const existingBrews = (() => {
@@ -1517,10 +1534,19 @@ function App() {
         return [];
       }
     })();
+    const tastingToDelete = (existingBrews || []).find((t) => t.id === id);
     const updatedBrews = (existingBrews || []).filter((t) => t.id !== id);
     localStorage.setItem("tastingNotes", JSON.stringify(updatedBrews));
 
-    // TODO: Casey review — orphaned IndexedDB photo cleanup (no deletePhotoLocally helper exists yet)
+    // Remove the app's own IndexedDB copy of the brew photo. This only deletes our cached
+    // copy — the original photo in the user's iPhone Photos library is never touched.
+    if (tastingToDelete?.photo) {
+      try {
+        await deletePhotoLocally(tastingToDelete.photo);
+      } catch (e) {
+        console.warn("Failed to delete tasting photo from IndexedDB", e);
+      }
+    }
 
     // Supabase Sync
     setSyncStatus('syncing');
