@@ -1,2 +1,6 @@
 node_modules/
+
+# Environment files — never commit secrets (Supabase URL/keys, etc.)
 .env
+.env.*
+.env.save

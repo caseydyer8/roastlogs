@@ -11,6 +11,7 @@ import {
   Label,
 } from "recharts";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
+import { useAuth } from "./contexts/AuthContext";
 
 const TABS = ["Roast", "History", "Brew", "Beans", "Settings"];
 
@@ -664,6 +665,7 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
 }
 
 function App() {
+  const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
 
   const ROAST_LEVEL_OPTIONS = [
@@ -3681,6 +3683,24 @@ function App() {
                   </button>
                 )}
               </div>
+            </ScreenCard>
+
+            <ScreenCard title="Account" subtitle="Session">
+              {user?.email && (
+                <div className="mb-4 text-xs text-zinc-400">
+                  Signed in as <span className="font-semibold text-zinc-200">{user.email}</span>
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  if (window.confirm("Sign out of RoastLogs?")) {
+                    signOut().catch((e) => console.warn("Sign out failed", e));
+                  }
+                }}
+                className="w-full py-3 text-sm font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-2xl hover:bg-red-500/20 transition"
+              >
+                SIGN OUT
+              </button>
             </ScreenCard>
           </div>
         )}
