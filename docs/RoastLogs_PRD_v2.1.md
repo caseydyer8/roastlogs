@@ -225,3 +225,45 @@ Supabase sync red dot fixed. Root causes: missing REACT_APP_SUPABASE_ANON_KEY in
 ### IDEA-003 — COMPLETED
 Profile Builder redesigned as a prominent full-width amber card placed between the Session Header and Live Timer on the Roast screen. Only visible before a roast starts. Profile filtering updated to show "FOR THIS BEAN" (amber) and "GENERIC PROFILES" (zinc) sections. Profile cleanup tool added to Settings tab with confirmation modals to prevent accidental deletion.
 
+
+---
+
+## v1 Build Complete — May 29, 2026
+
+All planned v1 features and bugs shipped. Live at https://caseydyer8.github.io/roastlogs
+
+### Completed This Session
+- BUG-002: Edit mode timestamps display as MM:SS
+- BUG-003: Brew photo upload with file type/size validation
+- BUG-004: Fruity sub-categories allow multi-selection
+- BUG-005/006: Already resolved in prior sessions
+- IDEA-004: Profile vs Actual deviations (chart markers + text list)
+- IDEA-005: Custom brew ratio free text field
+- IDEA-006: Beans tab Log a Session pre-fills Roast tab
+- IDEA-007: Export Data (CSV roast log + JSON full backup)
+- IDEA-008: Light mode toggle (warm parchment theme)
+- IDEA-009: Units of measure (F/C, g/oz)
+- IDEA-010: About modal with version and feature list
+- Delete Tasting button with IndexedDB photo cleanup
+
+### Branch Structure
+- main: production (live PWA)
+- develop: integration branch
+- feature/forge-v2: Forge AI profile builder (deferred to v2)
+- session/20260529-bugs-and-features: today's session (merged)
+
+---
+
+## v2 — Forge Tab (Deferred Feature)
+
+The Forge tab (AI roast profile generator powered by Claude API) was fully built and tested but deferred to v2. All code is preserved on branch feature/forge-v2.
+
+### To Resume Forge Development
+1. Check out feature/forge-v2: git checkout feature/forge-v2
+2. Pull the Forge master prompt from the Forge section of the RoastLogs project in Claude — it contains the complete Forge spec, system prompt, API integration, and all architectural decisions
+3. Feed that prompt to Claude Code on the feature/forge-v2 branch
+
+### Outstanding Decisions Before Forge Ships
+- Move REACT_APP_CLAUDE_API_KEY to serverless proxy (Netlify/Vercel) before public sharing
+- Resolve localStorage vs Supabase roast_profiles storage (currently saves to localStorage global_profiles)
+- Add AI badge back to profile lists when Forge is re-enabled
