@@ -8,12 +8,16 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceDot,
   Label,
 } from "recharts";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
+import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
+import "./lightMode.css"; // IDEA-008: light mode theme overrides
 
-const TABS = ["Roast", "History", "Brew", "Beans", "Settings"];
+// Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
+const TABS = ["Roast", "History", "Brew", "Beans"];
 
 const formatMMSS = (s) => {
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
@@ -91,9 +95,40 @@ function RoastDetailChart({ roast }) {
     dtr = `${((devTime / roast.totalSeconds) * 100).toFixed(1)}%`;
   }
 
-  const weightLoss = roast.greenWeight && roast.roastedWeight 
+  const weightLoss = roast.greenWeight && roast.roastedWeight
     ? `${(((Number(roast.greenWeight) - Number(roast.roastedWeight)) / Number(roast.greenWeight)) * 100).toFixed(1)}%`
     : "—";
+
+  // IDEA-004: Profile vs. Actual deviations. Compare the heat/fan in effect at each
+  // profile step's time against the profile target. A deviation is a difference > ±1 step.
+  const profileSteps = (roast.profile && Array.isArray(roast.profile.steps)) ? roast.profile.steps : [];
+  const hasProfile = profileSteps.length > 0;
+  const stepSecondsOf = (step) => {
+    if (step.totalSeconds !== undefined && step.totalSeconds !== null) return step.totalSeconds;
+    if (typeof step.time === "string" && step.time.includes(":")) {
+      const [mm, ss] = step.time.split(":");
+      return (parseInt(mm, 10) || 0) * 60 + (parseInt(ss, 10) || 0);
+    }
+    return 0;
+  };
+  const deviations = [];
+  profileSteps.forEach((step) => {
+    const stepSeconds = stepSecondsOf(step);
+    const idx = Math.min(Math.max(stepSeconds, 0), chartData.length - 1);
+    const inEffect = chartData[idx];
+    // Skip this step if no real adjustment data exists at this time yet
+    if (!inEffect || (Number(inEffect.heat) === 0 && Number(inEffect.fan) === 0)) return;
+    const checks = [
+      { field: "Heat", yKey: "heat", target: Number(step.heat), logged: Number(inEffect.heat) },
+      { field: "Fan", yKey: "fan", target: Number(step.fan), logged: Number(inEffect.fan) },
+    ];
+    checks.forEach((c) => {
+      if (Number.isNaN(c.target) || Number.isNaN(c.logged)) return;
+      if (Math.abs(c.logged - c.target) > 1) {
+        deviations.push({ t: stepSeconds, field: c.field, yKey: c.yKey, target: c.target, logged: c.logged, diff: c.logged - c.target });
+      }
+    });
+  });
 
   return (
     <div className="space-y-6">
@@ -101,11 +136,11 @@ function RoastDetailChart({ roast }) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-            <XAxis 
-              dataKey="t" 
-              tickFormatter={formatMMSS} 
-              stroke="#52525b" 
-              fontSize={10} 
+            <XAxis
+              dataKey="t"
+              tickFormatter={formatMMSS}
+              stroke="#52525b"
+              fontSize={10}
               tick={{fill: '#71717a'}}
               minTickGap={30}
             />
@@ -115,7 +150,7 @@ function RoastDetailChart({ roast }) {
               labelFormatter={formatMMSS}
               itemStyle={{ padding: "2px 0" }}
             />
-            
+
             {phases?.map((p, idx) => (
               <ReferenceLine key={idx} x={p.t} stroke="#52525b" strokeDasharray="3 3">
                 <Label value={p.label} position="top" fill="#71717a" fontSize={10} offset={10} />
@@ -126,9 +161,46 @@ function RoastDetailChart({ roast }) {
             <Line type="stepAfter" dataKey="heat" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Heat" />
             <Line type="stepAfter" dataKey="fan" stroke="#f97316" strokeWidth={1.5} dot={false} name="Fan" />
             <Line type="monotone" dataKey="ror" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="RoR" />
+
+            {/* IDEA-004: deviation markers (skip empty 0-value points) */}
+            {deviations.map((d, idx) => (
+              d.logged !== 0 ? (
+                <ReferenceDot key={`dev-${idx}`} x={d.t} y={d.logged} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5} isFront={true} />
+              ) : null
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      {/* IDEA-004: deviation legend (no Recharts <Legend> in use) */}
+      {hasProfile && deviations.length > 0 && (
+        <div className="flex items-center gap-2 -mt-3 text-[11px] text-zinc-400">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500 border border-white" />
+          ⚠ Profile deviation
+        </div>
+      )}
+
+      {/* IDEA-004: Profile Deviations text section (only when a profile was attached) */}
+      {hasProfile && (
+        <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
+          <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-3">Profile Deviations</div>
+          {deviations.length === 0 ? (
+            <div className="text-sm font-bold text-green-500">✓ Followed profile exactly</div>
+          ) : (
+            <div className="space-y-2">
+              {deviations.map((d, idx) => (
+                <div key={idx} className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                  <span className="font-mono text-xs text-amber-300/80">{formatMMSS(d.t)}</span>
+                  <span className="text-xs text-zinc-300">
+                    {d.field}: logged <span className="font-bold text-zinc-100">{d.logged}</span>, profile called for <span className="font-bold text-zinc-100">{d.target}</span>
+                    <span className="ml-1 font-bold text-amber-400">(difference: {d.diff > 0 ? "+" : ""}{d.diff})</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
@@ -493,6 +565,84 @@ function PrimaryButton({ children, onClick }) {
   );
 }
 
+function DrumRollPicker({ values, selectedValue, onChange, label, displayFn }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const listRef = React.useRef(null);
+  const ITEM_HEIGHT = 52;
+  const VISIBLE_COUNT = 5;
+
+  React.useEffect(() => {
+    if (isOpen && listRef.current) {
+      const idx = values.indexOf(selectedValue);
+      if (idx >= 0) {
+        const scrollTo = Math.max(0, (idx - Math.floor(VISIBLE_COUNT / 2)) * ITEM_HEIGHT);
+        listRef.current.scrollTop = scrollTo;
+      }
+    }
+  }, [isOpen]);
+
+  const display = displayFn ? displayFn(selectedValue) : String(selectedValue);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-center text-zinc-100 font-mono font-bold text-sm transition active:bg-zinc-800 active:scale-95"
+      >
+        {display}
+      </button>
+
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/85 backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-t-3xl border-t border-x border-zinc-700/60 bg-zinc-900 shadow-2xl overflow-hidden"
+            style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Label */}
+            <div className="px-4 py-3 border-b border-zinc-800/60 text-center">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">{label}</span>
+            </div>
+
+            {/* Picker list with amber center-highlight band */}
+            <div className="relative">
+              <div
+                className="pointer-events-none absolute left-0 right-0 bg-amber-500/10 border-t border-b border-amber-500/25 z-10"
+                style={{ height: ITEM_HEIGHT, top: ITEM_HEIGHT * Math.floor(VISIBLE_COUNT / 2) }}
+              />
+              <div
+                ref={listRef}
+                className="overflow-y-auto overscroll-contain"
+                style={{ height: ITEM_HEIGHT * VISIBLE_COUNT }}
+              >
+                {values.map(v => {
+                  const isSelected = v === selectedValue;
+                  return (
+                    <div
+                      key={v}
+                      style={{ height: ITEM_HEIGHT }}
+                      className={`flex items-center justify-center cursor-pointer select-none text-xl font-bold transition-colors
+                        ${isSelected ? "text-amber-400" : "text-white"}`}
+                      onClick={() => { onChange(v); setIsOpen(false); }}
+                    >
+                      {displayFn ? displayFn(v) : String(v)}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="h-4" />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ProfileBuilder({ bean, onSave, onCancel }) {
   const [profile, setProfile] = React.useState({ name: "", steps: [], isDefault: false });
 
@@ -521,9 +671,12 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 
   const updateStep = (idx, field, value) => {
     const newSteps = [...profile.steps];
-    if (field === 'time') {
-      // Temporary string storage for the input field to allow typing
-      newSteps[idx] = { ...newSteps[idx], displayTime: value, totalSeconds: parseMMSS(value) };
+    if (field === 'minutes') {
+      const currentSecs = (newSteps[idx].totalSeconds || 0) % 60;
+      newSteps[idx] = { ...newSteps[idx], totalSeconds: value * 60 + currentSecs };
+    } else if (field === 'seconds') {
+      const currentMins = Math.floor((newSteps[idx].totalSeconds || 0) / 60);
+      newSteps[idx] = { ...newSteps[idx], totalSeconds: currentMins * 60 + value };
     } else {
       newSteps[idx] = { ...newSteps[idx], [field]: value };
     }
@@ -559,46 +712,42 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
         <div className="space-y-3 mb-6">
           {profile.steps.map((step, idx) => (
             <div key={idx} className="flex gap-2 items-center bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
-              <input 
-                type="text" 
-                value={step.displayTime !== undefined ? step.displayTime : formatMMSS(step.totalSeconds)} 
-                placeholder="MM:SS"
-                onChange={e => updateStep(idx, 'time', e.target.value)}
-                onBlur={() => {
-                  // Clean up displayTime on blur to snap to formatted MM:SS
-                  const newSteps = [...profile.steps];
-                  newSteps[idx] = { ...newSteps[idx], displayTime: undefined };
-                  setProfile(prev => ({ ...prev, steps: newSteps }));
-                }}
-                className="w-20 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center font-mono text-xs text-zinc-100"
-              />
+              {/* Time: MM and SS side-by-side drum roll pickers */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                <DrumRollPicker
+                  values={Array.from({ length: 26 }, (_, i) => i)}
+                  selectedValue={Math.floor((step.totalSeconds || 0) / 60)}
+                  onChange={v => updateStep(idx, 'minutes', v)}
+                  label="MINUTES"
+                  displayFn={v => String(v).padStart(2, '0')}
+                />
+                <span className="text-zinc-500 font-mono text-sm">:</span>
+                <DrumRollPicker
+                  values={Array.from({ length: 60 }, (_, i) => i)}
+                  selectedValue={(step.totalSeconds || 0) % 60}
+                  onChange={v => updateStep(idx, 'seconds', v)}
+                  label="SECONDS"
+                  displayFn={v => String(v).padStart(2, '0')}
+                />
+              </div>
+              {/* Heat and Fan drum roll pickers */}
               <div className="flex-1 grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[1-9]"
-                    value={step.heat}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      if (val >= 1 && val <= 9) updateStep(idx, "heat", String(val));
-                    }}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  <DrumRollPicker
+                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    selectedValue={parseInt(step.heat) || 5}
+                    onChange={v => updateStep(idx, "heat", String(v))}
+                    label="HEAT"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[1-9]"
-                    value={step.fan}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      if (val >= 1 && val <= 9) updateStep(idx, "fan", String(val));
-                    }}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-center text-zinc-100"
+                  <DrumRollPicker
+                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    selectedValue={parseInt(step.fan) || 5}
+                    onChange={v => updateStep(idx, "fan", String(v))}
+                    label="FAN"
                   />
                 </div>
               </div>
@@ -667,6 +816,26 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
 function App() {
   const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
+  // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
+  const [prefillBean, setPrefillBean] = React.useState(null);
+  // IDEA-009: units of measure (display-layer only; stored values unchanged)
+  const { tempUnit, weightUnit, setTempUnit, setWeightUnit, toDisplayTemp, toDisplayWeight } = useUnits();
+
+  // Lightweight global toast used by Settings features (export/about/theme/forge)
+  const [toast, setToast] = React.useState(null); // { message, type: 'success' | 'error' }
+  const showToast = React.useCallback((message, type = "success") => {
+    setToast({ message, type });
+    window.clearTimeout(showToast._t);
+    showToast._t = window.setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // IDEA-010: About modal
+  const [showAboutModal, setShowAboutModal] = React.useState(false);
+  // IDEA-007: Export Data panel
+  const [showExportPanel, setShowExportPanel] = React.useState(false);
+  const [isExporting, setIsExporting] = React.useState(false);
+  // IDEA-008: Light/Dark theme (drives the Settings toggle UI; applied via data-theme)
+  const [theme, setTheme] = React.useState(() => localStorage.getItem("roastlogs_theme") || "dark");
 
   const ROAST_LEVEL_OPTIONS = [
     "Cinnamon (Light+)",
@@ -762,6 +931,7 @@ function App() {
   const [customRatio, setCustomRatio] = React.useState("");
   const [brewPhoto, setBrewPhoto] = React.useState(null);
   const [brewPhotoDataUrl, setBrewPhotoDataUrl] = React.useState(null);
+  const [brewPhotoError, setBrewPhotoError] = React.useState(""); // BUG-003 FIXED: user-facing photo validation error
   
   // New Tasting wizard state
   const [acidityRating, setAcidityRating] = React.useState(3);
@@ -810,6 +980,23 @@ function App() {
         const req = tx.objectStore('photos').get(key);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => reject(req.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function deletePhotoLocally(key) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('roastlogs-photos', 1);
+      request.onupgradeneeded = (e) => {
+        e.target.result.createObjectStore('photos');
+      };
+      request.onsuccess = (e) => {
+        const db = e.target.result;
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
       };
       request.onerror = () => reject(request.error);
     });
@@ -995,6 +1182,22 @@ function App() {
   React.useEffect(() => {
     localStorage.setItem("global_profiles", JSON.stringify(profiles));
   }, [profiles]);
+
+  // IDEA-008: apply the saved theme on mount and whenever it changes.
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  // IDEA-006: when a bean is sent over from Bean Detail's "Log a Session", prefill the Roast Session Header.
+  // Only applies when no roast is in progress so we never clobber a live session.
+  React.useEffect(() => {
+    if (prefillBean && elapsedSeconds === 0 && !isTimerRunning) {
+      setBeanName(prefillBean.name || "");
+      // Session Header has no Origin field today; name is the meaningful prefill.
+      // TODO: Casey review — add an Origin field to the Roast Session Header if you want origin prefilled too.
+      setPrefillBean(null);
+    }
+  }, [prefillBean, elapsedSeconds, isTimerRunning]);
 
   React.useEffect(() => {
     localStorage.setItem("live_profileFollowing", JSON.stringify(profileFollowing));
@@ -1322,6 +1525,42 @@ function App() {
     setSelectedRoast(null);
   };
 
+  const handleDeleteTasting = async (id) => {
+    if (!window.confirm("Delete this tasting? This cannot be undone.")) return;
+
+    const existingBrews = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
+      } catch (e) {
+        console.warn("Failed to parse tastingNotes", e);
+        return [];
+      }
+    })();
+    const tastingToDelete = (existingBrews || []).find((t) => t.id === id);
+    const updatedBrews = (existingBrews || []).filter((t) => t.id !== id);
+    localStorage.setItem("tastingNotes", JSON.stringify(updatedBrews));
+
+    // Remove the app's own IndexedDB copy of the brew photo. This only deletes our cached
+    // copy — the original photo in the user's iPhone Photos library is never touched.
+    if (tastingToDelete?.photo) {
+      try {
+        await deletePhotoLocally(tastingToDelete.photo);
+      } catch (e) {
+        console.warn("Failed to delete tasting photo from IndexedDB", e);
+      }
+    }
+
+    // Supabase Sync
+    setSyncStatus('syncing');
+    deleteBrewFromSupabase(id).then(() => {
+      setSyncStatus('success');
+    }).catch(() => {
+      setSyncStatus('error');
+    });
+
+    setSelectedTastingNote(null);
+  };
+
   const BREW_METHODS = ["Pour Over", "Espresso Machine", "Chemex", "French Press", "AeroPress", "Moka Pot", "Hario V60"];
   const GRIND_SIZES = ["Extra Fine", "Fine", "Medium-Fine", "Medium", "Medium-Coarse", "Coarse"];
   const WATER_RATIOS = ["1:14", "1:15", "1:16", "1:17", "1:18", "Custom"];
@@ -1354,6 +1593,48 @@ function App() {
     roasted: ["Dark Roast", "Smoky", "Tobacco", "Malt", "Grain", "Ashy", "Burnt Sugar", "Cedar"],
     earthy: ["Earthy", "Woody", "Mushroom", "Fresh Herbs", "Hay", "Green Tea", "Olive Oil"],
     fermented: ["Red Wine", "White Wine", "Whiskey", "Bourbon", "Overripe Fruit", "Vinegar", "Kombucha"]
+  };
+
+  // BUG-003 FIXED: validate file type/size, surface a user-facing error, then store base64 in IndexedDB only.
+  // SECURITY: file type/size validated. Base64 in IndexedDB only, never Supabase.
+  const handleBrewPhotoSelect = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+    const MAX_BYTES = 5 * 1024 * 1024; // 5MB
+
+    // Some browsers report HEIC with an empty/odd MIME type; allow by extension as a fallback.
+    const nameLower = (file.name || "").toLowerCase();
+    const looksHeic = nameLower.endsWith(".heic") || nameLower.endsWith(".heif");
+    if (!ALLOWED_TYPES.includes(file.type) && !looksHeic) {
+      setBrewPhotoError("Unsupported file type. Use a JPEG, PNG, WebP, or HEIC image.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      setBrewPhotoError("Image is too large (max 5MB). Choose a smaller photo.");
+      e.target.value = "";
+      return;
+    }
+
+    setBrewPhotoError("");
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result;
+      const photoKey = `brew-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      try {
+        await savePhotoLocally(photoKey, base64);
+        setBrewPhoto(photoKey);
+      } catch (error) {
+        console.warn("Failed to save photo:", error);
+        setBrewPhotoError("Could not save the photo. Please try again.");
+      }
+    };
+    reader.onerror = () => setBrewPhotoError("Could not read the file. Please try again.");
+    reader.readAsDataURL(file);
+    // Allow re-selecting the same file later
+    e.target.value = "";
   };
 
   const handleSaveBrew = () => {
@@ -1410,6 +1691,114 @@ function App() {
     setCustomRatio("");
     setBrewPhoto(null);
     setBrewPhotoDataUrl(null);
+    setBrewPhotoError("");
+  };
+
+  // IDEA-007: Export Data — CSV roast log + full JSON backup. Pure client-side download, no server.
+  const downloadFile = (content, filename, mimeType) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const readLocalJSON = (key) => {
+    try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) { return []; }
+  };
+
+  // Merge two id-keyed lists, deduplicating by id (later source wins on conflict).
+  const mergeById = (local, remote) => {
+    const map = new Map();
+    (local || []).forEach(item => { if (item && item.id != null) map.set(String(item.id), item); });
+    (remote || []).forEach(item => {
+      if (item && item.id != null) map.set(String(item.id), { ...map.get(String(item.id)), ...item });
+    });
+    return Array.from(map.values());
+  };
+
+  const gatherExportData = async () => {
+    const [remoteRoasts, remoteBrews] = await Promise.all([
+      fetchRoastsFromSupabase().catch(() => []),
+      fetchBrewsFromSupabase().catch(() => []),
+    ]);
+    return {
+      roasts: mergeById(readLocalJSON("roasts"), remoteRoasts),
+      brews: mergeById(readLocalJSON("tastingNotes"), remoteBrews),
+      beans: readLocalJSON("beans"),
+      roastProfiles: readLocalJSON("global_profiles"),
+    };
+  };
+
+  const csvEscape = (val) => {
+    const s = (val === null || val === undefined) ? "" : String(val);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+
+  const handleExportCSV = async () => {
+    setIsExporting(true);
+    try {
+      const { roasts, brews, beans } = await gatherExportData();
+      const beanByName = {};
+      beans.forEach(b => { if (b && b.name) beanByName[b.name] = b; });
+      const noteByRoastId = {};
+      brews.forEach(t => { if (t && t.roastId != null && t.roastId !== "") noteByRoastId[String(t.roastId)] = t; });
+
+      const headers = ["Date", "Bean Name", "Origin", "Green Weight (g)", "Roasted Weight (g)", "Weight Loss %", "Target Roast Level", "Visual Color", "Rating (1-5)", "Brew Again (Yes/No/Maybe)", "Session Notes"];
+      const rows = roasts.map(r => {
+        const bean = beanByName[r.beanName] || {};
+        const note = noteByRoastId[String(r.id)] || {};
+        const green = Number(r.greenWeight);
+        const roasted = Number(r.roastedWeight);
+        const loss = (green > 0 && roasted > 0) ? (((green - roasted) / green) * 100).toFixed(1) : "";
+        return [
+          r.date, r.beanName, bean.origin || "", r.greenWeight || "", r.roastedWeight || "",
+          loss, r.targetLevel || "", r.visualColor || "", note.rating || "",
+          note.brewAgain || "", note.notes || "",
+        ].map(csvEscape).join(",");
+      });
+      const csv = [headers.join(","), ...rows].join("\n");
+      const date = new Date().toISOString().slice(0, 10);
+      downloadFile(csv, `roastlogs-export-${date}.csv`, "text/csv;charset=utf-8;");
+      showToast("Roast log exported (CSV).");
+      setShowExportPanel(false);
+    } catch (e) {
+      console.warn("CSV export failed", e);
+      showToast("Export failed. Please try again.", "error");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportJSON = async () => {
+    setIsExporting(true);
+    try {
+      const { roasts, brews, beans, roastProfiles } = await gatherExportData();
+      const roastSessions = roasts.map(r => ({
+        ...r,
+        adjustmentLog: r.roastLog || [],
+        tastingNotes: brews.filter(t => String(t.roastId) === String(r.id)),
+      }));
+      const backup = {
+        exportDate: new Date().toISOString(),
+        appVersion: "1.0.0",
+        roastSessions,
+        beans,
+        roastProfiles,
+        brewSessions: brews,
+      };
+      const date = new Date().toISOString().slice(0, 10);
+      downloadFile(JSON.stringify(backup, null, 2), `roastlogs-backup-${date}.json`, "application/json");
+      showToast("Full backup exported (JSON).");
+      setShowExportPanel(false);
+    } catch (e) {
+      console.warn("JSON export failed", e);
+      showToast("Export failed. Please try again.", "error");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   let ActiveIcon = null;
@@ -1435,7 +1824,18 @@ function App() {
               title={`Sync status: ${syncStatus}`}
             />
           </div>
-          <div className="text-xs font-medium text-zinc-400">RoastLogs</div>
+          {/* FORGE/locked decision: Settings lives behind the gear icon top-right, not the bottom nav */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-zinc-400">RoastLogs</span>
+            <button
+              type="button"
+              onClick={() => setActiveTab("Settings")}
+              aria-label="Settings"
+              className={`rounded-full p-1.5 transition hover:bg-zinc-900/60 ${activeTab === "Settings" ? "ring-1 ring-amber-500/30" : ""}`}
+            >
+              <GearIcon active={activeTab === "Settings"} sizeClass="h-6 w-6" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1733,7 +2133,7 @@ function App() {
                                 {" · "}Fan{" "}
                                 <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
                                 {" · "}Temp{" "}
-                                <span className="font-semibold text-zinc-100">{entry.temp || "—"}</span>
+                                <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                               </div>
                               <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
                                 {entry.label}
@@ -1751,7 +2151,7 @@ function App() {
                               {" · "}Fan{" "}
                               <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
                               {" · "}Temp{" "}
-                              <span className="font-semibold text-zinc-100">{entry.temp || "—"}</span>
+                              <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                             </div>
                           </div>
                         )}
@@ -2005,27 +2405,17 @@ function App() {
                     <div className="text-xs font-medium text-zinc-300">Photo</div>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,image/webp,image/heic"
                       capture="environment"
                       id="brewPhotoInput"
                       className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                          const base64 = reader.result;
-                          const photoKey = `brew-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                          try {
-                            await savePhotoLocally(photoKey, base64);
-                            setBrewPhoto(photoKey);
-                          } catch (error) {
-                            console.error('Failed to save photo:', error);
-                          }
-                        };
-                        reader.readAsDataURL(file);
-                      }}
+                      onChange={handleBrewPhotoSelect}
                     />
+                    {brewPhotoError && (
+                      <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-medium text-red-300">
+                        {brewPhotoError}
+                      </div>
+                    )}
                     {!brewPhotoDataUrl ? (
                       <button
                         type="button"
@@ -2039,17 +2429,17 @@ function App() {
                       <div className="space-y-2">
                         <div className="relative rounded-3xl overflow-hidden border border-zinc-800">
                           <img src={brewPhotoDataUrl} alt="Brew" className="w-full h-48 object-cover" />
-                          <button 
+                          <button
                             type="button"
-                            onClick={() => setBrewPhoto(null)}
+                            onClick={() => { setBrewPhoto(null); setBrewPhotoError(""); }}
                             className="absolute top-2 right-2 rounded-full bg-zinc-950/60 p-2 text-white hover:bg-zinc-950 transition"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                           </button>
                         </div>
-                        <button 
+                        <button
                           type="button"
-                          onClick={() => setBrewPhoto(null)}
+                          onClick={() => { setBrewPhoto(null); setBrewPhotoError(""); }}
                           className="text-red-400 text-xs font-bold"
                         >
                           REMOVE PHOTO
@@ -2590,7 +2980,8 @@ function App() {
                       <div>
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Green Weight</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
+                          /* IDEA-009: display-layer weight unit conversion */
+                          <div className="text-sm font-medium text-zinc-200">{toDisplayWeight(selectedRoast.greenWeight)}</div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input 
@@ -2606,7 +2997,8 @@ function App() {
                       <div className="col-span-1">
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roasted Weight</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.roastedWeight ? selectedRoast.roastedWeight + "g" : "—"}</div>
+                          /* IDEA-009: display-layer weight unit conversion */
+                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.roastedWeight ? toDisplayWeight(selectedRoast.roastedWeight) : "—"}</div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input 
@@ -2788,7 +3180,7 @@ function App() {
                                     <span className="mx-0.5">·</span>
                                     T:
                                     {!isEditingRoast ? (
-                                      <span className="font-semibold text-zinc-100">{entry.temp || "—"}°</span>
+                                      <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                                     ) : (
                                       <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
                                     )}
@@ -2835,7 +3227,7 @@ function App() {
                                   <span className="mx-0.5">·</span>
                                   T:
                                   {!isEditingRoast ? (
-                                    <span className="font-semibold text-zinc-100">{entry.temp || "—"}°</span>
+                                    <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                                   ) : (
                                     <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
                                   )}
@@ -3027,6 +3419,16 @@ function App() {
                       )}
                     </div>
                   </section>
+
+                  <div className="pt-4">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTasting(selectedTastingNote.id)}
+                      className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
+                    >
+                      DELETE TASTING
+                    </button>
+                  </div>
                 </div>
               )
             )}
@@ -3365,6 +3767,18 @@ function App() {
                       return <span className="text-[10px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full">{roasts.length} sessions</span>;
                     })()}
                   </div>
+
+                  {/* IDEA-006: pre-fill the Roast tab Session Header with this bean and jump there */}
+                  <button
+                    onClick={() => {
+                      setPrefillBean({ name: selectedBean.name, origin: selectedBean.origin });
+                      setActiveTab("Roast");
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    LOG A SESSION
+                  </button>
                   <div className="space-y-2">
                     {(() => {
                       const roasts = (() => {
@@ -3635,16 +4049,79 @@ function App() {
         {activeTab === "Settings" && (
           <div className="space-y-4">
             <ScreenCard title="Preferences" subtitle="Settings">
-              Placeholder settings screen. Units, timers, defaults, and export options will live
-              here.
-              <div className="mt-5 flex flex-wrap gap-3">
-                <PrimaryButton onClick={() => {}}>Export Data</PrimaryButton>
-                <button
-                  type="button"
-                  className="rounded-2xl border border-zinc-800/70 bg-zinc-900/40 px-4 py-2.5 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/70"
-                >
-                  About
-                </button>
+              {/* IDEA-009: Units of Measure */}
+              <div className="space-y-4">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">Units</div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-zinc-300">Temperature</span>
+                      <div className="flex rounded-xl border border-zinc-800 overflow-hidden">
+                        {["F", "C"].map(u => (
+                          <button
+                            key={u}
+                            type="button"
+                            onClick={() => setTempUnit(u)}
+                            className={`px-4 py-2 text-sm font-bold transition ${tempUnit === u ? "bg-amber-500 text-zinc-950" : "bg-zinc-950/40 text-zinc-400 hover:text-zinc-200"}`}
+                          >
+                            °{u}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-zinc-300">Weight</span>
+                      <div className="flex rounded-xl border border-zinc-800 overflow-hidden">
+                        {["g", "oz"].map(u => (
+                          <button
+                            key={u}
+                            type="button"
+                            onClick={() => setWeightUnit(u)}
+                            className={`px-4 py-2 text-sm font-bold transition ${weightUnit === u ? "bg-amber-500 text-zinc-950" : "bg-zinc-950/40 text-zinc-400 hover:text-zinc-200"}`}
+                          >
+                            {u}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* IDEA-008: Light Mode toggle */}
+                <div className="border-t border-zinc-800/50 pt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-zinc-200">Light Mode</div>
+                      <div className="text-[11px] text-zinc-500">Warm parchment theme (default off)</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={theme === "light"}
+                      onClick={() => {
+                        const next = theme === "light" ? "dark" : "light";
+                        localStorage.setItem("roastlogs_theme", next);
+                        document.documentElement.setAttribute("data-theme", next);
+                        setTheme(next);
+                      }}
+                      className={`relative h-7 w-12 rounded-full transition ${theme === "light" ? "bg-amber-500" : "bg-zinc-700"}`}
+                    >
+                      <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${theme === "light" ? "left-[22px]" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* IDEA-007 + IDEA-010 actions */}
+                <div className="border-t border-zinc-800/50 pt-4 flex flex-wrap gap-3">
+                  <PrimaryButton onClick={() => setShowExportPanel(true)}>Export Data</PrimaryButton>
+                  <button
+                    type="button"
+                    onClick={() => setShowAboutModal(true)}
+                    className="rounded-2xl border border-zinc-800/70 bg-zinc-900/40 px-4 py-2.5 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/70"
+                  >
+                    About
+                  </button>
+                </div>
               </div>
             </ScreenCard>
             
@@ -3706,9 +4183,9 @@ function App() {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-800/60 bg-zinc-950/80 backdrop-blur">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-800/60 bg-zinc-950">
         <div className="mx-auto max-w-md px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
-            <div className="grid grid-cols-5 gap-1">
+            <div className="grid grid-cols-4 gap-1">
             {TABS.map((tab) => (
               <TabButton
                 key={tab}
@@ -3763,6 +4240,80 @@ function App() {
                 {deleteConfirmModal.isDeleteAll ? 'DELETE ALL' : 'DELETE'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* IDEA-007: Export Data choice panel */}
+      {showExportPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm" onClick={() => !isExporting && setShowExportPanel(false)}>
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">Export Data</h3>
+              <button onClick={() => !isExporting && setShowExportPanel(false)} className="text-zinc-500 hover:text-zinc-300 text-xl leading-none">×</button>
+            </div>
+            {isExporting ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <div className="h-8 w-8 rounded-full border-2 border-amber-500/30 border-t-amber-500 animate-spin" />
+                <div className="text-sm text-zinc-400">Gathering your data…</div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <button
+                  onClick={handleExportCSV}
+                  className="w-full rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
+                >
+                  Export Roast Log (CSV)
+                </button>
+                <button
+                  onClick={handleExportJSON}
+                  className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/40 py-3 text-sm font-bold text-zinc-200 transition hover:bg-zinc-900/70"
+                >
+                  Export Full Backup (JSON)
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* IDEA-010: About modal */}
+      {showAboutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm" onClick={() => setShowAboutModal(false)}>
+          <div className="relative w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowAboutModal(false)}
+              className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300 text-2xl leading-none"
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <div className="text-center">
+              <div className="text-3xl font-bold text-amber-400">☕ RoastLogs</div>
+              <div className="mt-1 text-sm font-mono text-zinc-400">v1.0.0</div>
+              <div className="mt-3 text-sm text-zinc-300">Built for the Fresh Roast SR540 + Extension Tube</div>
+            </div>
+            <div className="my-5 border-t border-zinc-800/60" />
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-2">Features</div>
+              <ul className="space-y-1.5 text-sm text-zinc-300">
+                <li>• Live roast session logging with phase milestone buttons</li>
+                <li>• Full roast history with heat/fan/temp charts</li>
+                <li>• Green bean inventory with auto-deduction</li>
+                <li>• Brew &amp; tasting session notes</li>
+              </ul>
+            </div>
+            <div className="my-5 border-t border-zinc-800/60" />
+            <div className="text-center text-sm text-zinc-400">Built for home roasters, by a home roaster. ☕</div>
+          </div>
+        </div>
+      )}
+
+      {/* Global toast */}
+      {toast && (
+        <div className="fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4 pointer-events-none">
+          <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-2 ${toast.type === "error" ? "bg-red-600 text-white" : "bg-green-600 text-white"}`}>
+            {toast.message}
           </div>
         </div>
       )}
