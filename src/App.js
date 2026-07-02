@@ -1,3 +1,4 @@
+import RoastCurveChart from "./components/charts/RoastCurveChart";
 import React from "react";
 import {
   LineChart,
@@ -3061,7 +3062,7 @@ function App() {
 
                     {!isEditingRoast && (
                       <div className="mt-6 border-t border-zinc-800/50 pt-6">
-                        <RoastDetailChart roast={selectedRoast} />
+                        <RoastCurveChart roast={selectedRoast} />
                       </div>
                     )}
                   </section>
