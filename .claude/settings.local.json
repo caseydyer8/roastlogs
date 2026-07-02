@@ -3,7 +3,16 @@
     "allow": [
       "Bash(git rm *)",
       "Bash(npm run *)",
-      "Bash([ -f \"$f\" ])"
+      "Bash([ -f \"$f\" ])",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git ls-tree *)",
+      "Bash(git rev-list *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('build script:', p.scripts && p.scripts.build\\)\")",
+      "Read(//Users/casey/Downloads/**)",
+      "Bash(git add *)",
+      "Read(//Users/casey/**)",
+      "Bash(echo \"exit: $?  \\(empty above = no remaining conflicts\\)\")"
     ]
   }
 }
