@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceArea,
   Label,
 } from "recharts";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
@@ -42,30 +43,121 @@ function RoastSparkline({ data }) {
 }
 
 function RoastDetailChart({ roast }) {
-  if (!roast || !roast.roastLog) return null;
+  if (!roast || !Array.isArray(roast.roastLog)) return null;
 
-  const chartData = [];
-  const startEntry = (roast.roastLog || []).find((e) => e.type === "start_settings" || (e.type === "adjustment" && e.t === 0));
-  
-  let currentHeat = startEntry?.heat || 0;
-  let currentFan = startEntry?.fan || 0;
-  let currentTemp = startEntry?.temp || 0;
+  const roastLog = roast.roastLog || [];
+  const safeNumber = (value, fallback = null) => {
+    if (value === "" || value === null || value === undefined) return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
 
-  for (let t = 0; t <= (roast.totalSeconds || 0); t++) {
-    const logEntry = (roast.roastLog || []).find((e) => e.t === t && (e.type === "adjustment" || e.type === "start_settings"));
-    if (logEntry) {
-      if (logEntry.heat) currentHeat = Number(logEntry.heat);
-      if (logEntry.fan) currentFan = Number(logEntry.fan);
-      if (logEntry.temp) currentTemp = Number(logEntry.temp);
+  const phaseT = (label) => {
+    const entry = roastLog.find((e) => e.type === "phase" && e.label === label);
+    return safeNumber(entry?.t, null);
+  };
+
+  const phases = {
+    start: phaseT("START") ?? 0,
+    dryingEnd: phaseT("DRYING END"),
+    maillardEnd: phaseT("MAILLARD END") ?? phaseT("YELLOWING"),
+    firstCrack: phaseT("FIRST CRACK"),
+    coolingStart: phaseT("COOLING START"),
+  };
+
+  const totalSeconds = safeNumber(roast.totalSeconds, 0) || Math.max(
+    0,
+    ...roastLog.map((e) => safeNumber(e.t, 0) || 0)
+  );
+
+  const rawAdjustments = roastLog
+    .filter((e) => e.type === "adjustment" || e.type === "start_settings")
+    .map((e) => ({
+      t: safeNumber(e.t, 0) || 0,
+      type: e.type,
+      heat: safeNumber(e.heat, null),
+      fan: safeNumber(e.fan, null),
+      temp: safeNumber(e.temp, null),
+      note: e.note || e.label || null,
+    }))
+    .sort((a, b) => a.t - b.t);
+
+  const tempReadings = rawAdjustments
+    .filter((e) => e.temp !== null)
+    .map((e) => ({ t: e.t, temp: e.temp }))
+    .sort((a, b) => a.t - b.t);
+
+  const rorReadings = tempReadings.map((point, idx) => {
+    if (idx === 0) return { t: point.t, ror: null };
+    const previous = tempReadings[idx - 1];
+    const elapsedMinutes = (point.t - previous.t) / 60;
+    if (elapsedMinutes <= 0) return { t: point.t, ror: null };
+    if (previous.temp < 150 || elapsedMinutes > 2) return { t: point.t, ror: null };
+    return {
+      t: point.t,
+      ror: Math.max(0, (point.temp - previous.temp) / elapsedMinutes),
+    };
+  });
+
+  const smoothedRor = rorReadings.map((point, idx) => {
+    if (point.ror === null) return point;
+    const window = rorReadings
+      .slice(Math.max(0, idx - 2), idx + 1)
+      .map((p) => p.ror)
+      .filter((value) => value !== null);
+    if (window.length === 0) return point;
+    return {
+      t: point.t,
+      ror: window.reduce((sum, value) => sum + value, 0) / window.length,
+    };
+  });
+
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+  const interpolateSeries = (points, valueKey, atSecond, options = {}) => {
+    const usablePoints = points
+      .filter((point) => point[valueKey] !== null && point[valueKey] !== undefined)
+      .sort((a, b) => a.t - b.t);
+    if (usablePoints.length === 0) return null;
+    if (atSecond <= usablePoints[0].t) return usablePoints[0][valueKey];
+    const lastPoint = usablePoints[usablePoints.length - 1];
+    if (atSecond >= lastPoint.t) return lastPoint[valueKey];
+
+    const nextIndex = usablePoints.findIndex((point) => point.t >= atSecond);
+    if (nextIndex <= 0) return usablePoints[0][valueKey];
+    const previous = usablePoints[nextIndex - 1];
+    const next = usablePoints[nextIndex];
+    if (next.t === previous.t) return next[valueKey];
+
+    const progress = (atSecond - previous.t) / (next.t - previous.t);
+    if (!options.smooth || usablePoints.length < 3) {
+      return previous[valueKey] + (next[valueKey] - previous[valueKey]) * progress;
     }
 
-    // Calculate RoR (Rate of Rise) per 30 seconds
-    let ror = null;
-    if (t >= 30) {
-      const prevTempEntry = chartData[t - 30];
-      if (prevTempEntry && prevTempEntry.temp && currentTemp) {
-        ror = currentTemp - prevTempEntry.temp;
-      }
+    const p1 = previous[valueKey];
+    const p2 = next[valueKey];
+    const eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+    return clamp(p1 + (p2 - p1) * eased, Math.min(p1, p2), Math.max(p1, p2));
+  };
+
+  const controlAdjustments = rawAdjustments.filter((e) => (
+    e.type === "start_settings" || e.temp === null || e.t === 0
+  ));
+  const xTicks = [0, 0.25, 0.5, 0.75, 1]
+    .map((ratio) => Math.round(totalSeconds * ratio))
+    .filter((tick, index, list) => index === 0 || tick !== list[index - 1]);
+
+  const chartData = [];
+  let currentHeat = controlAdjustments.find((e) => e.heat !== null)?.heat ?? 0;
+  let currentFan = controlAdjustments.find((e) => e.fan !== null)?.fan ?? 0;
+  let controlIndex = 0;
+
+  for (let t = 0; t <= totalSeconds; t++) {
+    while (controlIndex < controlAdjustments.length && controlAdjustments[controlIndex].t <= t) {
+      const entry = controlAdjustments[controlIndex];
+      if (entry.heat !== null) currentHeat = entry.heat;
+      if (entry.fan !== null) currentFan = entry.fan;
+      controlIndex += 1;
     }
 
     chartData.push({
@@ -73,77 +165,278 @@ function RoastDetailChart({ roast }) {
       displayTime: formatMMSS(t),
       heat: currentHeat,
       fan: currentFan,
-      temp: currentTemp ? Number(currentTemp) : null,
-      ror: ror,
+      temp: interpolateSeries(tempReadings, "temp", t, { smooth: true }),
+      ror: interpolateSeries(smoothedRor, "ror", t, { smooth: true }),
     });
   }
 
-  const phases = (roast.roastLog || []).filter((e) => e.type === "phase" && ["YELLOWING", "FIRST CRACK", "COOLING START"].includes(e.label));
+  const totalTime = formatMMSS(totalSeconds);
+  const devSeconds = safeNumber(roast.devSeconds, null) ??
+    (phases.firstCrack !== null && phases.coolingStart !== null
+      ? phases.coolingStart - phases.firstCrack
+      : null);
 
-  const totalTime = formatMMSS(roast.totalSeconds || 0);
-  
-  const firstCrack = (roast.roastLog || []).find(e => e.label === "FIRST CRACK");
-  const coolingStart = (roast.roastLog || []).find(e => e.label === "COOLING START");
-  
-  let dtr = "—";
-  if (firstCrack && coolingStart && (roast.totalSeconds || 0) > 0) {
-    const devTime = coolingStart.t - firstCrack.t;
-    dtr = `${((devTime / roast.totalSeconds) * 100).toFixed(1)}%`;
-  }
-
-  const weightLoss = roast.greenWeight && roast.roastedWeight 
-    ? `${(((Number(roast.greenWeight) - Number(roast.roastedWeight)) / Number(roast.greenWeight)) * 100).toFixed(1)}%`
+  const dtr = devSeconds !== null && totalSeconds > 0
+    ? `${((devSeconds / totalSeconds) * 100).toFixed(1)}%`
     : "—";
 
+  const endTemp = tempReadings.length > 0
+    ? `${Math.round(tempReadings[tempReadings.length - 1].temp)}°`
+    : "—";
+
+  const average = (values) => {
+    const usable = values.filter((value) => value !== null && value !== undefined && Number.isFinite(value));
+    if (usable.length === 0) return null;
+    return usable.reduce((sum, value) => sum + value, 0) / usable.length;
+  };
+  const avgTemp = average(chartData.map((point) => point.temp));
+  const avgRor = average(chartData.map((point) => point.ror));
+
+  const basePhaseMarkers = [
+    { label: "DE", t: phases.dryingEnd },
+    { label: "ME", t: phases.maillardEnd },
+    { label: "FC", t: phases.firstCrack },
+    { label: "Drop", t: phases.coolingStart },
+  ].filter((p) => p.t !== null);
+  const closeMaillardFirstCrack = phases.maillardEnd !== null &&
+    phases.firstCrack !== null &&
+    Math.abs(phases.firstCrack - phases.maillardEnd) < 30;
+  const phaseMarkers = basePhaseMarkers.map((marker) => ({
+    ...marker,
+    displayLabel: marker.label === "Drop"
+      ? null
+      : closeMaillardFirstCrack && marker.label === "ME"
+      ? null
+      : closeMaillardFirstCrack && marker.label === "FC"
+        ? "ME/FC"
+        : marker.label,
+  }));
+
+  const dryingEndTime = phases.dryingEnd ?? phases.maillardEnd ?? phases.firstCrack;
+  const phaseBands = [
+    { label: "Drying", start: 0, end: dryingEndTime, fill: "#f59e0b", note: "Build energy" },
+    { label: "Maillard", start: dryingEndTime, end: phases.firstCrack, fill: "#22c55e", note: "Flavor development" },
+    { label: "Development", start: phases.firstCrack, end: phases.coolingStart ?? totalSeconds, fill: "#a78bfa", note: "Finish and drop" },
+  ].filter((phase) => (
+    phase.start !== null &&
+    phase.start !== undefined &&
+    phase.end !== null &&
+    phase.end !== undefined &&
+    phase.end > phase.start
+  ));
+
+  const metricTiles = [
+    { label: "Avg RoR °/min", value: avgRor !== null ? avgRor.toFixed(1) : "—", color: "text-violet-200" },
+    { label: "Avg temp", value: avgTemp !== null ? `${Math.round(avgTemp)}°` : "—", color: "text-amber-200" },
+    { label: "Drop temp", value: endTemp, color: "text-zinc-100" },
+    { label: "DTR", value: dtr, color: "text-zinc-100" },
+  ];
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const atTime = safeNumber(label, 0) || 0;
+    const noteEntry = rawAdjustments.find((e) => e.t === atTime && e.note && e.note !== "Profile");
+
+    return (
+      <div className="min-w-[180px] rounded-2xl border border-zinc-700 bg-zinc-950/95 px-4 py-3 shadow-xl">
+        <div className="mb-2 font-mono text-sm font-bold text-zinc-100">{formatMMSS(atTime)}</div>
+        <div className="space-y-1 text-sm">
+          {payload.map((item) => (
+            item.value === null || item.value === undefined ? null : (
+              <div key={item.dataKey} className="flex items-center justify-between gap-8">
+                <span style={{ color: item.color }}>{item.name}</span>
+                <span className="font-mono text-zinc-100">
+                  {item.dataKey === "temp"
+                    ? `${Math.round(item.value)}°`
+                    : item.dataKey === "ror"
+                      ? `${Number(item.value).toFixed(1)}°/min`
+                      : item.value}
+                </span>
+              </div>
+            )
+          ))}
+        </div>
+        {noteEntry?.note && (
+          <div className="mt-3 max-w-[240px] border-t border-zinc-800 pt-2 text-xs leading-snug text-zinc-300">
+            {noteEntry.note}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="h-64 w-full bg-zinc-950/50 rounded-3xl p-4 border border-zinc-800/50">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-            <XAxis 
-              dataKey="t" 
-              tickFormatter={formatMMSS} 
-              stroke="#52525b" 
-              fontSize={10} 
-              tick={{fill: '#71717a'}}
-              minTickGap={30}
-            />
-            <YAxis stroke="#52525b" fontSize={10} tick={{fill: '#71717a'}} />
-            <Tooltip
-              contentStyle={{ backgroundColor: "#09090b", border: "1px solid #27272a", borderRadius: "12px", fontSize: "12px" }}
-              labelFormatter={formatMMSS}
-              itemStyle={{ padding: "2px 0" }}
-            />
-            
-            {phases?.map((p, idx) => (
-              <ReferenceLine key={idx} x={p.t} stroke="#52525b" strokeDasharray="3 3">
-                <Label value={p.label} position="top" fill="#71717a" fontSize={10} offset={10} />
-              </ReferenceLine>
-            ))}
+    <div className="space-y-5">
+      <section className="rounded-3xl border border-zinc-800/60 bg-zinc-950/70 p-5">
+        <div className="mb-5">
+          <div className="text-2xl font-black tracking-tight text-zinc-50">Roast curve</div>
+          <div className="mt-1 text-sm font-medium text-zinc-400">History detail preview · SR540</div>
+        </div>
 
-            <Line type="monotone" dataKey="temp" stroke="#ef4444" strokeWidth={2} dot={false} name="Temp" />
-            <Line type="stepAfter" dataKey="heat" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Heat" />
-            <Line type="stepAfter" dataKey="fan" stroke="#f97316" strokeWidth={1.5} dot={false} name="Fan" />
-            <Line type="monotone" dataKey="ror" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="RoR" />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {metricTiles.map((tile) => (
+            <div key={tile.label} className="border border-zinc-800 bg-zinc-900/60 p-3">
+              <div className="mb-3 text-[11px] font-medium text-zinc-500">{tile.label}</div>
+              <div className={`font-mono text-base font-black leading-tight ${tile.color}`}>{tile.value}</div>
+            </div>
+          ))}
+        </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Total Time</div>
-          <div className="text-sm font-bold text-zinc-100 font-mono">{totalTime}</div>
+        <div className="mb-5 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+          {phaseBands.map((phase) => (
+            <div key={phase.label} className="border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold text-zinc-100">{phase.label}</span>
+                <span className="font-mono text-zinc-400">{formatMMSS(phase.start)}-{formatMMSS(phase.end)}</span>
+              </div>
+              <div className="mt-1 text-zinc-500">{phase.note}</div>
+            </div>
+          ))}
         </div>
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">DTR</div>
-          <div className="text-sm font-bold text-red-400 font-mono">{dtr}</div>
+
+        <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-zinc-500">
+          <span>Development curve · Bean temp (°F)</span>
+          <span>RoR / min</span>
         </div>
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Weight Loss</div>
-          <div className="text-sm font-bold text-amber-400 font-mono">{weightLoss}</div>
+
+        <div className="h-[330px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 18, right: 8, left: 6, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+              <XAxis
+                dataKey="t"
+                type="number"
+                tickFormatter={formatMMSS}
+                ticks={xTicks}
+                domain={[0, totalSeconds]}
+                stroke="#71717a"
+                fontSize={10}
+                tick={{ fill: "#a1a1aa" }}
+                interval={0}
+                minTickGap={8}
+              />
+              <YAxis
+                yAxisId="temp"
+                orientation="left"
+                stroke="#71717a"
+                fontSize={10}
+                tick={{ fill: "#e4e4e7", fontWeight: 600 }}
+                tickMargin={4}
+                width={34}
+                mirror
+                domain={[50, 450]}
+                ticks={[100, 200, 300, 400]}
+              />
+              <YAxis
+                yAxisId="control"
+                hide
+                domain={[0, 30]}
+              />
+              <Tooltip content={<CustomTooltip />} />
+
+              {phaseBands.map((phase) => (
+                <ReferenceArea
+                  key={phase.label}
+                  yAxisId="temp"
+                  x1={phase.start}
+                  x2={phase.end}
+                  fill={phase.fill}
+                  fillOpacity={0.07}
+                  strokeOpacity={0}
+                />
+              ))}
+
+              {phaseMarkers.map((p) => (
+                <ReferenceLine key={p.label} yAxisId="temp" x={p.t} stroke="#a1a1aa" strokeDasharray="4 4">
+                  {p.displayLabel && (
+                    <Label value={p.displayLabel} position="top" fill="#d4d4d8" fontSize={10} offset={8} />
+                  )}
+                </ReferenceLine>
+              ))}
+
+              <Line yAxisId="temp" type="natural" dataKey="temp" stroke="#f59e0b" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" dot={false} name="Temp" connectNulls isAnimationActive={false} />
+              <Line yAxisId="control" type="natural" dataKey="ror" stroke="#a78bfa" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={false} name="RoR" connectNulls isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-      </div>
+
+        <div className="mt-1 text-center text-[11px] font-medium text-zinc-500">Time</div>
+
+        <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-2 text-xs">
+          <div className="flex items-center gap-2 text-amber-300"><span className="h-0.5 w-6 bg-amber-500" />Temp</div>
+          <div className="flex items-center gap-2 text-violet-300"><span className="h-0.5 w-6 bg-violet-400" />RoR / min</div>
+        </div>
+
+        <div className="mt-7 border-t border-zinc-800 pt-5">
+          <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-zinc-500">
+            <span>Control map · Heat and fan dial</span>
+            <span>Dial 0-10</span>
+          </div>
+
+          <div className="h-[220px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 18, right: 8, left: 6, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis
+                  dataKey="t"
+                  type="number"
+                  tickFormatter={formatMMSS}
+                  ticks={xTicks}
+                  domain={[0, totalSeconds]}
+                  stroke="#71717a"
+                  fontSize={10}
+                  tick={{ fill: "#a1a1aa" }}
+                  interval={0}
+                  minTickGap={8}
+                />
+                <YAxis
+                  yAxisId="control"
+                  orientation="left"
+                  stroke="#71717a"
+                  fontSize={10}
+                  tick={{ fill: "#e4e4e7", fontWeight: 600 }}
+                  tickMargin={4}
+                  width={28}
+                  mirror
+                  domain={[0, 10]}
+                  ticks={[2, 4, 6, 8, 10]}
+                />
+                <Tooltip content={<CustomTooltip />} />
+
+                {phaseBands.map((phase) => (
+                  <ReferenceArea
+                    key={phase.label}
+                    yAxisId="control"
+                    x1={phase.start}
+                    x2={phase.end}
+                    fill={phase.fill}
+                    fillOpacity={0.07}
+                    strokeOpacity={0}
+                  />
+                ))}
+
+                {phaseMarkers.map((p) => (
+                  <ReferenceLine key={p.label} yAxisId="control" x={p.t} stroke="#a1a1aa" strokeDasharray="4 4">
+                    {p.displayLabel && (
+                      <Label value={p.displayLabel} position="top" fill="#d4d4d8" fontSize={10} offset={8} />
+                    )}
+                  </ReferenceLine>
+                ))}
+
+                <Line yAxisId="control" type="stepAfter" dataKey="heat" stroke="#ff4545" strokeWidth={2.5} dot={false} name="Heat" isAnimationActive={false} />
+                <Line yAxisId="control" type="stepAfter" dataKey="fan" stroke="#38bdf8" strokeWidth={2.5} dot={false} name="Fan" isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="mt-1 text-center text-[11px] font-medium text-zinc-500">Time</div>
+
+          <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-2 text-xs">
+            <div className="flex items-center gap-2 text-red-300"><span className="h-0.5 w-6 bg-red-500" />Heat</div>
+            <div className="flex items-center gap-2 text-sky-300"><span className="h-0.5 w-6 bg-sky-400" />Fan</div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
