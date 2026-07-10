@@ -1852,10 +1852,10 @@ function App() {
               {elapsedSeconds === 0 && !isTimerRunning && (
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   <label className="block">
-                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Heat (1-9)</div>
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Fan (1-9)</div>
                     <input
-                      value={startingHeat}
-                      onChange={(e) => setStartingHeat(e.target.value.slice(0, 1))}
+                      value={startingFan}
+                      onChange={(e) => setStartingFan(e.target.value.slice(0, 1))}
                       type="number"
                       inputMode="numeric"
                       placeholder="—"
@@ -1863,10 +1863,10 @@ function App() {
                     />
                   </label>
                   <label className="block">
-                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Fan (1-9)</div>
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Heat (1-9)</div>
                     <input
-                      value={startingFan}
-                      onChange={(e) => setStartingFan(e.target.value.slice(0, 1))}
+                      value={startingHeat}
+                      onChange={(e) => setStartingHeat(e.target.value.slice(0, 1))}
                       type="number"
                       inputMode="numeric"
                       placeholder="—"
@@ -2128,10 +2128,10 @@ function App() {
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="text-xs text-zinc-400">
-                                Heat{" "}
-                                <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                                {" · "}Fan{" "}
+                                Fan{" "}
                                 <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                {" · "}Heat{" "}
+                                <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
                                 {" · "}Temp{" "}
                                 <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                               </div>
@@ -2146,10 +2146,10 @@ function App() {
                               {formatTime(entry.t)}
                             </div>
                             <div className="text-xs text-zinc-400">
-                              Heat{" "}
-                              <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                              {" · "}Fan{" "}
+                              Fan{" "}
                               <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                              {" · "}Heat{" "}
+                              <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
                               {" · "}Temp{" "}
                               <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
                             </div>
@@ -2202,18 +2202,6 @@ function App() {
                   <div className="grid grid-cols-3 gap-3">
                     <button
                       type="button"
-                      onClick={() => setActiveNumpad("heat")}
-                      className={[
-                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
-                        activeNumpad === "heat" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
-                      ].join(" ")}
-                    >
-                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Heat</div>
-                      <div className="mt-1 text-2xl font-black text-zinc-100">{heat || "—"}</div>
-                    </button>
-
-                    <button
-                      type="button"
                       onClick={() => setActiveNumpad("fan")}
                       className={[
                         "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
@@ -2222,6 +2210,18 @@ function App() {
                     >
                       <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Fan</div>
                       <div className="mt-1 text-2xl font-black text-zinc-100">{fan || "—"}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveNumpad("heat")}
+                      className={[
+                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
+                        activeNumpad === "heat" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                      ].join(" ")}
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Heat</div>
+                      <div className="mt-1 text-2xl font-black text-zinc-100">{heat || "—"}</div>
                     </button>
 
                     <button
@@ -3164,18 +3164,18 @@ function App() {
                                 )}
                                 <div className="flex items-center gap-2">
                                   <div className="text-xs text-zinc-400 flex items-center gap-1">
-                                    H:
-                                    {!isEditingRoast ? (
-                                      <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                                    ) : (
-                                      <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
-                                    )}
-                                    <span className="mx-0.5">·</span>
                                     F:
                                     {!isEditingRoast ? (
                                       <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
                                     ) : (
                                       <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    )}
+                                    <span className="mx-0.5">·</span>
+                                    H:
+                                    {!isEditingRoast ? (
+                                      <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                    ) : (
+                                      <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
                                     )}
                                     <span className="mx-0.5">·</span>
                                     T:
@@ -3211,18 +3211,18 @@ function App() {
                                   />
                                 )}
                                 <div className="text-xs text-zinc-400 flex items-center gap-1">
-                                  H:
-                                  {!isEditingRoast ? (
-                                    <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                                  ) : (
-                                    <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
-                                  )}
-                                  <span className="mx-0.5">·</span>
                                   F:
                                   {!isEditingRoast ? (
                                     <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
                                   ) : (
                                     <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                  )}
+                                  <span className="mx-0.5">·</span>
+                                  H:
+                                  {!isEditingRoast ? (
+                                    <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                  ) : (
+                                    <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
                                   )}
                                   <span className="mx-0.5">·</span>
                                   T:
