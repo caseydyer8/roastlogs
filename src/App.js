@@ -596,12 +596,11 @@ function DrumRollPicker({ values, selectedValue, onChange, label, displayFn }) {
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/85 backdrop-blur-sm"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-zinc-950/85 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
         >
           <div
-            className="w-full max-w-sm rounded-t-3xl border-t border-x border-zinc-700/60 bg-zinc-900 shadow-2xl overflow-hidden"
-            style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+            className="w-full max-w-sm rounded-3xl border border-zinc-700/60 bg-zinc-900 shadow-2xl overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             {/* Label */}
@@ -731,17 +730,8 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
                   displayFn={v => String(v).padStart(2, '0')}
                 />
               </div>
-              {/* Heat and Fan drum roll pickers */}
+              {/* Fan and Heat drum roll pickers */}
               <div className="flex-1 grid grid-cols-2 gap-2">
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
-                  <DrumRollPicker
-                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
-                    selectedValue={parseInt(step.heat) || 5}
-                    onChange={v => updateStep(idx, "heat", String(v))}
-                    label="HEAT"
-                  />
-                </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
                   <DrumRollPicker
@@ -749,6 +739,15 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
                     selectedValue={parseInt(step.fan) || 5}
                     onChange={v => updateStep(idx, "fan", String(v))}
                     label="FAN"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
+                  <DrumRollPicker
+                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    selectedValue={parseInt(step.heat) || 5}
+                    onChange={v => updateStep(idx, "heat", String(v))}
+                    label="HEAT"
                   />
                 </div>
               </div>
