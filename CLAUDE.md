@@ -33,9 +33,12 @@ Pages at https://caseydyer8.github.io/roastlogs/.
 ## Security
 
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
-- **RLS migration is still pending**: `docs/enable_rls.sql` must be run
-  manually against Supabase — RLS is OFF until then. Flag this whenever auth
-  or data-access code changes.
+- **RLS is ENABLED and verified enforced** (audited 2026-07-10: policies
+  present, anon read returns `[]`, anon write rejected 42501). Policies are
+  single-user by design (`USING (true)`, no user_id) — any authenticated
+  account sees ALL data. Two of Casey's own accounts exist; flag this design
+  if multi-user ever comes up. Open items: disable public signups + enable
+  leaked-password protection (Supabase Auth dashboard, not SQL).
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
 ## Workflow
@@ -61,7 +64,7 @@ right moment — don't wait to be asked.** Casey wants these prompts.
 | Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
 
 Standing reminders to surface when relevant (not every session):
-- The RLS migration (`docs/enable_rls.sql`) is still pending — flag it
-  whenever Supabase work comes up, until it's confirmed applied.
+- Supabase Auth dashboard follow-ups still open: disable public signups,
+  enable leaked-password protection.
 - Beans, profiles, and photos do NOT sync to Supabase (roasts and tasting
   notes do) — flag durability when those features are touched.
