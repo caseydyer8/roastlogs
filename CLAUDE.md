@@ -44,3 +44,24 @@ Pages at https://caseydyer8.github.io/roastlogs/.
   shipping. Don't push or deploy without explicit go-ahead.
 - Display-order changes must never require data migration — always read log
   entries by field name (`entry.fan` / `entry.heat` / `entry.temp`).
+
+## Use the tooling proactively
+
+This repo has purpose-built skills and agents. **Suggest them by name at the
+right moment — don't wait to be asked.** Casey wants these prompts.
+
+| When this happens | Reach for |
+|---|---|
+| User asks to ship / bump a version | `/release` (handles the 3-place version bump) |
+| Any `npm run deploy` finishes | Spawn the **deploy-verifier** agent — never call a deploy done on `Published` alone |
+| Auth, sync, RLS, or Supabase code is touched | Spawn the **security-auditor** agent before commit; suggest `/rls-audit` |
+| Any UI change (charts, pickers, layout, ordering) | `/ui-loop` after the edit — visual baselines exist for login, roast tab, picker, history chart |
+| A new screen/component is added | Add a matching e2e test + baseline in the same session |
+| Before any deploy of nontrivial changes | Suggest `/code-review` on the diff |
+| Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
+
+Standing reminders to surface when relevant (not every session):
+- The RLS migration (`docs/enable_rls.sql`) is still pending — flag it
+  whenever Supabase work comes up, until it's confirmed applied.
+- Beans, profiles, and photos do NOT sync to Supabase (roasts and tasting
+  notes do) — flag durability when those features are touched.
