@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "grep -q \"npm run deploy\" || exit 0; hstat=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' https://caseydyer8.github.io/roastlogs/ 2>/dev/null); echo \"{\\\"systemMessage\\\":\\\"Deploy detected \u2014 live site HTTP $hstat\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"Post-deploy live check: HTTP $hstat from https://caseydyer8.github.io/roastlogs/. If not 200, investigate before reporting success. For full verification (bundle hash vs local build), run the deploy-verifier agent.\\\"}}\"",
+            "timeout": 30,
+            "statusMessage": "Checking live site after deploy..."
+          }
+        ]
+      }
+    ]
+  }
+}
