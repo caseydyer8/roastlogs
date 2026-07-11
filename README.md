@@ -4,47 +4,51 @@ A mobile-first Progressive Web App (PWA) for logging and tracking coffee roasts 
 
 Built with React + Tailwind CSS. Designed for iPhone via Safari PWA installation.
 
+**📲 Live app:** [caseydyer8.github.io/roastlogs](https://caseydyer8.github.io/roastlogs/)
+
 ---
 
 ## 🔥 What It Does
 
 RoastLogs helps home coffee roasters track every detail of their roasts in real time:
 
-- **Live Roast Timer** — phase milestone buttons (Drying End, First Crack, etc.) with timestamps
-- **Adjustment Logger** — log heat, fan speed, and temperature changes as they happen
-- **Roast History** — browse all past roasts with charts and full adjustment timelines
-- **Green Bean Inventory** — track bean stock with auto-deduction after each roast
-- **AI Bean Recommendations** — Claude AI looks up roast guidance for any bean and origin
-- **Export** — PDF roast summaries and CSV history exports
+- **Live Roast Timer** — phase milestone buttons (Yellowing, First Crack, Cooling Start) with timestamps
+- **Adjustment Logger** — log fan, heat, and temperature changes as they happen via a quick numpad popup
+- **Roast Profiles** — build step-by-step fan/heat plans with drum-roll pickers, follow them live, and see profile-deviation markers when a roast strays from plan
+- **Roast Story Charts** — every saved roast gets a split visualization: temp + rate-of-rise curves over phase bands, a step-style heat/fan control map, and metrics (Avg RoR, Drop Temp, DTR%)
+- **Roast History** — browse past roasts with sparklines, full timelines, and in-place editing
+- **Brew & Tasting Notes** — log brews linked to specific roasts with ratings and flavor descriptors
+- **Bean Inventory** — track green bean stock
+- **Cloud Sync** — Supabase auth with roasts and tasting notes synced across devices
+- **Export** — CSV roast log and full JSON backup, generated client-side
 
 ---
 
-## 📱 Current Status
+## 📱 Current Status — v1.1.0 (live)
 
 | Feature | Status |
 |---|---|
-| Dark theme + amber/orange UI | ✅ Complete |
-| 4-tab navigation (Roast, History, Beans, Settings) | ✅ Complete |
-| Custom SVG icons | ✅ Complete |
-| Live Roast Screen | 🔨 In Progress |
-| Roast History | ⬜ Planned |
-| Bean Inventory | ⬜ Planned |
-| Supabase Cloud Sync | ⬜ Planned |
-| AI Bean Recommendations | ⬜ Planned |
-| GitHub Pages PWA deployment | ⬜ Planned |
-| App Store (iOS) | ⬜ Optional |
+| Live roast screen (timer, milestones, adjustments) | ✅ Live |
+| Roast history + split roast-story charts | ✅ Live |
+| Roast profiles + deviation tracking | ✅ Live |
+| Brew & tasting notes | ✅ Live |
+| Bean inventory | ✅ Live |
+| Supabase auth + cloud sync (roasts, tasting notes) | ✅ Live |
+| GitHub Pages PWA deployment | ✅ Live |
+| Playwright visual regression tests | ✅ In repo |
+| Beans/profiles cloud sync | ⬜ Planned |
+| Roast comparison overlay | ⬜ Planned |
 
 ---
 
 ## 🛠 Tech Stack
 
-- **React** — frontend framework
-- **Tailwind CSS** — dark mode styling
-- **Recharts** — roast profile charts
-- **Supabase** — cloud sync and auth
-- **Claude API** — AI bean recommendations
-- **GitHub Pages** — free PWA hosting
-- **Capacitor.js** — optional App Store wrapper
+- **React** (Create React App) — frontend
+- **Tailwind CSS** — dark-only zinc/amber theme
+- **Recharts** — roast curve and control-map charts
+- **Supabase** — authentication + Postgres cloud sync
+- **Playwright** — visual regression tests at phone + desktop viewports
+- **GitHub Pages** — PWA hosting via `gh-pages`
 
 ---
 
@@ -58,18 +62,33 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000) in Chrome.
 
+## 🧪 Testing
+```bash
+npx playwright test          # visual + behavior tests (iPhone + desktop viewports)
+```
+Tests run with a dev-only auth bypass and all Supabase network calls blocked — they never touch real data.
+
+## 📦 Deploying
+```bash
+npm run deploy               # builds and publishes to GitHub Pages (gh-pages branch)
+```
+
 ---
 
 ## 📁 Project Structure
 ```
 roastlogs/
 ├── src/
-│   ├── App.js          # Main app — navigation, screens, icons
-│   └── index.css       # Tailwind CSS imports
-├── docs/
-│   └── RoastLogs_Requirements_v1.2.docx   # Full requirements & roadmap
-├── public/
-└── package.json
+│   ├── App.js              # Main app — tabs, screens, roast logic
+│   ├── index.js            # Auth gate (login screen vs app)
+│   ├── syncService.js      # Supabase sync for roasts + tasting notes
+│   ├── supabaseClient.js   # Supabase client init
+│   ├── components/         # LoginScreen, charts/RoastCurveChart, ...
+│   ├── contexts/           # AuthContext
+│   └── hooks/
+├── e2e/                    # Playwright tests + screenshot baselines
+├── docs/                   # RLS migration SQL, guides, requirements
+└── public/
 ```
 
 ---
@@ -82,4 +101,4 @@ Built by a home roaster, for home roasters. Specifically designed around the SR5
 
 ---
 
-*Built with vibe coding using Claude AI + Cursor IDE*
+*Vibe-coded with Claude Code*
