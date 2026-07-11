@@ -37,8 +37,8 @@ Pages at https://caseydyer8.github.io/roastlogs/.
   present, anon read returns `[]`, anon write rejected 42501). Policies are
   single-user by design (`USING (true)`, no user_id) — any authenticated
   account sees ALL data. Two of Casey's own accounts exist; flag this design
-  if multi-user ever comes up. Open items: disable public signups + enable
-  leaked-password protection (Supabase Auth dashboard, not SQL).
+  if multi-user ever comes up. Public signups disabled + leaked-password
+  protection enabled (dashboard, 2026-07-10) — auth hardening complete.
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
 ## Workflow
@@ -64,7 +64,5 @@ right moment — don't wait to be asked.** Casey wants these prompts.
 | Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
 
 Standing reminders to surface when relevant (not every session):
-- Supabase Auth dashboard follow-ups still open: disable public signups,
-  enable leaked-password protection.
 - Beans, profiles, and photos do NOT sync to Supabase (roasts and tasting
   notes do) — flag durability when those features are touched.
