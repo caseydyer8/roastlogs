@@ -8,6 +8,15 @@ import LoginScreen from './components/LoginScreen';
 function Root() {
   const { session, loading } = useAuth();
 
+  // E2E-only auth bypass. Two safety layers:
+  // 1. NODE_ENV check — production builds dead-code-eliminate this entire
+  //    branch, so the bypass does not exist in the deployed bundle.
+  // 2. The Playwright harness blocks all *.supabase.co network calls, so
+  //    bypass mode can never read or write real data.
+  const isE2EBypass =
+    process.env.NODE_ENV === "development" &&
+    window.localStorage.getItem("roastlogs_e2e") === "1";
+
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-50 flex flex-col items-center justify-center gap-4">
@@ -19,7 +28,7 @@ function Root() {
     );
   }
 
-  if (!session) {
+  if (!session && !isE2EBypass) {
     return <LoginScreen />;
   }
 
