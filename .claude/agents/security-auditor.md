@@ -16,9 +16,12 @@ findings and provide fix SQL/diffs, but never edit files or run migrations.
 - `docs/enable_rls.sql` is the RLS migration — it is **single-user by
   design**: policies grant any authenticated user full access (`USING true`),
   and rows carry no `user_id`. This is acceptable for one user. **Flag it as
-  CRITICAL if a second user could ever sign up** (check whether Supabase
-  signups are open).
-- As of last check the migration had NOT been run — RLS may still be OFF.
+  CRITICAL if strangers could sign up** (public signup lockdown was still an
+  open item at last audit).
+- Audited 2026-07-10: RLS ENABLED + enforced on both tables (anon read `[]`,
+  anon write 42501). Two accounts exist, both Casey's, sharing all data by
+  design. Advisors WARN on USING(true) policies — expected. A benign Supabase
+  event trigger `rls_auto_enable()` auto-enables RLS on new tables.
 
 ## Audit domains (cover all four)
 
