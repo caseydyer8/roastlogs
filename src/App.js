@@ -152,6 +152,29 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
   );
 }
 
+// Build Profile card icon — 3 slider tracks with handles, "preparatory/planning"
+// counterpart to the active-roast flame. Stroke-only to match the icon it
+// replaces; same theme-aware accent tone as the flame's active color.
+function SliderIcon({ sizeClass = "h-6 w-6" }) {
+  const strokeColor = "rgb(var(--accent-text))";
+
+  return (
+    <svg
+      aria-hidden="true"
+      className={sizeClass}
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <path d="M4 6h16" style={{ stroke: strokeColor }} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="16" cy="6" r="2" style={{ stroke: strokeColor }} strokeWidth="2" />
+      <path d="M4 12h16" style={{ stroke: strokeColor }} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="13" cy="12" r="2" style={{ stroke: strokeColor }} strokeWidth="2" />
+      <path d="M4 18h16" style={{ stroke: strokeColor }} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="18" cy="18" r="2" style={{ stroke: strokeColor }} strokeWidth="2" />
+    </svg>
+  );
+}
+
 function TabButton({ label, active, onClick }) {
   let Icon;
   if (label === "Roast") Icon = RoasterIcon;
@@ -1529,7 +1552,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.2.1",
+        appVersion: "1.2.2",
         roastSessions,
         beans,
         roastProfiles,
@@ -1670,11 +1693,7 @@ function App() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="text-accent-text">
-                      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
-                      </svg>
-                    </div>
+                    <SliderIcon />
                     <div>
                       <div className="font-bold text-accent-text">Build Profile</div>
                       <div className="text-xs text-ink-muted">Create a step-by-step heat & fan plan before you roast</div>
@@ -4048,7 +4067,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v1.2.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v1.2.2</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
