@@ -8,8 +8,8 @@ import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 const TABS = ["Roast", "History", "Brew", "Beans"];
 
 function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
-  const outerFill = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
-  const innerFill = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
+  const fillColor = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const creaseColor = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
 
   return (
     <svg
@@ -18,27 +18,23 @@ function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
       viewBox="0 0 24 24"
       fill="none"
     >
-      {/* Coffee Mug Body */}
+      {/* Mug body — bold fill, same silhouette weight as the other icons */}
       <path
-        d="M6 8c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"
-        style={{ fill: outerFill }}
+        d="M4 7.5c0-1.2 1-2.2 2.2-2.2h10.1a2.2 2.2 0 0 1 2.2 2.2v8.2a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6V7.5z"
+        style={{ fill: fillColor }}
       />
-      {/* Mug Handle */}
+      {/* Handle */}
       <path
-        d="M18 9h1a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3h-1V9z"
-        style={{ stroke: outerFill }}
-        strokeWidth="2"
+        d="M18.5 9.3h1a3.2 3.2 0 0 1 3.2 3.2v1a3.2 3.2 0 0 1-3.2 3.2h-1"
+        style={{ stroke: fillColor }}
+        strokeWidth="1.8"
+        fill="none"
       />
-      {/* Inner Highlight/Liquid Surface */}
+      {/* Liquid line — thin accent detail, mirrors the Bean crease */}
       <path
-        d="M7 9h10v1H7V9z"
-        style={{ fill: innerFill }}
-      />
-      {/* Steam lines */}
-      <path
-        d="M9 2c0 1 .5 1.5 1 2s0 1-.5 2M12 1c0 1 .5 1.5 1 2s0 1-.5 2M15 2c0 1 .5 1.5 1 2s0 1-.5 2"
-        style={{ stroke: innerFill }}
-        strokeWidth="1.2"
+        d="M6.3 9.3h9.4"
+        style={{ stroke: creaseColor }}
+        strokeWidth="1.4"
         strokeLinecap="round"
       />
     </svg>
@@ -56,66 +52,44 @@ function RoasterIcon({ active, sizeClass = "h-6 w-6" }) {
       viewBox="0 0 24 24"
       fill="none"
     >
-      {/* Outer flame - teardrop with rounded bottom lobes */}
-      <path
-        d="M12 3c-1.3 2-3.4 4.3-4.4 6.4-.7 1.5-1 3-.9 4.2.1 1.4.7 2.6 1.5 3.6.9 1.1 2.1 1.8 3.3 2 .3.1.6.1.9.1.3 0 .6 0 .9-.1 1.2-.2 2.4-.9 3.3-2 0 0 0 0 0 0 .8-1 1.4-2.2 1.5-3.6.1-1.2-.2-2.7-.9-4.2C15.4 7.3 13.3 5 12 3Z"
-        style={{ fill: outerFill }}
-      />
-      {/* Inner flame - smaller, centered teardrop */}
-      <path
-        d="M12 6c-1 1.5-2.4 3.1-3.1 4.7-.5 1.1-.7 2.1-.6 3.1.1 1 .5 1.9 1.1 2.7.7.8 1.6 1.3 2.5 1.4.2 0 .4.1.6.1.2 0 .4 0 .6-.1.9-.1 1.8-.6 2.5-1.4.6-.8 1-1.7 1.1-2.7.1-1-.1-2-.6-3.1C14.4 9.1 13 7.5 12 6Z"
-        style={{ fill: innerFill }}
-      />
+      {/* Original two-teardrop flame, scaled up ~1.2x around center to match the current icon set's size */}
+      <g transform="translate(-2.4 -2.4) scale(1.2)">
+        {/* Outer flame - teardrop with rounded bottom lobes */}
+        <path
+          d="M12 3c-1.3 2-3.4 4.3-4.4 6.4-.7 1.5-1 3-.9 4.2.1 1.4.7 2.6 1.5 3.6.9 1.1 2.1 1.8 3.3 2 .3.1.6.1.9.1.3 0 .6 0 .9-.1 1.2-.2 2.4-.9 3.3-2 .8-1 1.4-2.2 1.5-3.6.1-1.2-.2-2.7-.9-4.2C15.4 7.3 13.3 5 12 3Z"
+          style={{ fill: outerFill }}
+        />
+        {/* Inner flame - smaller, centered teardrop */}
+        <path
+          d="M12 6c-1 1.5-2.4 3.1-3.1 4.7-.5 1.1-.7 2.1-.6 3.1.1 1 .5 1.9 1.1 2.7.7.8 1.6 1.3 2.5 1.4.2 0 .4.1.6.1.2 0 .4 0 .6-.1.9-.1 1.8-.6 2.5-1.4.6-.8 1-1.7 1.1-2.7.1-1-.1-2-.6-3.1C14.4 9.1 13 7.5 12 6Z"
+          style={{ fill: innerFill }}
+        />
+      </g>
     </svg>
   );
 }
 
 function ClockIcon({ active, sizeClass = "h-6 w-6" }) {
-  const colorClass = active ? "text-accent-text" : "text-ink-muted";
+  const fillColor = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const creaseColor = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
+
   return (
     <svg
       aria-hidden="true"
-      className={`${sizeClass} ${colorClass}`}
+      className={sizeClass}
       viewBox="0 0 24 24"
       fill="none"
     >
-      <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.6" />
-      <line
-        x1="12"
-        y1="12"
-        x2="12"
-        y2="8.5"
-        stroke="currentColor"
-        strokeWidth="1.6"
+      {/* Clock face — bold fill, same silhouette weight as the other icons */}
+      <circle cx="12" cy="12" r="9" style={{ fill: fillColor }} />
+      {/* Hands — thin accent detail, mirrors the Bean crease */}
+      <path
+        d="M12 7.5V12l3.2 1.8"
+        style={{ stroke: creaseColor }}
+        strokeWidth="1.4"
         strokeLinecap="round"
-      />
-      <line
-        x1="12"
-        y1="12"
-        x2="14.8"
-        y2="13.4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      {/* Minimal tick marks */}
-      <line
-        x1="12"
-        y1="4"
-        x2="12"
-        y2="5.2"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-      />
-      <line
-        x1="12"
-        y1="18.8"
-        x2="12"
-        y2="20"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
       />
     </svg>
   );
@@ -132,13 +106,13 @@ function BeanIcon({ active, sizeClass = "h-6 w-6" }) {
       viewBox="0 0 24 24"
       fill="none"
     >
-      {/* Symmetrical bean body */}
-      <ellipse cx="12" cy="12" rx="4.2" ry="6.2" style={{ fill: fillColor }} />
+      {/* Bean body — bold silhouette, sized to match the other icons */}
+      <ellipse cx="12" cy="12" rx="7.2" ry="9.5" style={{ fill: fillColor }} />
       {/* Central S-curve crease */}
       <path
-        d="M12.2 6c.6 1 .9 2 .9 3 0 1.1-.4 2.1-.9 3-.5.9-1.2 1.7-1.6 2.6-.4.9-.5 1.8-.5 2.4"
+        d="M12 5.5c-1.4 2.1-2.3 4.3-2.3 6.5s.9 4.4 2.3 6.5"
         style={{ stroke: creaseColor }}
-        strokeWidth="1.3"
+        strokeWidth="1.4"
         strokeLinecap="round"
         fill="none"
       />
@@ -157,97 +131,23 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
       viewBox="0 0 24 24"
       fill="none"
     >
-      {/* Outer gear ring (washer-like body) */}
-      <circle
-        cx="12"
-        cy="12"
-        r="7"
-        style={{ stroke: bodyColor }}
-        strokeWidth="4"
-        fill="none"
-      />
-      {/* 8 wide, rounded teeth */}
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(0 12 3.7)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(45 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(90 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(135 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(180 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(225 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(270 12 12)"
-      />
-      <rect
-        x="10.6"
-        y="2"
-        width="2.8"
-        height="3.4"
-        rx="1.1"
-        style={{ fill: bodyColor }}
-        transform="rotate(315 12 12)"
-      />
+      {/* Outer gear ring (washer-like body) — bumped up from the original r=7/stroke=4 to match the bolder set */}
+      <circle cx="12" cy="12" r="7.5" style={{ stroke: bodyColor }} strokeWidth="4.5" fill="none" />
+      {/* 8 teeth, restored from the original design */}
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+        <rect
+          key={deg}
+          x="10.4"
+          y="1.2"
+          width="3.2"
+          height="3.8"
+          rx="1.2"
+          style={{ fill: bodyColor }}
+          transform={`rotate(${deg} 12 12)`}
+        />
+      ))}
       {/* Inner highlight ring */}
-      <circle
-        cx="12"
-        cy="12"
-        r="4"
-        style={{ stroke: innerRingColor }}
-        strokeWidth="1.4"
-        fill="none"
-      />
+      <circle cx="12" cy="12" r="4.3" style={{ stroke: innerRingColor }} strokeWidth="1.4" fill="none" />
     </svg>
   );
 }
