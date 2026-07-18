@@ -3,14 +3,13 @@ import React from "react";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
-import "./lightMode.css"; // IDEA-008: light mode theme overrides
 
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
 const TABS = ["Roast", "History", "Brew", "Beans"];
 
 function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
-  const outerFill = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
-  const innerFill = active ? "#fde68a" : "#71717a"; // amber-200 / zinc-500
+  const outerFill = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const innerFill = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
 
   return (
     <svg
@@ -22,23 +21,23 @@ function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
       {/* Coffee Mug Body */}
       <path
         d="M6 8c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"
-        fill={outerFill}
+        style={{ fill: outerFill }}
       />
       {/* Mug Handle */}
       <path
         d="M18 9h1a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3h-1V9z"
-        stroke={outerFill}
+        style={{ stroke: outerFill }}
         strokeWidth="2"
       />
       {/* Inner Highlight/Liquid Surface */}
       <path
         d="M7 9h10v1H7V9z"
-        fill={innerFill}
+        style={{ fill: innerFill }}
       />
       {/* Steam lines */}
       <path
         d="M9 2c0 1 .5 1.5 1 2s0 1-.5 2M12 1c0 1 .5 1.5 1 2s0 1-.5 2M15 2c0 1 .5 1.5 1 2s0 1-.5 2"
-        stroke={innerFill}
+        style={{ stroke: innerFill }}
         strokeWidth="1.2"
         strokeLinecap="round"
       />
@@ -47,8 +46,8 @@ function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
 }
 
 function RoasterIcon({ active, sizeClass = "h-6 w-6" }) {
-  const outerFill = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
-  const innerFill = active ? "#fde68a" : "#71717a"; // amber-200 / zinc-500
+  const outerFill = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const innerFill = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
 
   return (
     <svg
@@ -60,19 +59,19 @@ function RoasterIcon({ active, sizeClass = "h-6 w-6" }) {
       {/* Outer flame - teardrop with rounded bottom lobes */}
       <path
         d="M12 3c-1.3 2-3.4 4.3-4.4 6.4-.7 1.5-1 3-.9 4.2.1 1.4.7 2.6 1.5 3.6.9 1.1 2.1 1.8 3.3 2 .3.1.6.1.9.1.3 0 .6 0 .9-.1 1.2-.2 2.4-.9 3.3-2 0 0 0 0 0 0 .8-1 1.4-2.2 1.5-3.6.1-1.2-.2-2.7-.9-4.2C15.4 7.3 13.3 5 12 3Z"
-        fill={outerFill}
+        style={{ fill: outerFill }}
       />
       {/* Inner flame - smaller, centered teardrop */}
       <path
         d="M12 6c-1 1.5-2.4 3.1-3.1 4.7-.5 1.1-.7 2.1-.6 3.1.1 1 .5 1.9 1.1 2.7.7.8 1.6 1.3 2.5 1.4.2 0 .4.1.6.1.2 0 .4 0 .6-.1.9-.1 1.8-.6 2.5-1.4.6-.8 1-1.7 1.1-2.7.1-1-.1-2-.6-3.1C14.4 9.1 13 7.5 12 6Z"
-        fill={innerFill}
+        style={{ fill: innerFill }}
       />
     </svg>
   );
 }
 
 function ClockIcon({ active, sizeClass = "h-6 w-6" }) {
-  const colorClass = active ? "text-amber-400" : "text-zinc-500";
+  const colorClass = active ? "text-accent-text" : "text-ink-muted";
   return (
     <svg
       aria-hidden="true"
@@ -123,8 +122,8 @@ function ClockIcon({ active, sizeClass = "h-6 w-6" }) {
 }
 
 function BeanIcon({ active, sizeClass = "h-6 w-6" }) {
-  const fillColor = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
-  const creaseColor = active ? "#fde68a" : "#71717a"; // amber-200 / zinc-500
+  const fillColor = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const creaseColor = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
 
   return (
     <svg
@@ -134,11 +133,11 @@ function BeanIcon({ active, sizeClass = "h-6 w-6" }) {
       fill="none"
     >
       {/* Symmetrical bean body */}
-      <ellipse cx="12" cy="12" rx="4.2" ry="6.2" fill={fillColor} />
+      <ellipse cx="12" cy="12" rx="4.2" ry="6.2" style={{ fill: fillColor }} />
       {/* Central S-curve crease */}
       <path
         d="M12.2 6c.6 1 .9 2 .9 3 0 1.1-.4 2.1-.9 3-.5.9-1.2 1.7-1.6 2.6-.4.9-.5 1.8-.5 2.4"
-        stroke={creaseColor}
+        style={{ stroke: creaseColor }}
         strokeWidth="1.3"
         strokeLinecap="round"
         fill="none"
@@ -148,8 +147,8 @@ function BeanIcon({ active, sizeClass = "h-6 w-6" }) {
 }
 
 function GearIcon({ active, sizeClass = "h-6 w-6" }) {
-  const bodyColor = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
-  const innerRingColor = active ? "#fde68a" : "#71717a"; // amber-200 / zinc-500
+  const bodyColor = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
+  const innerRingColor = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
 
   return (
     <svg
@@ -163,7 +162,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         cx="12"
         cy="12"
         r="7"
-        stroke={bodyColor}
+        style={{ stroke: bodyColor }}
         strokeWidth="4"
         fill="none"
       />
@@ -174,7 +173,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(0 12 3.7)"
       />
       <rect
@@ -183,7 +182,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(45 12 12)"
       />
       <rect
@@ -192,7 +191,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(90 12 12)"
       />
       <rect
@@ -201,7 +200,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(135 12 12)"
       />
       <rect
@@ -210,7 +209,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(180 12 12)"
       />
       <rect
@@ -219,7 +218,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(225 12 12)"
       />
       <rect
@@ -228,7 +227,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(270 12 12)"
       />
       <rect
@@ -237,7 +236,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         width="2.8"
         height="3.4"
         rx="1.1"
-        fill={bodyColor}
+        style={{ fill: bodyColor }}
         transform="rotate(315 12 12)"
       />
       {/* Inner highlight ring */}
@@ -245,7 +244,7 @@ function GearIcon({ active, sizeClass = "h-6 w-6" }) {
         cx="12"
         cy="12"
         r="4"
-        stroke={innerRingColor}
+        style={{ stroke: innerRingColor }}
         strokeWidth="1.4"
         fill="none"
       />
@@ -268,8 +267,8 @@ function TabButton({ label, active, onClick }) {
       className={[
         "flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 text-xs font-medium transition",
         active
-          ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30"
-          : "text-zinc-300 hover:bg-zinc-900/60 hover:text-zinc-100",
+          ? "bg-accent/15 text-accent-text ring-1 ring-accent/30"
+          : "text-ink hover:bg-surface/60 hover:text-ink",
       ].join(" ")}
       aria-current={active ? "page" : undefined}
     >
@@ -282,12 +281,12 @@ function TabButton({ label, active, onClick }) {
 function NumberPad({ value, onDigit, onDelete, onDone, label }) {
   const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9];
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/80 backdrop-blur-sm sm:items-center">
-      <div className="w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-200 sm:rounded-3xl sm:border sm:border-zinc-800/60 sm:bg-zinc-900 sm:p-6">
-        <div className="bg-zinc-900 p-6 pb-10 sm:p-0">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-primary/80 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-200 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-surface sm:p-6">
+        <div className="bg-surface p-6 pb-10 sm:p-0">
           <div className="mb-6 text-center">
-            <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{label}</div>
-            <div className="mt-2 text-4xl font-bold tracking-tight text-amber-400">
+            <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{label}</div>
+            <div className="mt-2 text-4xl font-bold tracking-tight text-accent-text">
               {value || "—"}
             </div>
           </div>
@@ -298,7 +297,7 @@ function NumberPad({ value, onDigit, onDelete, onDone, label }) {
                 key={d}
                 type="button"
                 onClick={() => onDigit(String(d))}
-                className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-2xl font-semibold text-zinc-100 transition active:bg-zinc-700 active:scale-95"
+                className="flex h-16 items-center justify-center rounded-2xl bg-surface/50 text-2xl font-semibold text-ink transition active:bg-card active:scale-95"
               >
                 {d}
               </button>
@@ -306,21 +305,21 @@ function NumberPad({ value, onDigit, onDelete, onDone, label }) {
             <button
               type="button"
               onClick={onDelete}
-              className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-xl font-semibold text-zinc-400 transition active:bg-zinc-700 active:scale-95"
+              className="flex h-16 items-center justify-center rounded-2xl bg-surface/50 text-xl font-semibold text-ink-muted transition active:bg-card active:scale-95"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-backspace"><path d="M9 19c-5 0-7-3-7-3s2-3 7-3h11a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H9Z"/><path d="m12 15 4 4"/><path d="m16 15-4 4"/></svg>
             </button>
             <button
               type="button"
               onClick={() => onDigit("0")}
-              className="flex h-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-2xl font-semibold text-zinc-100 transition active:bg-zinc-700 active:scale-95"
+              className="flex h-16 items-center justify-center rounded-2xl bg-surface/50 text-2xl font-semibold text-ink transition active:bg-card active:scale-95"
             >
               0
             </button>
             <button
               type="button"
               onClick={onDone}
-              className="flex h-16 items-center justify-center rounded-2xl bg-amber-500 text-lg font-bold text-zinc-950 transition active:bg-amber-400 active:scale-95"
+              className="flex h-16 items-center justify-center rounded-2xl bg-accent text-lg font-bold text-zinc-950 transition active:bg-amber-400 active:scale-95"
             >
               DONE
             </button>
@@ -333,10 +332,10 @@ function NumberPad({ value, onDigit, onDelete, onDone, label }) {
 
 function ScreenCard({ title, subtitle, children }) {
   return (
-    <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
-      <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{subtitle}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight text-zinc-50">{title}</div>
-      <div className="mt-4 text-sm leading-6 text-zinc-300">{children}</div>
+    <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
+      <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{subtitle}</div>
+      <div className="mt-2 text-2xl font-semibold tracking-tight text-ink">{title}</div>
+      <div className="mt-4 text-sm leading-6 text-ink">{children}</div>
     </section>
   );
 }
@@ -346,7 +345,7 @@ function PrimaryButton({ children, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+      className="inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
     >
       {children}
     </button>
@@ -394,15 +393,17 @@ function Star({ fill, size = 14 }) {
       {fill === 0.5 && (
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="50%" stopColor="transparent" />
+            <stop offset="50%" style={{ stopColor: "rgb(var(--accent-text))" }} />
+            <stop offset="50%" style={{ stopColor: "transparent" }} />
           </linearGradient>
         </defs>
       )}
       <polygon
         points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
-        fill={fill >= 1 ? "#f59e0b" : fill >= 0.5 ? `url(#${gradId})` : "none"}
-        stroke={fill > 0 ? "#f59e0b" : "#3f3f46"}
+        style={{
+          fill: fill >= 1 ? "rgb(var(--accent-text))" : fill >= 0.5 ? `url(#${gradId})` : "none",
+          stroke: fill > 0 ? "rgb(var(--accent-text))" : "rgb(var(--border-color))",
+        }}
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -459,17 +460,17 @@ const dialDigit = (raw) => {
 // Editable cockpit tile — the Fan/Heat/Temp starting inputs on session setup.
 // (The live hero readout uses its own inline tappable row per the mockup.)
 function CockpitTile({ label, value, accent = false, onChange }) {
-  const valueClass = `text-2xl font-black tabular-nums ${accent ? "text-amber-400" : "text-zinc-100"}`;
+  const valueClass = `text-2xl font-black tabular-nums ${accent ? "text-accent-text" : "text-ink"}`;
   return (
-    <label className="block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-2 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
-      <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</div>
+    <label className="block rounded-2xl border border-border/70 bg-primary/40 px-2 py-3 text-center transition focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">{label}</div>
       <input
         value={value}
         onChange={onChange}
         type="number"
         inputMode="numeric"
         placeholder="—"
-        className={`mt-1 w-full bg-transparent text-center outline-none placeholder:text-zinc-600 ${valueClass}`}
+        className={`mt-1 w-full bg-transparent text-center outline-none placeholder:text-ink-muted ${valueClass}`}
       />
     </label>
   );
@@ -478,8 +479,8 @@ function CockpitTile({ label, value, accent = false, onChange }) {
 // Dashed-amber "bag label" shell shared by the Brew summary and both tasting-detail views.
 function BagLabelCard({ className = "", children }) {
   return (
-    <section className={`rounded-3xl border border-zinc-800/60 p-6 shadow-xl ${className}`}>
-      <div className="flex flex-col items-center border-y-2 border-dashed border-amber-500/40 py-5 text-center">
+    <section className={`rounded-3xl border border-border/60 p-6 shadow-xl ${className}`}>
+      <div className="flex flex-col items-center border-y-2 border-dashed border-accent/40 py-5 text-center">
         {children}
       </div>
     </section>
@@ -491,22 +492,22 @@ function Stepper({ label, value, onChange }) {
   const v = Math.min(9, Math.max(1, parseInt(value, 10) || 5));
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">{label}</span>
-      <div className="flex items-center overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900">
+      <span className="text-[10px] uppercase text-ink-muted font-bold ml-1">{label}</span>
+      <div className="flex items-center overflow-hidden rounded-xl border border-border bg-surface">
         <button
           type="button"
           aria-label={`Decrease ${label}`}
           onClick={() => onChange(String(Math.max(1, v - 1)))}
-          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-zinc-300 transition active:bg-zinc-800 active:scale-95"
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-ink transition active:bg-surface active:scale-95"
         >
           –
         </button>
-        <div className="flex-1 text-center font-mono text-lg font-bold tabular-nums text-amber-400">{v}</div>
+        <div className="flex-1 text-center font-mono text-lg font-bold tabular-nums text-accent-text">{v}</div>
         <button
           type="button"
           aria-label={`Increase ${label}`}
           onClick={() => onChange(String(Math.min(9, v + 1)))}
-          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-zinc-300 transition active:bg-zinc-800 active:scale-95"
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-ink transition active:bg-surface active:scale-95"
         >
           +
         </button>
@@ -533,7 +534,7 @@ function TimeChipColumn({ values, selected, onPick, itemHeight, visibleCount }) 
           key={v}
           style={{ height: itemHeight }}
           className={`flex cursor-pointer select-none items-center justify-center text-xl font-bold transition-colors ${
-            v === selected ? "text-amber-400" : "text-white"
+            v === selected ? "text-accent-text" : "text-ink"
           }`}
           onClick={() => onPick(v)}
         >
@@ -558,26 +559,26 @@ function TimeChip({ totalSeconds, onChange }) {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="h-11 rounded-xl border border-zinc-700 bg-zinc-900 px-3 text-center font-mono text-sm font-bold text-zinc-100 transition active:bg-zinc-800 active:scale-95"
+        className="h-11 rounded-xl border border-border bg-surface px-3 text-center font-mono text-sm font-bold text-ink transition active:bg-surface active:scale-95"
       >
         {display}
       </button>
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/85 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-primary/85 p-4 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
         >
           <div
-            className="w-full max-w-sm overflow-hidden rounded-3xl border border-zinc-700/60 bg-zinc-900 shadow-2xl"
+            className="w-full max-w-sm overflow-hidden rounded-3xl border border-border/60 bg-surface shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-zinc-800/60 px-4 py-3 text-center">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">STEP TIME (MM:SS)</span>
+            <div className="border-b border-border/60 px-4 py-3 text-center">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">STEP TIME (MM:SS)</span>
             </div>
             <div className="relative">
               <div
-                className="pointer-events-none absolute left-0 right-0 z-10 border-b border-t border-amber-500/25 bg-amber-500/10"
+                className="pointer-events-none absolute left-0 right-0 z-10 border-b border-t border-accent/25 bg-accent/10"
                 style={{ height: ITEM_HEIGHT, top: ITEM_HEIGHT * Math.floor(VISIBLE_COUNT / 2) }}
               />
               <div className="flex">
@@ -588,7 +589,7 @@ function TimeChip({ totalSeconds, onChange }) {
                   itemHeight={ITEM_HEIGHT}
                   visibleCount={VISIBLE_COUNT}
                 />
-                <div className="flex items-center font-mono text-xl font-bold text-zinc-500">:</div>
+                <div className="flex items-center font-mono text-xl font-bold text-ink-muted">:</div>
                 <TimeChipColumn
                   values={Array.from({ length: 60 }, (_, i) => i)}
                   selected={ss}
@@ -601,7 +602,7 @@ function TimeChip({ totalSeconds, onChange }) {
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="m-4 w-[calc(100%-2rem)] rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 transition active:scale-[0.98]"
+              className="m-4 w-[calc(100%-2rem)] rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition active:scale-[0.98]"
             >
               DONE
             </button>
@@ -652,26 +653,26 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
-        <h3 className="text-xl font-bold text-white mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+        <h3 className="text-xl font-bold text-ink mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
         <input 
           placeholder="Profile Name (e.g. Light Roast)"
           value={profile.name}
           onChange={e => setProfile({...profile, name: e.target.value})}
-          className="w-full rounded-xl bg-zinc-950/40 border border-zinc-800 px-4 py-3 mb-4 text-sm text-zinc-100"
+          className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink"
         />
         <div className="space-y-3 mb-6">
           {profile.steps.length > 0 && (
-            <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted ml-1">
               Steps are sorted by time when saved
             </div>
           )}
           {profile.steps.map((step, idx) => (
-            <div key={idx} className="flex gap-2 items-end bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
+            <div key={idx} className="flex gap-2 items-end bg-primary/20 p-3 rounded-2xl border border-border/40">
               {/* Time: one tappable MM:SS chip */}
               <div className="flex flex-col gap-1 shrink-0">
-                <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Time</span>
+                <span className="text-[10px] uppercase text-ink-muted font-bold ml-1">Time</span>
                 <TimeChip
                   totalSeconds={step.totalSeconds || 0}
                   onChange={(secs) => updateStep(idx, "totalSeconds", secs)}
@@ -685,15 +686,15 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
               <button
                 aria-label="Remove step"
                 onClick={() => setProfile({...profile, steps: profile.steps.filter((_, i) => i !== idx)})}
-                className="text-red-500 p-2 text-xl h-11 flex items-center"
+                className="text-error-text p-2 text-xl h-11 flex items-center"
               >×</button>
             </div>
           ))}
-          <button onClick={addStep} className="w-full py-3 rounded-2xl border-2 border-dashed border-zinc-800 text-zinc-500 text-xs font-bold hover:border-zinc-700 hover:text-zinc-400">+ ADD STEP</button>
+          <button onClick={addStep} className="w-full py-3 rounded-2xl border-2 border-dashed border-border text-ink-muted text-xs font-bold hover:border-border hover:text-ink-muted">+ ADD STEP</button>
         </div>
         <div className="flex gap-3">
-          <button onClick={onCancel} className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold">CANCEL</button>
-          <button onClick={handleSave} className="flex-1 py-3 rounded-2xl bg-amber-500 text-zinc-950 font-bold">SAVE PROFILE</button>
+          <button onClick={onCancel} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold">CANCEL</button>
+          <button onClick={handleSave} className="flex-1 py-3 rounded-2xl bg-accent text-zinc-950 font-bold">SAVE PROFILE</button>
         </div>
       </div>
     </div>
@@ -706,17 +707,17 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
   const genericProfiles = (profiles || []).filter(p => !p.beanName || p.beanName === "");
   
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
-        <h3 className="text-xl font-bold text-white mb-6 text-center">Start Roast</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl">
+        <h3 className="text-xl font-bold text-ink mb-6 text-center">Start Roast</h3>
         <div className="space-y-3">
           {beanSpecificProfiles.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-amber-500 ml-1">FOR THIS BEAN</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-accent-text ml-1">FOR THIS BEAN</div>
               {beanSpecificProfiles.map(p => (
-                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
-                  <div className="font-bold text-zinc-100">{p.name}</div>
-                  <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-surface/50 border border-border/50 text-left hover:bg-surface transition">
+                  <div className="font-bold text-ink">{p.name}</div>
+                  <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
                 </button>
               ))}
             </div>
@@ -725,23 +726,23 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
           {genericProfiles.length > 0 && (
             <div className="space-y-2">
               {beanSpecificProfiles.length > 0 && (
-                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">GENERIC PROFILES</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted ml-1">GENERIC PROFILES</div>
               )}
               {genericProfiles.map(p => (
-                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 text-left hover:bg-zinc-800 transition">
-                  <div className="font-bold text-zinc-100">{p.name}</div>
-                  <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-surface/50 border border-border/50 text-left hover:bg-surface transition">
+                  <div className="font-bold text-ink">{p.name}</div>
+                  <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
                 </button>
               ))}
             </div>
           )}
           
           <div className="pt-2">
-            <button onClick={onSelectManual} className="w-full p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold hover:bg-amber-500/20 transition">
+            <button onClick={onSelectManual} className="w-full p-4 rounded-2xl bg-accent/10 border border-accent/20 text-accent-text font-bold hover:bg-accent/20 transition">
               MANUAL ROAST
             </button>
           </div>
-          <button onClick={onCancel} className="w-full py-3 text-zinc-500 text-xs font-bold uppercase tracking-widest">Cancel</button>
+          <button onClick={onCancel} className="w-full py-3 text-ink-muted text-xs font-bold uppercase tracking-widest">Cancel</button>
         </div>
       </div>
     </div>
@@ -1628,7 +1629,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.2.0",
+        appVersion: "1.2.1",
         roastSessions,
         beans,
         roastProfiles,
@@ -1654,8 +1655,8 @@ function App() {
   else if (activeTab === "Settings") ActiveIcon = GearIcon;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-50">
-      <header className="sticky top-0 z-20 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur">
+    <div className="min-h-screen bg-primary text-ink">
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-primary/80 backdrop-blur">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 pb-4 pt-5">
           <div className="flex items-center gap-2">
             {ActiveIcon && <ActiveIcon active sizeClass="h-7 w-7" />}
@@ -1664,19 +1665,19 @@ function App() {
               className={`h-2 w-2 rounded-full ml-1 ${
                 syncStatus === 'success' ? 'bg-green-500' :
                 syncStatus === 'syncing' ? 'bg-yellow-500' :
-                syncStatus === 'error' ? 'bg-red-500' : 'bg-zinc-600'
+                syncStatus === 'error' ? 'bg-red-500' : 'bg-ink-muted'
               }`}
               title={`Sync status: ${syncStatus}`}
             />
           </div>
           {/* FORGE/locked decision: Settings lives behind the gear icon top-right, not the bottom nav */}
           <div className="flex items-center gap-3">
-            <span className="text-xs font-medium text-zinc-400">RoastLogs</span>
+            <span className="text-xs font-medium text-ink-muted">RoastLogs</span>
             <button
               type="button"
               onClick={() => setActiveTab("Settings")}
               aria-label="Settings"
-              className={`rounded-full p-1.5 transition hover:bg-zinc-900/60 ${activeTab === "Settings" ? "ring-1 ring-amber-500/30" : ""}`}
+              className={`rounded-full p-1.5 transition hover:bg-surface/60 ${activeTab === "Settings" ? "ring-1 ring-accent/30" : ""}`}
             >
               <GearIcon active={activeTab === "Settings"} sizeClass="h-6 w-6" />
             </button>
@@ -1688,8 +1689,8 @@ function App() {
         {activeTab === "Roast" && (
           <div className="space-y-4">
             {/* 1) SESSION HEADER */}
-            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
-              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+            <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
+              <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
                 Session
               </div>
 
@@ -1716,22 +1717,22 @@ function App() {
               )}
 
               {/* Bean fields grouped under one labeled card */}
-              <div className={`${!roastStarted && !isTimerRunning ? "mt-4" : "mt-2"} rounded-2xl border border-zinc-800/60 bg-zinc-950/20 p-4`}>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Bean</div>
+              <div className={`${!roastStarted && !isTimerRunning ? "mt-4" : "mt-2"} rounded-2xl border border-border/60 bg-primary/20 p-4`}>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Bean</div>
                 <div className="mt-3 grid grid-cols-1 gap-3">
                   <label className="block">
-                    <div className="text-xs font-medium text-zinc-300">Bean Name</div>
+                    <div className="text-xs font-medium text-ink">Bean Name</div>
                     <input
                       value={beanName}
                       onChange={(e) => setBeanName(e.target.value)}
                       type="text"
                       placeholder="e.g., Ethiopia Yirgacheffe"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                     />
                   </label>
 
                   <label className="block">
-                    <div className="text-xs font-medium text-zinc-300">Green Weight (g)</div>
+                    <div className="text-xs font-medium text-ink">Green Weight (g)</div>
                     <input
                       value={greenWeightGrams}
                       onChange={(e) => setGreenWeightGrams(e.target.value)}
@@ -1739,16 +1740,16 @@ function App() {
                       inputMode="numeric"
                       min="0"
                       placeholder="e.g., 250"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                     />
                   </label>
 
                   <label className="block">
-                    <div className="text-xs font-medium text-zinc-300">Target Roast Level</div>
+                    <div className="text-xs font-medium text-ink">Target Roast Level</div>
                     <select
                       value={targetRoastLevel}
                       onChange={(e) => setTargetRoastLevel(e.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                     >
                       {ROAST_LEVEL_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>
@@ -1765,21 +1766,21 @@ function App() {
             {!roastStarted && !isTimerRunning && (
               <section 
                 onClick={() => setIsProfileBuilderOpen(true)}
-                className="rounded-3xl bg-amber-500/10 border border-amber-500/20 p-4 cursor-pointer hover:bg-amber-500/15 transition-colors"
+                className="rounded-3xl bg-accent/10 border border-accent/20 p-4 cursor-pointer hover:bg-accent/15 transition-colors"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="text-amber-500">
+                    <div className="text-accent-text">
                       <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
                       </svg>
                     </div>
                     <div>
-                      <div className="font-bold text-amber-400">Build Profile</div>
-                      <div className="text-xs text-zinc-400">Create a step-by-step heat & fan plan before you roast</div>
+                      <div className="font-bold text-accent-text">Build Profile</div>
+                      <div className="text-xs text-ink-muted">Create a step-by-step heat & fan plan before you roast</div>
                     </div>
                   </div>
-                  <div className="text-amber-500">
+                  <div className="text-accent-text">
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
@@ -1792,59 +1793,59 @@ function App() {
                 status pill, DEV in the corner, big left-aligned timer, and an inline
                 Fan·Heat·Temp readout row. Each readout value is a tap target that opens
                 the adjustment logger pre-filled (the FAB is the second entry point). */}
-            <section className="rounded-3xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 via-amber-500/[0.03] to-zinc-950/40 p-5">
+            <section className="rounded-3xl border border-accent/30 bg-gradient-to-b from-amber-500/10 via-amber-500/[0.03] to-zinc-950/40 p-5">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      isTimerRunning ? "animate-pulse bg-amber-500 ring-[3px] ring-amber-500/20" : "bg-zinc-600"
+                      isTimerRunning ? "animate-pulse bg-accent ring-[3px] ring-accent/20" : "bg-ink-muted"
                     }`}
                   />
                   <span
                     className={`text-[10px] font-bold uppercase tracking-[0.12em] ${
-                      isTimerRunning ? "text-amber-500" : "text-zinc-500"
+                      isTimerRunning ? "text-accent-text" : "text-ink-muted"
                     }`}
                   >
                     {isTimerRunning ? "Roasting" : roastStarted ? "Paused" : "Ready"}
                   </span>
                 </div>
                 {firstCrackTime !== null && (
-                  <div className="animate-in fade-in duration-300 font-mono text-xs font-bold tabular-nums text-red-500">
+                  <div className="animate-in fade-in duration-300 font-mono text-xs font-bold tabular-nums text-error-text">
                     DEV {devSeconds}s
                   </div>
                 )}
               </div>
 
-              <div className="mt-2 font-mono text-[68px] font-extrabold leading-none tracking-[-0.035em] tabular-nums text-amber-400">
+              <div className="mt-2 font-mono text-[68px] font-extrabold leading-none tracking-[-0.035em] tabular-nums text-accent-text">
                 {formatTime(elapsedSeconds)}
               </div>
 
               {/* Tappable readout — the ONLY F/H/T display on this screen */}
               {(roastStarted || isTimerRunning) && (
-                <div className="mt-4 flex border-t border-zinc-800/60 pt-3">
+                <div className="mt-4 flex border-t border-border/60 pt-3">
                   <button
                     type="button"
                     onClick={() => openAdjPopup("fan")}
-                    className="flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg py-1.5 transition active:scale-95 active:bg-zinc-900/40"
+                    className="flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg py-1.5 transition active:scale-95 active:bg-surface/40"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Fan</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">{latestLogged.fan || "—"}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Fan</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-ink">{latestLogged.fan || "—"}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjPopup("heat")}
-                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-zinc-800/60 py-1.5 pl-3 transition active:scale-95 active:bg-zinc-900/40"
+                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-border/60 py-1.5 pl-3 transition active:scale-95 active:bg-surface/40"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Heat</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">{latestLogged.heat || "—"}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Heat</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-ink">{latestLogged.heat || "—"}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjPopup("temp")}
-                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-zinc-800/60 py-1.5 pl-3 transition active:scale-95 active:bg-zinc-900/40"
+                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-border/60 py-1.5 pl-3 transition active:scale-95 active:bg-surface/40"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Temp</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Temp</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-ink">
                       {latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—"}
                     </span>
                   </button>
@@ -1853,16 +1854,16 @@ function App() {
             </section>
 
             {/* 3) PHASE MILESTONES */}
-            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
                   Phase Milestones
                 </div>
               </div>
               
               {profileFollowing && (
-                <div className="mt-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10">
-                  <div className="text-[10px] font-bold text-amber-500/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
+                <div className="mt-3 p-3 rounded-2xl bg-accent/5 border border-accent/10">
+                  <div className="text-[10px] font-bold text-accent-text/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
                   <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                     {(profileFollowing?.steps || []).map((step, idx) => {
                       const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
@@ -1875,10 +1876,10 @@ function App() {
                         <div 
                           key={idx} 
                           className={`flex-shrink-0 px-3 py-2 rounded-xl border transition-all duration-500 ${
-                            isCurrent ? "bg-amber-500 border-amber-600 text-zinc-950 scale-105 shadow-lg shadow-amber-500/20" : 
-                            isFlashing ? "bg-amber-500/40 border-amber-500 animate-pulse text-amber-100" :
-                            isPast ? "bg-zinc-800/30 border-zinc-800/50 text-zinc-600" :
-                            "bg-zinc-900/50 border-zinc-800/50 text-zinc-400"
+                            isCurrent ? "bg-accent border-accent text-zinc-950 scale-105 shadow-lg shadow-amber-500/20" : 
+                            isFlashing ? "bg-accent/40 border-accent animate-pulse text-accent-text" :
+                            isPast ? "bg-surface/30 border-border/50 text-ink-muted" :
+                            "bg-surface/50 border-border/50 text-ink-muted"
                           }`}
                         >
                           <div className="text-[10px] font-mono font-bold">{step.time}</div>
@@ -1895,7 +1896,7 @@ function App() {
                 <button
                   type="button"
                   onClick={isTimerRunning ? handlePause : handleStart}
-                  className="col-span-2 rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90 active:scale-[0.99]"
+                  className="col-span-2 rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 active:scale-[0.99]"
                 >
                   {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
                 </button>
@@ -1912,8 +1913,8 @@ function App() {
                       className={[
                         "rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
                         logged
-                          ? "border border-amber-600 bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20"
-                          : "border border-zinc-800/70 bg-zinc-950/30 text-zinc-100 hover:bg-zinc-900/50 active:bg-zinc-900/70",
+                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-amber-500/20"
+                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
                       ].join(" ")}
                     >
                       {label}
@@ -1929,8 +1930,8 @@ function App() {
                       className={[
                         "col-span-2 rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
                         logged
-                          ? "border border-amber-600 bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20"
-                          : "border border-zinc-800/70 bg-zinc-950/30 text-zinc-100 hover:bg-zinc-900/50 active:bg-zinc-900/70",
+                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-amber-500/20"
+                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
                       ].join(" ")}
                     >
                       COOLING START
@@ -1954,17 +1955,17 @@ function App() {
             )}
 
             {showDiscardModal && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/90 p-4 backdrop-blur-sm">
-                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl text-center">
-                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-900/20 text-red-500">
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/90 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-error/20 text-error-text">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                   </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Discard this roast?</h3>
-                  <p className="text-sm text-zinc-400 mb-6">All logged data will be lost.</p>
+                  <h3 className="text-xl font-bold text-ink mb-2">Discard this roast?</h3>
+                  <p className="text-sm text-ink-muted mb-6">All logged data will be lost.</p>
                   <div className="flex gap-3">
                     <button 
                       onClick={() => setShowDiscardModal(false)}
-                      className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition"
+                      className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition"
                     >
                       CANCEL
                     </button>
@@ -1995,15 +1996,15 @@ function App() {
             )}
 
             {/* 4) UNIFIED ROAST TIMELINE */}
-            <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4">
-              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
+              <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
                 Roast Timeline
               </div>
 
               {/* Compressed color-barred list: amber bar = phase entry, gray bar = adjustment */}
-              <div className="mt-4 max-h-[400px] overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
+              <div className="mt-4 max-h-[400px] overflow-y-auto rounded-2xl border border-border/60 bg-primary/20">
                 {roastLog.length === 0 ? (
-                  <div className="px-4 py-3 text-xs text-zinc-500">
+                  <div className="px-4 py-3 text-xs text-ink-muted">
                     Timeline events will appear here as they occur.
                   </div>
                 ) : (
@@ -2013,24 +2014,24 @@ function App() {
                       const isStart = entry.type === 'start_settings';
                       return (
                         <li key={`${entry.t}-${idx}`} className="flex items-stretch gap-2.5 px-3 py-1.5">
-                          <span className={`w-1 shrink-0 rounded-full ${isPhase || isStart ? "bg-amber-500" : "bg-zinc-700"}`} />
+                          <span className={`w-1 shrink-0 rounded-full ${isPhase || isStart ? "bg-accent" : "bg-card"}`} />
                           <div className="flex flex-1 items-center justify-between gap-2">
-                            <span className={`font-mono text-xs ${isPhase ? "font-bold text-amber-300" : "text-amber-300/70"}`}>
+                            <span className={`font-mono text-xs ${isPhase ? "font-bold text-accent-text" : "text-accent-text/70"}`}>
                               {formatTime(entry.t)}
                             </span>
                             {isPhase ? (
-                              <span className="text-xs font-bold uppercase tracking-wide text-amber-400">
+                              <span className="text-xs font-bold uppercase tracking-wide text-accent-text">
                                 {entry.label}
                               </span>
                             ) : (
-                              <span className="flex items-center gap-1.5 text-xs text-zinc-400 tabular-nums">
+                              <span className="flex items-center gap-1.5 text-xs text-ink-muted tabular-nums">
                                 <span>
-                                  F: <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
-                                  {" · "}H: <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                                  {" · "}T: <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
+                                  F: <span className="font-semibold text-ink">{entry.fan || "—"}</span>
+                                  {" · "}H: <span className="font-semibold text-ink">{entry.heat || "—"}</span>
+                                  {" · "}T: <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
                                 </span>
                                 {isStart && (
-                                  <span className="rounded-md border border-amber-500/30 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                                  <span className="rounded-md border border-accent/30 bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-text">
                                     {entry.label}
                                   </span>
                                 )}
@@ -2050,7 +2051,7 @@ function App() {
               <button
                 type="button"
                 onClick={() => openAdjPopup(null)}
-                className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl shadow-amber-500/20 transition active:scale-95"
+                className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-accent text-zinc-950 shadow-xl shadow-amber-500/20 transition active:scale-95"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
@@ -2058,19 +2059,19 @@ function App() {
 
             {/* Adjustment Log Popup */}
             {isAdjPopupOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
-                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl">
                   <div className="mb-6 flex items-center justify-between">
                     <div>
-                      <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Log Adjustment</div>
-                      <div className="mt-1 font-mono text-sm text-amber-400">{formatTime(adjPopupTimestamp ?? elapsedSeconds)}</div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-ink-muted">Log Adjustment</div>
+                      <div className="mt-1 font-mono text-sm text-accent-text">{formatTime(adjPopupTimestamp ?? elapsedSeconds)}</div>
                     </div>
                     <button 
                       onClick={() => {
                         setIsAdjPopupOpen(false);
                         setActiveNumpad(null);
                       }}
-                      className="rounded-full bg-zinc-800 p-2 text-zinc-400"
+                      className="rounded-full bg-surface p-2 text-ink-muted"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
@@ -2081,36 +2082,36 @@ function App() {
                       type="button"
                       onClick={() => setActiveNumpad("fan")}
                       className={[
-                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
-                        activeNumpad === "fan" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                        "flex flex-col items-center justify-center rounded-2xl border bg-primary/40 p-4 transition active:scale-95",
+                        activeNumpad === "fan" ? "border-accent ring-2 ring-accent/20" : "border-border/70",
                       ].join(" ")}
                     >
-                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Fan</div>
-                      <div className="mt-1 text-2xl font-black text-zinc-100">{fan || "—"}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-ink-muted">Fan</div>
+                      <div className="mt-1 text-2xl font-black text-ink">{fan || "—"}</div>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setActiveNumpad("heat")}
                       className={[
-                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
-                        activeNumpad === "heat" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                        "flex flex-col items-center justify-center rounded-2xl border bg-primary/40 p-4 transition active:scale-95",
+                        activeNumpad === "heat" ? "border-accent ring-2 ring-accent/20" : "border-border/70",
                       ].join(" ")}
                     >
-                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Heat</div>
-                      <div className="mt-1 text-2xl font-black text-zinc-100">{heat || "—"}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-ink-muted">Heat</div>
+                      <div className="mt-1 text-2xl font-black text-ink">{heat || "—"}</div>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setActiveNumpad("temp")}
                       className={[
-                        "flex flex-col items-center justify-center rounded-2xl border bg-zinc-950/40 p-4 transition active:scale-95",
-                        activeNumpad === "temp" ? "border-amber-500 ring-2 ring-amber-500/20" : "border-zinc-800/70",
+                        "flex flex-col items-center justify-center rounded-2xl border bg-primary/40 p-4 transition active:scale-95",
+                        activeNumpad === "temp" ? "border-accent ring-2 ring-accent/20" : "border-border/70",
                       ].join(" ")}
                     >
-                      <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-500">Temp</div>
-                      <div className="mt-1 text-2xl font-black text-zinc-100">{temp || "—"}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-tight text-ink-muted">Temp</div>
+                      <div className="mt-1 text-2xl font-black text-ink">{temp || "—"}</div>
                     </button>
                   </div>
 
@@ -2122,7 +2123,7 @@ function App() {
                         setIsAdjPopupOpen(false);
                         setActiveNumpad(null);
                       }}
-                      className="w-full rounded-2xl bg-amber-500 py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition active:scale-[0.98]"
+                      className="w-full rounded-2xl bg-accent py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition active:scale-[0.98]"
                     >
                       SAVE ENTRY
                     </button>
@@ -2134,7 +2135,7 @@ function App() {
             {/* 5) SAVE ROAST */}
             <div className="space-y-3">
               {saveSuccess && (
-                <div className="text-center text-sm font-bold text-green-500 animate-bounce">
+                <div className="text-center text-sm font-bold text-success-text animate-bounce">
                   Roast saved to history!
                 </div>
               )}
@@ -2165,11 +2166,11 @@ function App() {
             {brewStep === 0 && (
               <div className="space-y-6">
                 {/* SESSION — what you're drinking */}
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Session</div>
+                <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Session</div>
                   <div className="mt-4 space-y-4">
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Link to Roast Session</div>
+                      <div className="text-xs font-medium text-ink">Link to Roast Session</div>
                       <select
                         value={brewLinkedRoastId}
                         onChange={(e) => {
@@ -2188,7 +2189,7 @@ function App() {
                             if (roast) setBrewBeanName(roast.beanName);
                           }
                         }}
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       >
                         <option value="">None (Manual Entry)</option>
                         {(() => {
@@ -2204,27 +2205,27 @@ function App() {
                     </label>
 
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Bean Name</div>
+                      <div className="text-xs font-medium text-ink">Bean Name</div>
                       <input
                         value={brewBeanName}
                         onChange={(e) => setBrewBeanName(e.target.value)}
                         type="text"
                         placeholder="e.g., Ethiopia Yirgacheffe"
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                     </label>
                   </div>
                 </section>
 
                 {/* PARAMETERS — how you're brewing it */}
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Parameters</div>
+                <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Parameters</div>
                   <div className="mt-4 space-y-4">
                     {/* Method + Grind as cockpit-style tiles (native select overlaid for the picker) */}
                     <div className="grid grid-cols-2 gap-3">
-                      <label className="relative block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Method</div>
-                        <div className="mt-1 truncate text-sm font-bold text-zinc-100">{brewMethod}</div>
+                      <label className="relative block rounded-2xl border border-border/70 bg-primary/40 px-3 py-3 text-center transition focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Method</div>
+                        <div className="mt-1 truncate text-sm font-bold text-ink">{brewMethod}</div>
                         <select
                           value={brewMethod}
                           onChange={(e) => setBrewMethod(e.target.value)}
@@ -2234,9 +2235,9 @@ function App() {
                           {BREW_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </label>
-                      <label className="relative block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Grind</div>
-                        <div className="mt-1 truncate text-sm font-bold text-zinc-100">{brewGrindSize}</div>
+                      <label className="relative block rounded-2xl border border-border/70 bg-primary/40 px-3 py-3 text-center transition focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Grind</div>
+                        <div className="mt-1 truncate text-sm font-bold text-ink">{brewGrindSize}</div>
                         <select
                           value={brewGrindSize}
                           onChange={(e) => setBrewGrindSize(e.target.value)}
@@ -2250,7 +2251,7 @@ function App() {
 
                     {/* Ratio — one-tap quick-select chips */}
                     <div>
-                      <div className="text-xs font-medium text-zinc-300">Ratio</div>
+                      <div className="text-xs font-medium text-ink">Ratio</div>
                       <div className="mt-2 grid grid-cols-4 gap-2">
                         {RATIO_CHIPS.map(r => (
                           <button
@@ -2259,8 +2260,8 @@ function App() {
                             onClick={() => setBrewRatio(r)}
                             className={`rounded-2xl border py-3 text-sm font-bold transition active:scale-95 ${
                               brewRatio === r
-                                ? "border-amber-500 bg-amber-500/20 text-amber-400"
-                                : "border-zinc-800 bg-zinc-950/40 text-zinc-400"
+                                ? "border-accent bg-accent/20 text-accent-text"
+                                : "border-border bg-primary/40 text-ink-muted"
                             }`}
                           >
                             {r}
@@ -2273,37 +2274,37 @@ function App() {
                           placeholder="e.g. 1:15.5"
                           value={customRatio}
                           onChange={(e) => setCustomRatio(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                         />
                       )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
-                        <div className="text-xs font-medium text-zinc-300">Device Name</div>
+                        <div className="text-xs font-medium text-ink">Device Name</div>
                         <input
                           value={brewDevice}
                           onChange={(e) => setBrewDevice(e.target.value)}
                           type="text"
                           placeholder="e.g., V60"
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                         />
                       </label>
                       <label className="block">
-                        <div className="text-xs font-medium text-zinc-300">Water Temp (°F)</div>
+                        <div className="text-xs font-medium text-ink">Water Temp (°F)</div>
                         <input
                           value={brewTemp}
                           onChange={(e) => setBrewTemp(e.target.value)}
                           type="number"
                           placeholder="205"
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                         />
                       </label>
                     </div>
 
                     <button
                       onClick={() => setBrewStep(1)}
-                      className="w-full rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                      className="w-full rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
                     >
                       START TASTING
                     </button>
@@ -2315,35 +2316,35 @@ function App() {
             {brewStep === 1 && (
               <div className="space-y-8">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Step 1 of 4 — Acidity & Body</div>
+                  <div className="text-xs font-bold uppercase tracking-widest text-ink-muted">Step 1 of 4 — Acidity & Body</div>
                   <div className="flex gap-1">
                     {[1, 2, 3, 4].map(s => (
-                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 1 ? 'bg-amber-500' : 'bg-zinc-800'}`} />
+                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 1 ? 'bg-accent' : 'bg-surface'}`} />
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                  <p className="text-lg font-medium leading-relaxed text-zinc-100">"Take a small sip. Rate these two qualities."</p>
+                <div className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <p className="text-lg font-medium leading-relaxed text-ink">"Take a small sip. Rate these two qualities."</p>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-4">
-                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">ACIDITY — How bright or sharp is it?</div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-ink-muted">ACIDITY — How bright or sharp is it?</div>
                     <div className="grid grid-cols-5 gap-2">
                       {[1, 2, 3, 4, 5].map(num => (
                         <button
                           key={num}
                           onClick={() => setAcidityRating(num)}
                           className={`flex h-14 flex-col items-center justify-center rounded-2xl border transition ${
-                            acidityRating === num ? "border-amber-500 bg-amber-500/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                            acidityRating === num ? "border-accent bg-accent/20 text-accent-text" : "border-border bg-surface/50 text-ink-muted"
                           }`}
                         >
                           <span className="text-lg font-bold">{num}</span>
                         </button>
                       ))}
                     </div>
-                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-zinc-500">
+                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-ink-muted">
                       <span className="text-center">Delicate</span>
                       <span className="text-center">Mild</span>
                       <span className="text-center">Balanced</span>
@@ -2353,21 +2354,21 @@ function App() {
                   </div>
 
                   <div className="space-y-4">
-                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">BODY — How does it feel in your mouth?</div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-ink-muted">BODY — How does it feel in your mouth?</div>
                     <div className="grid grid-cols-5 gap-2">
                       {[1, 2, 3, 4, 5].map(num => (
                         <button
                           key={num}
                           onClick={() => setBodyRating(num)}
                           className={`flex h-14 flex-col items-center justify-center rounded-2xl border transition ${
-                            bodyRating === num ? "border-amber-500 bg-amber-500/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                            bodyRating === num ? "border-accent bg-accent/20 text-accent-text" : "border-border bg-surface/50 text-ink-muted"
                           }`}
                         >
                           <span className="text-lg font-bold">{num}</span>
                         </button>
                       ))}
                     </div>
-                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-zinc-500">
+                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-tighter text-ink-muted">
                       <span className="text-center">Watery</span>
                       <span className="text-center">Delicate</span>
                       <span className="text-center">Medium</span>
@@ -2379,7 +2380,7 @@ function App() {
 
                 <button
                   onClick={() => setBrewStep(2)}
-                  className="w-full rounded-3xl bg-amber-500 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                  className="w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
                 >
                   NEXT
                 </button>
@@ -2389,16 +2390,16 @@ function App() {
             {brewStep === 2 && (
               <div className="space-y-8">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Step 2 of 4 — What do you taste?</div>
+                  <div className="text-xs font-bold uppercase tracking-widest text-ink-muted">Step 2 of 4 — What do you taste?</div>
                   <div className="flex gap-1">
                     {[1, 2, 3, 4].map(s => (
-                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 2 ? 'bg-amber-500' : 'bg-zinc-800'}`} />
+                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 2 ? 'bg-accent' : 'bg-surface'}`} />
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                  <p className="text-lg font-medium leading-relaxed text-zinc-100">"Take a full sip. Which broad flavor families stand out? Select all that apply."</p>
+                <div className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <p className="text-lg font-medium leading-relaxed text-ink">"Take a full sip. Which broad flavor families stand out? Select all that apply."</p>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">
@@ -2412,7 +2413,7 @@ function App() {
                         setSelectedFamilies(next);
                       }}
                       className={`flex flex-col items-center justify-center rounded-3xl border p-4 transition ${
-                        selectedFamilies.includes(family.id) ? "border-amber-500 bg-amber-500/15 text-amber-400" : "border-zinc-800 bg-zinc-950/40 text-zinc-400"
+                        selectedFamilies.includes(family.id) ? "border-accent bg-accent/15 text-accent-text" : "border-border bg-primary/40 text-ink-muted"
                       }`}
                     >
                       <span className="text-2xl mb-2">{family.emoji}</span>
@@ -2424,14 +2425,14 @@ function App() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => setBrewStep(1)}
-                    className="rounded-3xl border border-zinc-800 py-4 text-base font-semibold text-zinc-300 transition active:bg-zinc-900"
+                    className="rounded-3xl border border-border py-4 text-base font-semibold text-ink transition active:bg-surface"
                   >
                     BACK
                   </button>
                   <button
                     disabled={selectedFamilies.length === 0}
                     onClick={() => setBrewStep(3)}
-                    className="rounded-3xl bg-amber-500 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90 disabled:opacity-50 disabled:grayscale"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     NEXT
                   </button>
@@ -2442,16 +2443,16 @@ function App() {
             {brewStep === 3 && (
               <div className="space-y-8">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Step 3 of 4 — Let's get specific</div>
+                  <div className="text-xs font-bold uppercase tracking-widest text-ink-muted">Step 3 of 4 — Let's get specific</div>
                   <div className="flex gap-1">
                     {[1, 2, 3, 4].map(s => (
-                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 3 ? 'bg-amber-500' : 'bg-zinc-800'}`} />
+                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 3 ? 'bg-accent' : 'bg-surface'}`} />
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                  <p className="text-lg font-medium leading-relaxed text-zinc-100">"For each flavor family you selected, which specific notes fit best?"</p>
+                <div className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <p className="text-lg font-medium leading-relaxed text-ink">"For each flavor family you selected, which specific notes fit best?"</p>
                 </div>
 
                 <div className="space-y-8">
@@ -2464,7 +2465,7 @@ function App() {
                         <div key={familyId} className="space-y-4">
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{family.emoji}</span>
-                            <div className="text-xs font-bold uppercase tracking-wider text-zinc-100">{family.label}</div>
+                            <div className="text-xs font-bold uppercase tracking-wider text-ink">{family.label}</div>
                           </div>
                           <div className="flex flex-wrap gap-2 mb-4">
                             {Object.keys(options).map(type => (
@@ -2478,7 +2479,7 @@ function App() {
                                   }
                                 }}
                                 className={`rounded-xl border px-3 py-2 text-[10px] font-bold tracking-widest transition ${
-                                  expandedFruitType.includes(type) ? "border-amber-500 bg-amber-500/20 text-amber-300" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                                  expandedFruitType.includes(type) ? "border-accent bg-accent/20 text-accent-text" : "border-border bg-surface/50 text-ink-muted"
                                 }`}
                               >
                                 {type.replace('_', ' ')}
@@ -2488,7 +2489,7 @@ function App() {
                           {expandedFruitType.length > 0 && (
                             <>
                               {expandedFruitType.map(type => (
-                                <div key={type} className="flex flex-wrap gap-2 rounded-2xl bg-zinc-950/30 p-4 border border-zinc-800/40">
+                                <div key={type} className="flex flex-wrap gap-2 rounded-2xl bg-primary/30 p-4 border border-border/40">
                                   {options[type].map(opt => (
                                 <button
                                   key={opt}
@@ -2499,7 +2500,7 @@ function App() {
                                     setSelectedDescriptors(next);
                                   }}
                                   className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                    selectedDescriptors.includes(opt) ? "border-amber-500 bg-amber-500/15 text-amber-300" : "border-zinc-800 bg-zinc-900/30 text-zinc-400"
+                                    selectedDescriptors.includes(opt) ? "border-accent bg-accent/15 text-accent-text" : "border-border bg-surface/30 text-ink-muted"
                                   }`}
                                 >
                                   {opt}
@@ -2517,7 +2518,7 @@ function App() {
                       <div key={familyId} className="space-y-4">
                         <div className="flex items-center gap-2">
                           <span className="text-lg">{family.emoji}</span>
-                          <div className="text-xs font-bold uppercase tracking-wider text-zinc-100">{family.label}</div>
+                          <div className="text-xs font-bold uppercase tracking-wider text-ink">{family.label}</div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {options.map(opt => (
@@ -2530,7 +2531,7 @@ function App() {
                                 setSelectedDescriptors(next);
                               }}
                               className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                selectedDescriptors.includes(opt) ? "border-amber-500 bg-amber-500/15 text-amber-300" : "border-zinc-800 bg-zinc-900/30 text-zinc-400"
+                                selectedDescriptors.includes(opt) ? "border-accent bg-accent/15 text-accent-text" : "border-border bg-surface/30 text-ink-muted"
                               }`}
                             >
                               {opt}
@@ -2545,13 +2546,13 @@ function App() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => setBrewStep(2)}
-                    className="rounded-3xl border border-zinc-800 py-4 text-base font-semibold text-zinc-300 transition active:bg-zinc-900"
+                    className="rounded-3xl border border-border py-4 text-base font-semibold text-ink transition active:bg-surface"
                   >
                     BACK
                   </button>
                   <button
                     onClick={() => setBrewStep(4)}
-                    className="rounded-3xl bg-amber-500 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
                   >
                     NEXT
                   </button>
@@ -2562,22 +2563,22 @@ function App() {
             {brewStep === 4 && (
               <div className="space-y-8 pb-12">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold uppercase tracking-widest text-zinc-500">Step 4 of 4 — Your Tasting Notes</div>
+                  <div className="text-xs font-bold uppercase tracking-widest text-ink-muted">Step 4 of 4 — Your Tasting Notes</div>
                   <div className="flex gap-1">
                     {[1, 2, 3, 4].map(s => (
-                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 4 ? 'bg-amber-500' : 'bg-zinc-800'}`} />
+                      <div key={s} className={`h-1.5 w-1.5 rounded-full ${s <= 4 ? 'bg-accent' : 'bg-surface'}`} />
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                  <p className="text-lg font-medium leading-relaxed text-zinc-100">"Here are the flavor notes you identified."</p>
+                <div className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <p className="text-lg font-medium leading-relaxed text-ink">"Here are the flavor notes you identified."</p>
                 </div>
 
                 {/* One combined dark "bag label" card — dashed amber rules evoke a printed label */}
-                <BagLabelCard className="bg-zinc-900/40">
-                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Single Origin Roast</div>
-                    <h3 className="text-2xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{brewBeanName || "Unnamed Bean"}</h3>
+                <BagLabelCard className="bg-surface/40">
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-ink-muted mb-1">Single Origin Roast</div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-ink mb-0.5">{brewBeanName || "Unnamed Bean"}</h3>
                     {(() => {
                       if (brewLinkedRoastId) {
                         const roasts = (() => {
@@ -2588,43 +2589,43 @@ function App() {
                           }
                         })();
                         const roast = roasts.find(r => String(r.id) === brewLinkedRoastId);
-                        if (roast) return <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{roast.targetLevel}</div>;
+                        if (roast) return <div className="text-[11px] font-bold text-ink-muted uppercase tracking-widest">{roast.targetLevel}</div>;
                       }
                       return null;
                     })()}
-                    <div className="mt-2 text-sm font-bold tracking-wide text-zinc-300">
+                    <div className="mt-2 text-sm font-bold tracking-wide text-ink">
                       {[brewDevice || brewMethod, brewRatio === "Custom" ? customRatio : brewRatio, brewTemp ? `${brewTemp}°F` : ""]
                         .filter(Boolean)
                         .join(" · ")}
                     </div>
 
-                    <div className="w-12 h-[2px] bg-amber-500 my-5" />
+                    <div className="w-12 h-[2px] bg-accent my-5" />
 
                     <div className="space-y-2">
-                      <div className="text-lg font-bold text-amber-400 tracking-tight leading-relaxed italic">
+                      <div className="text-lg font-bold text-accent-text tracking-tight leading-relaxed italic">
                         {selectedDescriptors?.join(' · ')}
                       </div>
-                      <div className="text-sm font-medium text-zinc-400">
+                      <div className="text-sm font-medium text-ink-muted">
                         Acidity: {["Delicate", "Mild", "Balanced", "Bright", "Sharp"][acidityRating-1]} <span className="mx-2">·</span> Body: {["Watery", "Delicate", "Medium", "Round", "Syrupy"][bodyRating-1]}
                       </div>
                     </div>
 
                     <div className="mt-6">
-                      <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Overall Rating</div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-ink-muted">Overall Rating</div>
                       <div className="mt-3 flex justify-center">
                         <StarRatingInput value={brewRating} onChange={setBrewRating} />
                       </div>
                     </div>
 
                     <div className="mt-5 w-full">
-                      <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Brew again?</div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-ink-muted">Brew again?</div>
                       <div className="mt-3 grid grid-cols-3 gap-2">
                         {['Yes', 'No', 'Maybe'].map(opt => (
                           <button
                             key={opt}
                             onClick={() => setBrewAgain(opt)}
                             className={`rounded-2xl border py-3 text-sm font-bold transition ${
-                              brewAgain === opt ? "border-amber-500 bg-amber-500/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                              brewAgain === opt ? "border-accent bg-accent/20 text-accent-text" : "border-border bg-surface/50 text-ink-muted"
                             }`}
                           >
                             {opt}
@@ -2636,25 +2637,25 @@ function App() {
 
                 {/* Free-text notes stay a separate labeled field below the label card */}
                 <label className="block">
-                  <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Free Notes</div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-ink-muted">Free Notes</div>
                   <textarea
                     value={brewNotes}
                     onChange={(e) => setBrewNotes(e.target.value)}
                     placeholder="Any additional thoughts on this cup?"
-                    className="mt-4 min-h-[120px] w-full rounded-3xl border border-zinc-800 bg-zinc-950/40 p-5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    className="mt-4 min-h-[120px] w-full rounded-3xl border border-border bg-primary/40 p-5 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                   />
                 </label>
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => setBrewStep(3)}
-                    className="rounded-3xl border border-zinc-800 py-4 text-base font-semibold text-zinc-300 transition active:bg-zinc-900"
+                    className="rounded-3xl border border-border py-4 text-base font-semibold text-ink transition active:bg-surface"
                   >
                     BACK
                   </button>
                   <button
                     onClick={handleSaveBrew}
-                    className="rounded-3xl bg-amber-500 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
                   >
                     SAVE TASTING NOTE
                   </button>
@@ -2666,11 +2667,11 @@ function App() {
 
         {activeTab === "History" && (
           <div className="space-y-4">
-            <div className="flex rounded-2xl bg-zinc-800 p-1">
+            <div className="flex rounded-2xl bg-surface p-1">
               <button
                 onClick={() => setHistorySegment("ROASTS")}
                 className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition ${
-                  historySegment === "ROASTS" ? "bg-amber-500 text-zinc-950" : "text-zinc-400"
+                  historySegment === "ROASTS" ? "bg-accent text-zinc-950" : "text-ink-muted"
                 }`}
               >
                 ROASTS
@@ -2678,7 +2679,7 @@ function App() {
               <button
                 onClick={() => setHistorySegment("TASTINGS")}
                 className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition ${
-                  historySegment === "TASTINGS" ? "bg-amber-500 text-zinc-950" : "text-zinc-400"
+                  historySegment === "TASTINGS" ? "bg-accent text-zinc-950" : "text-ink-muted"
                 }`}
               >
                 TASTINGS
@@ -2691,7 +2692,7 @@ function App() {
                 placeholder={`Search ${historySegment.toLowerCase()} by bean name...`}
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
-                className="w-full rounded-2xl border border-zinc-800/70 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                className="w-full rounded-2xl border border-border/70 bg-surface/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
               />
             </div>
 
@@ -2716,15 +2717,15 @@ function App() {
                     // Distinct empty states: nothing logged yet vs. no search results.
                     if (!allRoasts || allRoasts.length === 0) {
                       return (
-                        <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
-                          <div className="text-sm font-semibold text-zinc-300">No roasts yet</div>
-                          <div className="mt-1 text-xs text-zinc-500">
+                        <div className="rounded-3xl border border-border/60 bg-surface/10 p-8 text-center">
+                          <div className="text-sm font-semibold text-ink">No roasts yet</div>
+                          <div className="mt-1 text-xs text-ink-muted">
                             Your roast history will build here as you log sessions.
                           </div>
                           <button
                             type="button"
                             onClick={() => setActiveTab("Roast")}
-                            className="mt-4 rounded-2xl bg-amber-500 px-5 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 active:scale-95"
+                            className="mt-4 rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 active:scale-95"
                           >
                             START YOUR FIRST ROAST
                           </button>
@@ -2733,8 +2734,8 @@ function App() {
                     }
                     if (savedRoasts.length === 0) {
                       return (
-                        <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
-                          <div className="text-zinc-500 text-sm">
+                        <div className="rounded-3xl border border-border/60 bg-surface/10 p-8 text-center">
+                          <div className="text-ink-muted text-sm">
                             No roasts match “{historySearch}”.
                           </div>
                         </div>
@@ -2746,7 +2747,7 @@ function App() {
                         key={roast.id}
                         type="button"
                         onClick={() => setSelectedRoast(roast)}
-                        className="group flex w-full items-stretch gap-3 rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 text-left transition hover:bg-zinc-800/50 active:scale-[0.98]"
+                        className="group flex w-full items-stretch gap-3 rounded-3xl border border-border/60 bg-surface/30 p-4 text-left transition hover:bg-surface/50 active:scale-[0.98]"
                       >
                         {/* Semantic roast-level accent bar (light tan → dark roast) */}
                         <span
@@ -2756,23 +2757,23 @@ function App() {
                         {/* Name truncates to one line — the full name lives in the detail view */}
                         <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="truncate text-[15px] font-bold tracking-tight text-zinc-100 transition group-hover:text-amber-400">
+                            <div className="truncate text-[15px] font-bold tracking-tight text-ink transition group-hover:text-accent-text">
                               {shortBeanName(roast.beanName)}
                             </div>
-                            <div className="mt-1 font-mono text-[11px] tabular-nums text-zinc-500">
+                            <div className="mt-1 font-mono text-[11px] tabular-nums text-ink-muted">
                               {(roast.date || "").split(",")[0]}
                             </div>
                           </div>
                           <div className="shrink-0 text-right">
-                            <div className="font-mono text-sm font-semibold tabular-nums text-amber-400">
+                            <div className="font-mono text-sm font-semibold tabular-nums text-accent-text">
                               {roast.duration}
                             </div>
-                            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5">
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-border bg-primary/40 px-2 py-0.5">
                               <span
                                 className="h-2 w-2 rounded-full"
                                 style={{ backgroundColor: roastLevelColor(roast.targetLevel) }}
                               />
-                              <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                              <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-ink-muted">
                                 {roast.targetLevel?.split(" ")[0]}
                               </span>
                             </div>
@@ -2786,7 +2787,7 @@ function App() {
                 <div className="space-y-4 pb-10">
                   <button
                     onClick={() => setSelectedRoast(null)}
-                    className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                    className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                     BACK TO HISTORY
@@ -2797,7 +2798,7 @@ function App() {
                       {!isEditingRoast ? (
                         <button
                           onClick={() => startEditing(selectedRoast)}
-                          className="rounded-xl bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-700 transition"
+                          className="rounded-xl bg-surface px-4 py-2 text-xs font-bold text-ink hover:bg-card transition"
                         >
                           EDIT ROAST
                         </button>
@@ -2808,7 +2809,7 @@ function App() {
                             setEditedRoast(null);
                             setHasChanges(false);
                           }}
-                          className="rounded-xl bg-red-900/20 px-4 py-2 text-xs font-bold text-red-400 hover:bg-red-900/30 transition"
+                          className="rounded-xl bg-error/20 px-4 py-2 text-xs font-bold text-error-text hover:bg-error/30 transition"
                         >
                           CANCEL EDIT
                         </button>
@@ -2824,108 +2825,108 @@ function App() {
                     )}
                   </div>
 
-                  <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
+                  <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
                     {!isEditingRoast ? (
                       <>
-                        <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedRoast.date}</div>
-                        <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-50">{selectedRoast.beanName}</div>
+                        <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{selectedRoast.date}</div>
+                        <div className="mt-2 text-2xl font-bold tracking-tight text-ink">{selectedRoast.beanName}</div>
                       </>
                     ) : (
                       <div className="space-y-3">
                         <label className="block">
-                          <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Date/Time</div>
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted mb-1">Date/Time</div>
                           <input 
                             type="text" 
                             value={editedRoast.date} 
                             onChange={(e) => updateEditedRoast('date', e.target.value)}
-                            className="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-zinc-100"
+                            className="w-full bg-primary/40 border border-border rounded-xl px-4 py-2 text-sm text-ink"
                           />
                         </label>
                         <label className="block">
-                          <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Bean Name</div>
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted mb-1">Bean Name</div>
                           <input 
                             type="text" 
                             value={editedRoast.beanName} 
                             onChange={(e) => updateEditedRoast('beanName', e.target.value)}
-                            className="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-zinc-100"
+                            className="w-full bg-primary/40 border border-border rounded-xl px-4 py-2 text-sm text-ink"
                           />
                         </label>
                       </div>
                     )}
-                    <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
+                    <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/50 pt-4">
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Green Weight</div>
+                        <div className="text-[10px] uppercase tracking-widest text-ink-muted">Green Weight</div>
                         {!isEditingRoast ? (
                           /* IDEA-009: display-layer weight unit conversion */
-                          <div className="text-sm font-medium text-zinc-200">{toDisplayWeight(selectedRoast.greenWeight)}</div>
+                          <div className="text-sm font-medium text-ink">{toDisplayWeight(selectedRoast.greenWeight)}</div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input 
                               type="number" 
                               value={editedRoast.greenWeight} 
                               onChange={(e) => updateEditedRoast('greenWeight', e.target.value)}
-                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-zinc-100"
+                              className="w-20 bg-primary/40 border border-border rounded-lg px-2 py-1 text-sm text-ink"
                             />
-                            <span className="text-sm text-zinc-500">g</span>
+                            <span className="text-sm text-ink-muted">g</span>
                           </div>
                         )}
                       </div>
                       <div className="col-span-1">
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roasted Weight</div>
+                        <div className="text-[10px] uppercase tracking-widest text-ink-muted">Roasted Weight</div>
                         {!isEditingRoast ? (
                           /* IDEA-009: display-layer weight unit conversion */
-                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.roastedWeight ? toDisplayWeight(selectedRoast.roastedWeight) : "—"}</div>
+                          <div className="text-sm font-medium text-ink">{selectedRoast.roastedWeight ? toDisplayWeight(selectedRoast.roastedWeight) : "—"}</div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <input 
                               type="number" 
                               value={editedRoast.roastedWeight || ""} 
                               onChange={(e) => updateEditedRoast('roastedWeight', e.target.value)}
-                              className="w-20 bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-zinc-100"
+                              className="w-20 bg-primary/40 border border-border rounded-lg px-2 py-1 text-sm text-ink"
                               placeholder="0"
                             />
-                            <span className="text-sm text-zinc-500">g</span>
+                            <span className="text-sm text-ink-muted">g</span>
                           </div>
                         )}
                       </div>
                       <div className="col-span-1">
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
+                        <div className="text-[10px] uppercase tracking-widest text-ink-muted">Duration</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
+                          <div className="text-sm font-medium text-accent-text">{selectedRoast.duration}</div>
                         ) : (() => {
                           const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
                           const durationSeconds = coolingStart ? coolingStart.t : editedRoast.totalSeconds;
                           return (
-                            <div className="text-sm font-bold text-amber-400 font-mono">
+                            <div className="text-sm font-bold text-accent-text font-mono">
                               {formatTime(durationSeconds)}
                             </div>
                           );
                         })()}
                       </div>
                       <div className="col-span-1">
-                        <div className="text-[10px] uppercase tracking-widest text-red-500">Dev Time</div>
+                        <div className="text-[10px] uppercase tracking-widest text-error-text">Dev Time</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-bold text-red-400">{selectedRoast.devSeconds}s</div>
+                          <div className="text-sm font-bold text-error-text">{selectedRoast.devSeconds}s</div>
                         ) : (() => {
                           const firstCrack = editedRoast.roastLog.find(e => e.label === "FIRST CRACK");
                           const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
                           const devSeconds = (firstCrack && coolingStart) ? (coolingStart.t - firstCrack.t) : editedRoast.devSeconds;
                           return (
-                            <div className="text-sm font-bold text-red-400 font-mono">
+                            <div className="text-sm font-bold text-error-text font-mono">
                               {devSeconds}s
                             </div>
                           );
                         })()}
                       </div>
                       <div className="col-span-2">
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
+                        <div className="text-[10px] uppercase tracking-widest text-ink-muted">Roast Level</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
+                          <div className="text-sm font-medium text-ink">{selectedRoast.targetLevel}</div>
                         ) : (
                           <select
                             value={editedRoast.targetLevel}
                             onChange={(e) => updateEditedRoast('targetLevel', e.target.value)}
-                            className="mt-1 w-full bg-zinc-950/40 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100"
+                            className="mt-1 w-full bg-primary/40 border border-border rounded-xl px-3 py-2 text-sm text-ink"
                           >
                             {ROAST_LEVEL_OPTIONS.map((opt) => (
                               <option key={opt} value={opt}>{opt}</option>
@@ -2936,17 +2937,17 @@ function App() {
                     </div>
 
                     {!isEditingRoast && (
-                      <div className="mt-6 border-t border-zinc-800/50 pt-6">
+                      <div className="mt-6 border-t border-border/50 pt-6">
                         <RoastCurveChart roast={selectedRoast} />
                       </div>
                     )}
                   </section>
 
                   {selectedRoast.profile && (
-                    <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                      <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-4">Profile vs Actual</div>
+                    <section className="rounded-3xl border border-border/60 bg-surface/20 p-5">
+                      <div className="text-xs font-medium uppercase tracking-wider text-ink-muted mb-4">Profile vs Actual</div>
                       <div className="space-y-2">
-                        <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-2">
+                        <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-ink-muted uppercase tracking-widest px-2">
                           <div>Planned</div>
                           <div>Actual Adjustment</div>
                         </div>
@@ -2956,18 +2957,18 @@ function App() {
                           
                           return (
                             <div key={idx} className="grid grid-cols-2 gap-2">
-                              <div className="bg-zinc-950/30 border border-zinc-800/50 rounded-xl p-2">
-                                <div className="text-[10px] font-mono text-zinc-500">{step.time}</div>
-                                <div className="text-xs font-bold text-zinc-300">H{step.heat} F{step.fan}</div>
+                              <div className="bg-primary/30 border border-border/50 rounded-xl p-2">
+                                <div className="text-[10px] font-mono text-ink-muted">{step.time}</div>
+                                <div className="text-xs font-bold text-ink">H{step.heat} F{step.fan}</div>
                               </div>
-                              <div className={`rounded-xl p-2 border ${actual ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/5 border-red-500/10 opacity-50"}`}>
+                              <div className={`rounded-xl p-2 border ${actual ? "bg-accent/10 border-accent/20" : "bg-error/5 border-error/10 opacity-50"}`}>
                                 {actual ? (
                                   <>
-                                    <div className="text-[10px] font-mono text-amber-500/60">{formatTime(actual.t)}</div>
-                                    <div className="text-xs font-bold text-amber-400">H{actual.heat} F{actual.fan}</div>
+                                    <div className="text-[10px] font-mono text-accent-text/60">{formatTime(actual.t)}</div>
+                                    <div className="text-xs font-bold text-accent-text">H{actual.heat} F{actual.fan}</div>
                                   </>
                                 ) : (
-                                  <div className="text-[10px] italic text-red-400/60 mt-1">Missed</div>
+                                  <div className="text-[10px] italic text-error-text/60 mt-1">Missed</div>
                                 )}
                               </div>
                             </div>
@@ -2977,18 +2978,18 @@ function App() {
                     </section>
                   )}
 
-                  <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Roast Timeline</div>
+                  <section className="rounded-3xl border border-border/60 bg-surface/20 p-5">
+                    <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Roast Timeline</div>
                     <div className="mt-4 space-y-3">
                       {!(!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog) || (!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog).length === 0 ? (
-                        <div className="text-xs text-zinc-500">No events logged.</div>
+                        <div className="text-xs text-ink-muted">No events logged.</div>
                       ) : (
                         (!isEditingRoast ? selectedRoast.roastLog : editedRoast.roastLog).map((entry, i) => (
-                          <div key={i} className="border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
+                          <div key={i} className="border-b border-border/30 pb-2 last:border-0 last:pb-0">
                             {entry.type === 'phase' ? (
-                              <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
+                              <div className="flex items-center justify-between rounded-xl bg-accent/10 px-3 py-2 border border-accent/20">
                                 {!isEditingRoast ? (
-                                  <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
+                                  <div className="text-sm font-bold uppercase tracking-wide text-accent-text">
                                     {entry.label}
                                   </div>
                                 ) : (
@@ -2996,11 +2997,11 @@ function App() {
                                     type="text" 
                                     value={entry.label} 
                                     onChange={(e) => updateLogEntry(i, 'label', e.target.value)}
-                                    className="bg-transparent border-none p-0 text-sm font-bold uppercase tracking-wide text-amber-400 focus:ring-0 w-32"
+                                    className="bg-transparent border-none p-0 text-sm font-bold uppercase tracking-wide text-accent-text focus:ring-0 w-32"
                                   />
                                 )}
                                 {!isEditingRoast ? (
-                                  <div className="font-mono text-sm font-semibold text-amber-300">
+                                  <div className="font-mono text-sm font-semibold text-accent-text">
                                     {formatTime(entry.t)}
                                   </div>
                                 ) : (
@@ -3014,14 +3015,14 @@ function App() {
                                         updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
                                       }
                                     }}
-                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16 text-right"
+                                    className="bg-primary/40 border border-border rounded-lg px-2 py-0.5 text-xs font-mono text-accent-text w-16 text-right"
                                   />
                                 )}
                               </div>
                             ) : entry.type === 'start_settings' ? (
                               <div className="flex items-center justify-between px-1">
                                 {!isEditingRoast ? (
-                                  <div className="font-mono text-sm text-amber-300">
+                                  <div className="font-mono text-sm text-accent-text">
                                     {formatTime(entry.t)}
                                   </div>
                                 ) : (
@@ -3035,33 +3036,33 @@ function App() {
                                         updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
                                       }
                                     }}
-                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
+                                    className="bg-primary/40 border border-border rounded-lg px-2 py-0.5 text-xs font-mono text-accent-text w-16"
                                   />
                                 )}
                                 <div className="flex items-center gap-2">
-                                  <div className="text-xs text-zinc-400 flex items-center gap-1">
+                                  <div className="text-xs text-ink-muted flex items-center gap-1">
                                     F:
                                     {!isEditingRoast ? (
-                                      <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                      <span className="font-semibold text-ink">{entry.fan || "—"}</span>
                                     ) : (
-                                      <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                      <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-primary/40 border border-border rounded px-1 text-ink" />
                                     )}
                                     <span className="mx-0.5">·</span>
                                     H:
                                     {!isEditingRoast ? (
-                                      <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                      <span className="font-semibold text-ink">{entry.heat || "—"}</span>
                                     ) : (
-                                      <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                      <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-primary/40 border border-border rounded px-1 text-ink" />
                                     )}
                                     <span className="mx-0.5">·</span>
                                     T:
                                     {!isEditingRoast ? (
-                                      <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
+                                      <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
                                     ) : (
-                                      <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                      <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-primary/40 border border-border rounded px-1 text-ink" />
                                     )}
                                   </div>
-                                  <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
+                                  <div className="ml-1 rounded-md bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-text border border-accent/30">
                                     {entry.label}
                                   </div>
                                 </div>
@@ -3069,7 +3070,7 @@ function App() {
                             ) : (
                               <div className="flex items-center justify-between px-1">
                                 {!isEditingRoast ? (
-                                  <div className="font-mono text-sm text-amber-300">
+                                  <div className="font-mono text-sm text-accent-text">
                                     {formatTime(entry.t)}
                                   </div>
                                 ) : (
@@ -3083,29 +3084,29 @@ function App() {
                                         updateLogEntry(i, 't', isNaN(seconds) ? entry.t : seconds);
                                       }
                                     }}
-                                    className="bg-zinc-950/40 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs font-mono text-amber-300 w-16"
+                                    className="bg-primary/40 border border-border rounded-lg px-2 py-0.5 text-xs font-mono text-accent-text w-16"
                                   />
                                 )}
-                                <div className="text-xs text-zinc-400 flex items-center gap-1">
+                                <div className="text-xs text-ink-muted flex items-center gap-1">
                                   F:
                                   {!isEditingRoast ? (
-                                    <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                    <span className="font-semibold text-ink">{entry.fan || "—"}</span>
                                   ) : (
-                                    <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    <input type="text" value={entry.fan} onChange={(e) => updateLogEntry(i, 'fan', e.target.value)} className="w-6 bg-primary/40 border border-border rounded px-1 text-ink" />
                                   )}
                                   <span className="mx-0.5">·</span>
                                   H:
                                   {!isEditingRoast ? (
-                                    <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                    <span className="font-semibold text-ink">{entry.heat || "—"}</span>
                                   ) : (
-                                    <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    <input type="text" value={entry.heat} onChange={(e) => updateLogEntry(i, 'heat', e.target.value)} className="w-6 bg-primary/40 border border-border rounded px-1 text-ink" />
                                   )}
                                   <span className="mx-0.5">·</span>
                                   T:
                                   {!isEditingRoast ? (
-                                    <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
+                                    <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
                                   ) : (
-                                    <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-zinc-950/40 border border-zinc-800 rounded px-1 text-zinc-100" />
+                                    <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-primary/40 border border-border rounded px-1 text-ink" />
                                   )}
                                 </div>
                               </div>
@@ -3120,7 +3121,7 @@ function App() {
                     <button
                       type="button"
                       onClick={() => setConfirmDelete({ type: "roast", id: selectedRoast.id })}
-                      className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
+                      className="w-full rounded-2xl border border-error/30 bg-error/10 py-3 text-sm font-semibold text-error-text transition hover:bg-error/20 active:bg-error/30"
                     >
                       DELETE ROAST
                     </button>
@@ -3144,8 +3145,8 @@ function App() {
                     }
                     if (!savedTastings || savedTastings.length === 0) {
                       return (
-                        <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
-                          <div className="text-zinc-500 text-sm">
+                        <div className="rounded-3xl border border-border/60 bg-surface/10 p-8 text-center">
+                          <div className="text-ink-muted text-sm">
                             {historySearch ? "No matching tastings found." : "No tasting notes yet. Complete your first tasting in the Brew tab."}
                           </div>
                         </div>
@@ -3156,28 +3157,28 @@ function App() {
                         key={tasting.id}
                         type="button"
                         onClick={() => setSelectedTastingNote(tasting)}
-                        className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
+                        className="w-full rounded-3xl border border-border/60 bg-surface/20 p-5 text-left transition hover:bg-surface/35 active:scale-[0.98]"
                       >
                         <div className="mb-1 flex items-start justify-between gap-3">
-                          <div className="min-w-0 truncate text-[15px] font-bold text-white">{shortBeanName(tasting.beanName) || "Unknown Bean"}</div>
+                          <div className="min-w-0 truncate text-[15px] font-bold text-ink">{shortBeanName(tasting.beanName) || "Unknown Bean"}</div>
                           <div className="shrink-0 pt-0.5">
                             <StarRow rating={tasting.rating} size={12} />
                           </div>
                         </div>
-                        <div className="mb-3 font-mono text-[11px] tabular-nums text-zinc-400">{(tasting.date || "").split(",")[0]} · {tasting.method}</div>
+                        <div className="mb-3 font-mono text-[11px] tabular-nums text-ink-muted">{(tasting.date || "").split(",")[0]} · {tasting.method}</div>
                         
                         <div className="flex flex-wrap gap-1.5 mb-3">
                           {tasting.descriptors?.slice(0, 3).map((d, i) => (
-                            <span key={i} className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 text-[10px] font-bold text-amber-400">
+                            <span key={i} className="rounded-full bg-accent/10 border border-accent/20 px-2.5 py-0.5 text-[10px] font-bold text-accent-text">
                               {d}
                             </span>
                           ))}
                           {tasting.descriptors?.length > 3 && (
-                            <span className="text-[10px] font-bold text-zinc-500 py-0.5">+{tasting.descriptors.length - 3} more</span>
+                            <span className="text-[10px] font-bold text-ink-muted py-0.5">+{tasting.descriptors.length - 3} more</span>
                           )}
                         </div>
                         
-                        <div className="text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
+                        <div className="text-[10px] font-bold tracking-wider text-ink-muted uppercase">
                           Acidity {tasting.acidity} <span className="mx-1">·</span> Body {tasting.body}
                         </div>
                       </button>
@@ -3188,33 +3189,33 @@ function App() {
                 <div className="space-y-6 pb-20">
                   <button
                     onClick={() => setSelectedTastingNote(null)}
-                    className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                    className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                     BACK TO HISTORY
                   </button>
 
-                  <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                    <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedTastingNote.date}</div>
-                    <h2 className="mt-2 text-3xl font-bold text-zinc-50 leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
-                    <div className="mt-1 text-sm font-medium text-amber-500/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
+                  <section className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                    <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{selectedTastingNote.date}</div>
+                    <h2 className="mt-2 text-3xl font-bold text-ink leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
+                    <div className="mt-1 text-sm font-medium text-accent-text/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
                     
-                    <div className="mt-8 space-y-6 border-t border-zinc-800/50 pt-6">
+                    <div className="mt-8 space-y-6 border-t border-border/50 pt-6">
                       <div className="grid grid-cols-2 gap-y-5 gap-x-8">
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Ratio</div>
-                          <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.ratio}</div>
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Ratio</div>
+                          <div className="text-sm font-bold text-ink">{selectedTastingNote.ratio}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Grind</div>
-                          <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.grindSize}</div>
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Grind</div>
+                          <div className="text-sm font-bold text-ink">{selectedTastingNote.grindSize}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Temp</div>
-                          <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.temp}°F</div>
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Temp</div>
+                          <div className="text-sm font-bold text-ink">{selectedTastingNote.temp}°F</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Rating</div>
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Rating</div>
                           <div className="mt-0.5">
                             <StarRow rating={selectedTastingNote.rating} size={14} />
                           </div>
@@ -3223,15 +3224,15 @@ function App() {
 
                       <div className="space-y-4">
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Acidity: {["Flat", "Low", "Medium", "Bright", "Vibrant"][selectedTastingNote.acidity-1]} ({selectedTastingNote.acidity})</div>
-                          <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
-                            <div className="h-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.acidity / 5) * 100}%` }} />
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Acidity: {["Flat", "Low", "Medium", "Bright", "Vibrant"][selectedTastingNote.acidity-1]} ({selectedTastingNote.acidity})</div>
+                          <div className="h-2 w-full rounded-full bg-surface overflow-hidden">
+                            <div className="h-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.acidity / 5) * 100}%` }} />
                           </div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Body: {["Watery", "Light", "Medium", "Full", "Syrupy"][selectedTastingNote.body-1]} ({selectedTastingNote.body})</div>
-                          <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
-                            <div className="h-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.body / 5) * 100}%` }} />
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Body: {["Watery", "Light", "Medium", "Full", "Syrupy"][selectedTastingNote.body-1]} ({selectedTastingNote.body})</div>
+                          <div className="h-2 w-full rounded-full bg-surface overflow-hidden">
+                            <div className="h-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.body / 5) * 100}%` }} />
                           </div>
                         </div>
                       </div>
@@ -3239,7 +3240,7 @@ function App() {
                       <div className="space-y-4">
                         {selectedTastingNote.families?.map(familyId => (
                           <div key={familyId}>
-                            <div className="text-[10px] uppercase tracking-widest font-black text-zinc-400 mb-2">
+                            <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">
                               {FLAVOR_FAMILIES.find(f => f.id === familyId)?.label}
                             </div>
                             <div className="flex flex-wrap gap-2">
@@ -3250,7 +3251,7 @@ function App() {
                                 }
                                 return (familyOptions || []).includes(d);
                               }).map((d, i) => (
-                                <span key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300">
+                                <span key={i} className="rounded-xl border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent-text">
                                   {d}
                                 </span>
                               ))}
@@ -3259,19 +3260,19 @@ function App() {
                         ))}
                       </div>
 
-                      <BagLabelCard className="bg-zinc-950/40">
-                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Tasting Summary</div>
-                          <h3 className="text-xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
-                          <div className="w-10 h-[2px] bg-amber-500 my-4" />
-                          <div className="text-base font-bold text-amber-400 tracking-tight italic leading-relaxed">
+                      <BagLabelCard className="bg-primary/40">
+                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-ink-muted mb-1">Tasting Summary</div>
+                          <h3 className="text-xl font-black uppercase tracking-tight text-ink mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
+                          <div className="w-10 h-[2px] bg-accent my-4" />
+                          <div className="text-base font-bold text-accent-text tracking-tight italic leading-relaxed">
                             {selectedTastingNote.descriptors?.slice(0, 5).join(' · ')}
                           </div>
                       </BagLabelCard>
 
                       {selectedTastingNote.notes && (
-                        <div className="rounded-2xl bg-zinc-950/40 p-5 border border-zinc-800/40">
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Free Notes</div>
-                          <p className="text-sm italic text-zinc-300 leading-relaxed font-medium">"{selectedTastingNote.notes}"</p>
+                        <div className="rounded-2xl bg-primary/40 p-5 border border-border/40">
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Free Notes</div>
+                          <p className="text-sm italic text-ink leading-relaxed font-medium">"{selectedTastingNote.notes}"</p>
                         </div>
                       )}
                     </div>
@@ -3281,7 +3282,7 @@ function App() {
                     <button
                       type="button"
                       onClick={() => setConfirmDelete({ type: "tasting", id: selectedTastingNote.id })}
-                      className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
+                      className="w-full rounded-2xl border border-error/30 bg-error/10 py-3 text-sm font-semibold text-error-text transition hover:bg-error/20 active:bg-error/30"
                     >
                       DELETE TASTING
                     </button>
@@ -3297,11 +3298,11 @@ function App() {
             {beansView === "list" && (
               <div className="space-y-6">
                 <header className="flex items-center justify-between">
-                  <h1 className="text-3xl font-black tracking-tight text-white">RoastLogs</h1>
+                  <h1 className="text-3xl font-black tracking-tight text-ink">RoastLogs</h1>
                   <div className="flex gap-2">        
                     <button
                       onClick={() => setBeansView("addBean")}
-                      className="rounded-2xl bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
+                      className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
                     >
                       ADD BEAN
                     </button>
@@ -3342,8 +3343,8 @@ function App() {
                     if (allBeanNames.length === 0) {
                       return (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
-                          <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8">
-                            <p className="max-w-[240px] text-sm text-zinc-500 leading-relaxed">
+                          <div className="rounded-3xl border border-border/60 bg-surface/10 p-8">
+                            <p className="max-w-[240px] text-sm text-ink-muted leading-relaxed">
                               No beans yet. Beans appear automatically when you log a roast or complete a tasting, or tap Add Bean to add one manually.
                             </p>
                           </div>
@@ -3374,22 +3375,22 @@ function App() {
                             setSelectedBean({ name, ...manualData });
                             setBeansView("beanDetail");
                           }}
-                          className="flex w-full items-center gap-4 rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
+                          className="flex w-full items-center gap-4 rounded-3xl border border-border/60 bg-surface/20 p-4 text-left transition hover:bg-surface/35 active:scale-[0.98]"
                         >
                           {/* Monogram avatar — beans have no photo field, this is the honest anchor */}
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-950/60 text-lg font-black text-amber-400 ring-2 ring-amber-500/40">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/60 text-lg font-black text-accent-text ring-2 ring-accent/40">
                             {name.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="truncate text-base font-bold text-white">{name}</div>
+                                <div className="truncate text-base font-bold text-ink">{name}</div>
                                 {manualData?.origin && (
-                                  <div className="truncate text-[11px] text-zinc-400">{manualData.origin}</div>
+                                  <div className="truncate text-[11px] text-ink-muted">{manualData.origin}</div>
                                 )}
                               </div>
                               {avgRating && (
-                                <div className="flex shrink-0 items-center gap-1 text-amber-500">
+                                <div className="flex shrink-0 items-center gap-1 text-accent-text">
                                   <span className="text-xs font-bold tabular-nums">{avgRating}</span>
                                   <Star size={12} fill={1} />
                                 </div>
@@ -3397,14 +3398,14 @@ function App() {
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-2">
                               <div className="flex gap-1.5">
-                                <span className="rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5 text-[10px] font-bold text-zinc-400">
+                                <span className="rounded-full border border-border bg-primary/40 px-2 py-0.5 text-[10px] font-bold text-ink-muted">
                                   {beanRoasts.length} roasts
                                 </span>
-                                <span className="rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5 text-[10px] font-bold text-zinc-400">
+                                <span className="rounded-full border border-border bg-primary/40 px-2 py-0.5 text-[10px] font-bold text-ink-muted">
                                   {beanTastings.length} tastings
                                 </span>
                               </div>
-                              <div className="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500">
+                              <div className="shrink-0 text-[10px] uppercase tracking-wider text-ink-muted">
                                 Last: {recentDate}
                               </div>
                             </div>
@@ -3421,69 +3422,69 @@ function App() {
               <div className="space-y-6">
                 <button
                   onClick={() => setBeansView("list")}
-                  className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                  className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                   BACK TO BEANS
                 </button>
                 
                 <header>
-                  <h2 className="text-2xl font-bold text-white">Add New Bean</h2>
+                  <h2 className="text-2xl font-bold text-ink">Add New Bean</h2>
                 </header>
 
-                <div className="space-y-4 rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
+                <div className="space-y-4 rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
                   <label className="block">
-                    <div className="text-xs font-medium text-zinc-300">Bean Name (Required)</div>
+                    <div className="text-xs font-medium text-ink">Bean Name (Required)</div>
                     <input
                       type="text"
                       value={newBean.name}
                       onChange={(e) => setNewBean({ ...newBean, name: e.target.value })}
                       placeholder="e.g., Ethiopia Yirgacheffe"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                     />
                   </label>
 
                   <div className="grid grid-cols-2 gap-4">
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Origin/Country</div>
+                      <div className="text-xs font-medium text-ink">Origin/Country</div>
                       <input
                         type="text"
                         value={newBean.origin}
                         onChange={(e) => setNewBean({ ...newBean, origin: e.target.value })}
                         placeholder="e.g., Ethiopia"
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                     </label>
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Farm/Producer</div>
+                      <div className="text-xs font-medium text-ink">Farm/Producer</div>
                       <input
                         type="text"
                         value={newBean.farm}
                         onChange={(e) => setNewBean({ ...newBean, farm: e.target.value })}
                         placeholder="Optional"
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                     </label>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Purchase Date</div>
+                      <div className="text-xs font-medium text-ink">Purchase Date</div>
                       <input
                         type="date"
                         value={newBean.purchaseDate}
                         onChange={(e) => setNewBean({ ...newBean, purchaseDate: e.target.value })}
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                     </label>
                     <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Purchase Weight (g)</div>
+                      <div className="text-xs font-medium text-ink">Purchase Weight (g)</div>
                       <input
                         type="number"
                         value={newBean.purchaseWeight}
                         onChange={(e) => setNewBean({ ...newBean, purchaseWeight: e.target.value })}
                         placeholder="e.g., 1000"
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                     </label>
                   </div>
@@ -3503,7 +3504,7 @@ function App() {
                       setNewBean({ name: "", origin: "", farm: "", purchaseDate: "", purchaseWeight: "" });
                       setBeansView("list");
                     }}
-                    className="mt-4 w-full rounded-3xl bg-amber-500 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90 disabled:opacity-50 disabled:grayscale"
+                    className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     SAVE BEAN
                   </button>
@@ -3515,16 +3516,16 @@ function App() {
               <div className="space-y-6 pb-20">
                 <button
                   onClick={() => setBeansView("list")}
-                  className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                  className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                   BACK TO BEANS
                 </button>
 
                 <header>
-                  <h2 className="text-3xl font-bold text-white leading-tight">{selectedBean.name}</h2>
+                  <h2 className="text-3xl font-bold text-ink leading-tight">{selectedBean.name}</h2>
                   {selectedBean.origin && (
-                    <div className="mt-2 flex flex-wrap gap-4 text-sm text-zinc-400">
+                    <div className="mt-2 flex flex-wrap gap-4 text-sm text-ink-muted">
                       <span>{selectedBean.origin}</span>
                       {selectedBean.farm && <span>· {selectedBean.farm}</span>}
                     </div>
@@ -3533,26 +3534,26 @@ function App() {
 
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Saved Profiles</h3>
+                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-ink-muted">Saved Profiles</h3>
                     <button
                       onClick={() => setIsProfileBuilderOpen(true)}
-                      className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-400 hover:bg-amber-500/20 transition"
+                      className="rounded-lg bg-accent/10 border border-accent/20 px-2 py-1 text-[10px] font-bold text-accent-text hover:bg-accent/20 transition"
                     >
                       + NEW PROFILE
                     </button>
                   </div>
                   <div className="space-y-2">
                     {(profiles || []).filter(p => p.beanName === selectedBean.name).length === 0 ? (
-                      <p className="text-sm text-zinc-600 italic py-2">No profiles saved for this bean.</p>
+                      <p className="text-sm text-ink-muted italic py-2">No profiles saved for this bean.</p>
                     ) : (
                       (profiles || []).filter(p => p.beanName === selectedBean.name).map(p => (
-                        <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
+                        <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-surface/30 border border-border/60">
                           <div>
-                            <div className="font-bold text-zinc-100 flex items-center gap-2">
+                            <div className="font-bold text-ink flex items-center gap-2">
                               {p.name}
-                              {p.isDefault && <span className="text-[8px] bg-amber-500 text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
+                              {p.isDefault && <span className="text-[8px] bg-accent text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
                             </div>
-                            <div className="text-[10px] text-zinc-500 mt-1">{p.steps.length} steps</div>
+                            <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
                           </div>
                           <div className="flex gap-2">
                             {!p.isDefault && (
@@ -3564,14 +3565,14 @@ function App() {
                                   }));
                                   setProfiles(updated);
                                 }}
-                                className="text-[10px] font-bold text-zinc-500 hover:text-amber-500 transition"
+                                className="text-[10px] font-bold text-ink-muted hover:text-accent-text transition"
                               >
                                 SET DEFAULT
                               </button>
                             )}
                             <button 
                               onClick={() => setProfiles((profiles || []).filter(profile => profile.id !== p.id))}
-                              className="text-[10px] font-bold text-red-500/60 hover:text-red-500 transition"
+                              className="text-[10px] font-bold text-error-text/60 hover:text-error-text transition"
                             >
                               DELETE
                             </button>
@@ -3595,15 +3596,15 @@ function App() {
                 )}
 
                 {selectedBean.purchaseDate && (
-                  <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
+                  <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Purchased</div>
-                        <div className="text-sm font-bold text-zinc-200">{selectedBean.purchaseDate}</div>
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Purchased</div>
+                        <div className="text-sm font-bold text-ink">{selectedBean.purchaseDate}</div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Stock</div>
-                        <div className="text-sm font-bold text-zinc-200">
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Stock</div>
+                        <div className="text-sm font-bold text-ink">
                           {(() => {
                             const roasts = (() => {
                               try {
@@ -3626,7 +3627,7 @@ function App() {
 
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Roast Sessions</h3>
+                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-ink-muted">Roast Sessions</h3>
                     {(() => {
                       const roasts = (() => {
                         try {
@@ -3635,7 +3636,7 @@ function App() {
                           return [];
                         }
                       })().filter(r => r.beanName === selectedBean.name);
-                      return <span className="text-[10px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full">{roasts.length} sessions</span>;
+                      return <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{roasts.length} sessions</span>;
                     })()}
                   </div>
 
@@ -3645,7 +3646,7 @@ function App() {
                       setPrefillBean({ name: selectedBean.name, origin: selectedBean.origin });
                       setActiveTab("Roast");
                     }}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                     LOG A SESSION
@@ -3659,7 +3660,7 @@ function App() {
                           return [];
                         }
                       })().filter(r => r.beanName === selectedBean.name);
-                      if (roasts.length === 0) return <p className="text-sm text-zinc-600 italic py-2">No roast sessions found for this bean.</p>;
+                      if (roasts.length === 0) return <p className="text-sm text-ink-muted italic py-2">No roast sessions found for this bean.</p>;
                       return roasts.map(r => (
                         <button
                           key={r.id}
@@ -3667,15 +3668,15 @@ function App() {
                             setSelectedRoast(r);
                             setBeansView("roastDetail");
                           }}
-                          className="w-full rounded-2xl border border-zinc-800/40 bg-zinc-900/15 p-4 text-left transition hover:bg-zinc-900/30"
+                          className="w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30"
                         >
                           <div className="flex justify-between items-center">
                             <div>
-                              <div className="text-sm font-bold text-zinc-100">{r.date}</div>
-                              <div className="text-[11px] text-zinc-500">{r.targetLevel} · {r.greenWeight}g</div>
+                              <div className="text-sm font-bold text-ink">{r.date}</div>
+                              <div className="text-[11px] text-ink-muted">{r.targetLevel} · {r.greenWeight}g</div>
                             </div>
                             <div className="text-right">
-                              <div className="text-sm font-mono font-bold text-amber-400">{r.duration}</div>
+                              <div className="text-sm font-mono font-bold text-accent-text">{r.duration}</div>
                             </div>
                           </div>
                         </button>
@@ -3686,7 +3687,7 @@ function App() {
 
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Tasting Notes</h3>
+                    <h3 className="text-xs font-black uppercase tracking-[0.15em] text-ink-muted">Tasting Notes</h3>
                     {(() => {
                       const tastings = (() => {
                         try {
@@ -3695,7 +3696,7 @@ function App() {
                           return [];
                         }
                       })().filter(t => t.beanName === selectedBean.name);
-                      return <span className="text-[10px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full">{tastings.length} notes</span>;
+                      return <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{tastings.length} notes</span>;
                     })()}
                   </div>
                   <div className="space-y-2">
@@ -3707,7 +3708,7 @@ function App() {
                           return [];
                         }
                       })().filter(t => t.beanName === selectedBean.name);
-                      if (tastings.length === 0) return <p className="text-sm text-zinc-600 italic py-2">No tasting notes found for this bean.</p>;
+                      if (tastings.length === 0) return <p className="text-sm text-ink-muted italic py-2">No tasting notes found for this bean.</p>;
                       return tastings.map(t => (
                         <button
                           key={t.id}
@@ -3715,18 +3716,18 @@ function App() {
                             setSelectedTastingNote(t);
                             setBeansView("tastingDetail");
                           }}
-                          className="w-full rounded-2xl border border-zinc-800/40 bg-zinc-900/15 p-4 text-left transition hover:bg-zinc-900/30"
+                          className="w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30"
                         >
                           <div className="flex justify-between items-start mb-2">
                             <div>
-                              <div className="text-sm font-bold text-zinc-100">{t.date}</div>
-                              <div className="text-[11px] text-zinc-500">{t.method}</div>
+                              <div className="text-sm font-bold text-ink">{t.date}</div>
+                              <div className="text-[11px] text-ink-muted">{t.method}</div>
                             </div>
                             {t.rating > 0 && <StarRow rating={t.rating} size={10} />}
                           </div>
                           <div className="flex flex-wrap gap-1">
                             {t.descriptors?.slice(0, 3).map((d, i) => (
-                              <span key={i} className="rounded-full bg-amber-500/5 border border-amber-500/10 px-2 py-0.5 text-[9px] font-bold text-amber-400/80">
+                              <span key={i} className="rounded-full bg-accent/5 border border-accent/10 px-2 py-0.5 text-[9px] font-bold text-accent-text/80">
                                 {d}
                               </span>
                             ))}
@@ -3743,59 +3744,59 @@ function App() {
               <div className="space-y-6 pb-20">
                 <button
                   onClick={() => setBeansView("beanDetail")}
-                  className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                  className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                   BACK TO {selectedBean.name.toUpperCase()}
                 </button>
 
                 {/* ROAST DETAIL CONTENT (REPLICATED FROM HISTORY) */}
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedRoast.date}</div>
-                  <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-50">{selectedRoast.beanName}</div>
-                  <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
+                <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{selectedRoast.date}</div>
+                  <div className="mt-2 text-2xl font-bold tracking-tight text-ink">{selectedRoast.beanName}</div>
+                  <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/50 pt-4">
                     <div>
-                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Weight</div>
-                      <div className="text-sm font-medium text-zinc-200">{selectedRoast.greenWeight}g</div>
+                      <div className="text-[10px] uppercase tracking-widest text-ink-muted">Weight</div>
+                      <div className="text-sm font-medium text-ink">{selectedRoast.greenWeight}g</div>
                     </div>
                     <div>
-                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Duration</div>
-                      <div className="text-sm font-medium text-amber-400">{selectedRoast.duration}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-ink-muted">Duration</div>
+                      <div className="text-sm font-medium text-accent-text">{selectedRoast.duration}</div>
                     </div>
                     <div className="col-span-2">
-                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Roast Level</div>
-                      <div className="text-sm font-medium text-zinc-200">{selectedRoast.targetLevel}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-ink-muted">Roast Level</div>
+                      <div className="text-sm font-medium text-ink">{selectedRoast.targetLevel}</div>
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Phase Timeline</div>
+                <section className="rounded-3xl border border-border/60 bg-surface/20 p-5">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Phase Timeline</div>
                   <div className="mt-4 space-y-3">
                     {(selectedRoast.roastLog || []).filter(e => e.type === "phase").map((m, i) => (
-                      <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
-                        <div className="text-sm font-semibold text-zinc-200">{m.label}</div>
-                        <div className="font-mono text-xs text-amber-300/80">{formatTime(m.t)}</div>
+                      <div key={i} className="flex items-center justify-between border-b border-border/30 pb-2 last:border-0 last:pb-0">
+                        <div className="text-sm font-semibold text-ink">{m.label}</div>
+                        <div className="font-mono text-xs text-accent-text/80">{formatTime(m.t)}</div>
                       </div>
                     ))}
                   </div>
                 </section>
 
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Adjustment Log</div>
+                <section className="rounded-3xl border border-border/60 bg-surface/20 p-5">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Adjustment Log</div>
                   <div className="mt-4 space-y-3">
                     {((selectedRoast.roastLog || []).filter(e => e.type === "adjustment" || e.type === "start_settings")).length === 0 ? (
-                      <div className="text-xs text-zinc-500">No adjustments logged.</div>
+                      <div className="text-xs text-ink-muted">No adjustments logged.</div>
                     ) : (
                       (selectedRoast.roastLog || []).filter(e => e.type === "adjustment" || e.type === "start_settings").map((a, i) => (
-                        <div key={i} className="flex items-center justify-between border-b border-zinc-800/30 pb-2 last:border-0 last:pb-0">
-                          <div className="font-mono text-xs text-amber-300/80">{formatTime(a.t)}</div>
-                          <div className="text-[11px] text-zinc-400">
-                            H:<span className="text-zinc-100 ml-0.5">{a.heat || "—"}</span>
+                        <div key={i} className="flex items-center justify-between border-b border-border/30 pb-2 last:border-0 last:pb-0">
+                          <div className="font-mono text-xs text-accent-text/80">{formatTime(a.t)}</div>
+                          <div className="text-[11px] text-ink-muted">
+                            H:<span className="text-ink ml-0.5">{a.heat || "—"}</span>
                             <span className="mx-1.5">·</span>
-                            F:<span className="text-zinc-100 ml-0.5">{a.fan || "—"}</span>
+                            F:<span className="text-ink ml-0.5">{a.fan || "—"}</span>
                             <span className="mx-1.5">·</span>
-                            T:<span className="text-zinc-100 ml-0.5">{a.temp || "—"}°</span>
+                            T:<span className="text-ink ml-0.5">{a.temp || "—"}°</span>
                           </div>
                         </div>
                       ))
@@ -3809,34 +3810,34 @@ function App() {
               <div className="space-y-6 pb-20">
                 <button
                   onClick={() => setBeansView("beanDetail")}
-                  className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+                  className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                   BACK TO {selectedBean.name.toUpperCase()}
                 </button>
 
                 {/* TASTING DETAIL CONTENT (REPLICATED FROM HISTORY) */}
-                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedTastingNote.date}</div>
-                  <h2 className="mt-2 text-3xl font-bold text-zinc-50 leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
-                  <div className="mt-1 text-sm font-medium text-amber-500/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
+                <section className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{selectedTastingNote.date}</div>
+                  <h2 className="mt-2 text-3xl font-bold text-ink leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
+                  <div className="mt-1 text-sm font-medium text-accent-text/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
                   
-                  <div className="mt-8 space-y-6 border-t border-zinc-800/50 pt-6">
+                  <div className="mt-8 space-y-6 border-t border-border/50 pt-6">
                     <div className="grid grid-cols-2 gap-y-5 gap-x-8">
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Ratio</div>
-                        <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.ratio}</div>
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Ratio</div>
+                        <div className="text-sm font-bold text-ink">{selectedTastingNote.ratio}</div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Grind</div>
-                        <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.grindSize}</div>
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Grind</div>
+                        <div className="text-sm font-bold text-ink">{selectedTastingNote.grindSize}</div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Temp</div>
-                        <div className="text-sm font-bold text-zinc-200">{selectedTastingNote.temp}°F</div>
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Temp</div>
+                        <div className="text-sm font-bold text-ink">{selectedTastingNote.temp}°F</div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Rating</div>
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Rating</div>
                         <div className="mt-0.5">
                           <StarRow rating={selectedTastingNote.rating} size={14} />
                         </div>
@@ -3845,15 +3846,15 @@ function App() {
 
                     <div className="space-y-4">
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Acidity: {["Flat", "Low", "Medium", "Bright", "Vibrant"][selectedTastingNote.acidity-1]} ({selectedTastingNote.acidity})</div>
-                        <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
-                          <div className="h-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.acidity / 5) * 100}%` }} />
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Acidity: {["Flat", "Low", "Medium", "Bright", "Vibrant"][selectedTastingNote.acidity-1]} ({selectedTastingNote.acidity})</div>
+                        <div className="h-2 w-full rounded-full bg-surface overflow-hidden">
+                          <div className="h-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.acidity / 5) * 100}%` }} />
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Body: {["Watery", "Light", "Medium", "Full", "Syrupy"][selectedTastingNote.body-1]} ({selectedTastingNote.body})</div>
-                        <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
-                          <div className="h-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.body / 5) * 100}%` }} />
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Body: {["Watery", "Light", "Medium", "Full", "Syrupy"][selectedTastingNote.body-1]} ({selectedTastingNote.body})</div>
+                        <div className="h-2 w-full rounded-full bg-surface overflow-hidden">
+                          <div className="h-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.4)]" style={{ width: `${(selectedTastingNote.body / 5) * 100}%` }} />
                         </div>
                       </div>
                     </div>
@@ -3861,7 +3862,7 @@ function App() {
                     <div className="space-y-4">
                       {(selectedTastingNote.families || [])?.map(familyId => (
                         <div key={familyId}>
-                          <div className="text-[10px] uppercase tracking-widest font-black text-zinc-400 mb-2">
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">
                             {FLAVOR_FAMILIES.find(f => f.id === familyId)?.label}
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -3872,7 +3873,7 @@ function App() {
                               }
                               return (familyOptions || []).includes(d);
                             }).map((d, i) => (
-                              <span key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300">
+                              <span key={i} className="rounded-xl border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent-text">
                                 {d}
                               </span>
                             ))}
@@ -3881,19 +3882,19 @@ function App() {
                       ))}
                     </div>
 
-                    <BagLabelCard className="bg-zinc-950/40">
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Tasting Summary</div>
-                        <h3 className="text-xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
-                        <div className="w-10 h-[2px] bg-amber-500 my-4" />
-                        <div className="text-base font-bold text-amber-400 tracking-tight italic leading-relaxed">
+                    <BagLabelCard className="bg-primary/40">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-ink-muted mb-1">Tasting Summary</div>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-ink mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
+                        <div className="w-10 h-[2px] bg-accent my-4" />
+                        <div className="text-base font-bold text-accent-text tracking-tight italic leading-relaxed">
                           {(selectedTastingNote.descriptors || [])?.slice(0, 5).join(' · ')}
                         </div>
                     </BagLabelCard>
 
                     {selectedTastingNote.notes && (
-                      <div className="rounded-2xl bg-zinc-950/40 p-5 border border-zinc-800/40">
-                        <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-2">Free Notes</div>
-                        <p className="text-sm italic text-zinc-300 leading-relaxed font-medium">"{selectedTastingNote.notes}"</p>
+                      <div className="rounded-2xl bg-primary/40 p-5 border border-border/40">
+                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Free Notes</div>
+                        <p className="text-sm italic text-ink leading-relaxed font-medium">"{selectedTastingNote.notes}"</p>
                       </div>
                     )}
                   </div>
@@ -3909,17 +3910,17 @@ function App() {
               {/* IDEA-009: Units of Measure */}
               <div className="space-y-4">
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">Units</div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-3">Units</div>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-zinc-300">Temperature</span>
-                      <div className="flex rounded-xl border border-zinc-800 overflow-hidden">
+                      <span className="text-sm text-ink">Temperature</span>
+                      <div className="flex rounded-xl border border-border overflow-hidden">
                         {["F", "C"].map(u => (
                           <button
                             key={u}
                             type="button"
                             onClick={() => setTempUnit(u)}
-                            className={`px-4 py-2 text-sm font-bold transition ${tempUnit === u ? "bg-amber-500 text-zinc-950" : "bg-zinc-950/40 text-zinc-400 hover:text-zinc-200"}`}
+                            className={`px-4 py-2 text-sm font-bold transition ${tempUnit === u ? "bg-accent text-zinc-950" : "bg-primary/40 text-ink-muted hover:text-ink"}`}
                           >
                             °{u}
                           </button>
@@ -3927,14 +3928,14 @@ function App() {
                       </div>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-zinc-300">Weight</span>
-                      <div className="flex rounded-xl border border-zinc-800 overflow-hidden">
+                      <span className="text-sm text-ink">Weight</span>
+                      <div className="flex rounded-xl border border-border overflow-hidden">
                         {["g", "oz"].map(u => (
                           <button
                             key={u}
                             type="button"
                             onClick={() => setWeightUnit(u)}
-                            className={`px-4 py-2 text-sm font-bold transition ${weightUnit === u ? "bg-amber-500 text-zinc-950" : "bg-zinc-950/40 text-zinc-400 hover:text-zinc-200"}`}
+                            className={`px-4 py-2 text-sm font-bold transition ${weightUnit === u ? "bg-accent text-zinc-950" : "bg-primary/40 text-ink-muted hover:text-ink"}`}
                           >
                             {u}
                           </button>
@@ -3945,11 +3946,11 @@ function App() {
                 </div>
 
                 {/* IDEA-008: Light Mode toggle */}
-                <div className="border-t border-zinc-800/50 pt-4">
+                <div className="border-t border-border/50 pt-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-sm font-semibold text-zinc-200">Light Mode</div>
-                      <div className="text-[11px] text-zinc-500">Warm parchment theme (default off)</div>
+                      <div className="text-sm font-semibold text-ink">Light Mode</div>
+                      <div className="text-[11px] text-ink-muted">Warm parchment theme (default off)</div>
                     </div>
                     <button
                       type="button"
@@ -3961,7 +3962,7 @@ function App() {
                         document.documentElement.setAttribute("data-theme", next);
                         setTheme(next);
                       }}
-                      className={`relative h-7 w-12 rounded-full transition ${theme === "light" ? "bg-amber-500" : "bg-zinc-700"}`}
+                      className={`relative h-7 w-12 rounded-full transition ${theme === "light" ? "bg-accent" : "bg-card"}`}
                     >
                       <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${theme === "light" ? "left-[22px]" : "left-0.5"}`} />
                     </button>
@@ -3969,12 +3970,12 @@ function App() {
                 </div>
 
                 {/* IDEA-007 + IDEA-010 actions */}
-                <div className="border-t border-zinc-800/50 pt-4 flex flex-wrap gap-3">
+                <div className="border-t border-border/50 pt-4 flex flex-wrap gap-3">
                   <PrimaryButton onClick={() => setShowExportPanel(true)}>Export Data</PrimaryButton>
                   <button
                     type="button"
                     onClick={() => setShowAboutModal(true)}
-                    className="rounded-2xl border border-zinc-800/70 bg-zinc-900/40 px-4 py-2.5 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/70"
+                    className="rounded-2xl border border-border/70 bg-surface/40 px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-surface/70"
                   >
                     About
                   </button>
@@ -3985,17 +3986,17 @@ function App() {
             <ScreenCard title="Manage Profiles" subtitle="Profile Management">
               <div className="space-y-3">
                 {(profiles || []).map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-3 bg-zinc-900/30 rounded-2xl border border-zinc-800/40">
+                  <div key={p.id} className="flex items-center justify-between p-3 bg-surface/30 rounded-2xl border border-border/40">
                     <div className="flex-1">
-                      <div className="font-medium text-zinc-100">{p.name}</div>
-                      <div className="text-xs text-zinc-400 mt-1">
-                        {p.beanName ? `Bean: ${p.beanName}` : <span className="italic text-zinc-500">No bean linked</span>}
+                      <div className="font-medium text-ink">{p.name}</div>
+                      <div className="text-xs text-ink-muted mt-1">
+                        {p.beanName ? `Bean: ${p.beanName}` : <span className="italic text-ink-muted">No bean linked</span>}
                         <span className="ml-2">• {p.steps.length} steps</span>
                       </div>
                     </div>
                     <button
                       onClick={() => setDeleteConfirmModal({ show: true, profileName: p.name, isDeleteAll: false })}
-                      className="px-3 py-1 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl hover:bg-red-500/20 transition"
+                      className="px-3 py-1 text-xs font-bold text-error-text bg-error/10 border border-error/20 rounded-xl hover:bg-error/20 transition"
                     >
                       DELETE
                     </button>
@@ -4003,7 +4004,7 @@ function App() {
                 ))}
                 
                 {profiles.length === 0 && (
-                  <div className="text-center py-8 text-zinc-500 text-sm">
+                  <div className="text-center py-8 text-ink-muted text-sm">
                     No saved profiles yet.
                   </div>
                 )}
@@ -4011,7 +4012,7 @@ function App() {
                 {profiles.length > 0 && (
                   <button
                     onClick={() => setDeleteConfirmModal({ show: true, profileName: '', isDeleteAll: true })}
-                    className="w-full py-3 text-sm font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-2xl hover:bg-red-500/20 transition"
+                    className="w-full py-3 text-sm font-bold text-error-text bg-error/10 border border-error/20 rounded-2xl hover:bg-error/20 transition"
                   >
                     DELETE ALL PROFILES
                   </button>
@@ -4021,8 +4022,8 @@ function App() {
 
             <ScreenCard title="Account" subtitle="Session">
               {user?.email && (
-                <div className="mb-4 text-xs text-zinc-400">
-                  Signed in as <span className="font-semibold text-zinc-200">{user.email}</span>
+                <div className="mb-4 text-xs text-ink-muted">
+                  Signed in as <span className="font-semibold text-ink">{user.email}</span>
                 </div>
               )}
               <button
@@ -4031,7 +4032,7 @@ function App() {
                     signOut().catch((e) => console.warn("Sign out failed", e));
                   }
                 }}
-                className="w-full py-3 text-sm font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-2xl hover:bg-red-500/20 transition"
+                className="w-full py-3 text-sm font-bold text-error-text bg-error/10 border border-error/20 rounded-2xl hover:bg-error/20 transition"
               >
                 SIGN OUT
               </button>
@@ -4040,7 +4041,7 @@ function App() {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-800/60 bg-zinc-950">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-primary">
         <div className="mx-auto max-w-md px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="grid grid-cols-4 gap-1">
             {TABS.map((tab) => (
@@ -4068,9 +4069,9 @@ function App() {
       )}
 
       {deleteConfirmModal.show && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-ink mb-4">
               {deleteConfirmModal.isDeleteAll 
                 ? `Delete all ${profiles.length} profiles? This cannot be undone.`
                 : `Delete '${deleteConfirmModal.profileName}'? This cannot be undone.`
@@ -4079,7 +4080,7 @@ function App() {
             <div className="flex gap-3">
               <button 
                 onClick={() => setDeleteConfirmModal({ show: false, profileName: '', isDeleteAll: false })}
-                className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold"
+                className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold"
               >
                 CANCEL
               </button>
@@ -4103,28 +4104,28 @@ function App() {
 
       {/* IDEA-007: Export Data choice panel */}
       {showExportPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm" onClick={() => !isExporting && setShowExportPanel(false)}>
-          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm" onClick={() => !isExporting && setShowExportPanel(false)}>
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Export Data</h3>
-              <button onClick={() => !isExporting && setShowExportPanel(false)} className="text-zinc-500 hover:text-zinc-300 text-xl leading-none">×</button>
+              <h3 className="text-lg font-bold text-ink">Export Data</h3>
+              <button onClick={() => !isExporting && setShowExportPanel(false)} className="text-ink-muted hover:text-ink text-xl leading-none">×</button>
             </div>
             {isExporting ? (
               <div className="flex flex-col items-center justify-center py-8 gap-3">
-                <div className="h-8 w-8 rounded-full border-2 border-amber-500/30 border-t-amber-500 animate-spin" />
-                <div className="text-sm text-zinc-400">Gathering your data…</div>
+                <div className="h-8 w-8 rounded-full border-2 border-accent/30 border-t-amber-500 animate-spin" />
+                <div className="text-sm text-ink-muted">Gathering your data…</div>
               </div>
             ) : (
               <div className="space-y-3">
                 <button
                   onClick={handleExportCSV}
-                  className="w-full rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
+                  className="w-full rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
                 >
                   Export Roast Log (CSV)
                 </button>
                 <button
                   onClick={handleExportJSON}
-                  className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/40 py-3 text-sm font-bold text-zinc-200 transition hover:bg-zinc-900/70"
+                  className="w-full rounded-2xl border border-border bg-primary/40 py-3 text-sm font-bold text-ink transition hover:bg-surface/70"
                 >
                   Export Full Backup (JSON)
                 </button>
@@ -4136,51 +4137,51 @@ function App() {
 
       {/* IDEA-010: About modal */}
       {showAboutModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm" onClick={() => setShowAboutModal(false)}>
-          <div className="relative w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm" onClick={() => setShowAboutModal(false)}>
+          <div className="relative w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setShowAboutModal(false)}
-              className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300 text-2xl leading-none"
+              className="absolute top-4 right-4 text-ink-muted hover:text-ink text-2xl leading-none"
               aria-label="Close"
             >
               ×
             </button>
             <div className="text-center">
-              <div className="text-3xl font-bold text-amber-400">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-zinc-400">v1.2.0</div>
-              <div className="mt-3 text-sm text-zinc-300">Built for the Fresh Roast SR540 + Extension Tube</div>
+              <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v1.2.1</div>
+              <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
-            <div className="my-5 border-t border-zinc-800/60" />
+            <div className="my-5 border-t border-border/60" />
             <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-2">Features</div>
-              <ul className="space-y-1.5 text-sm text-zinc-300">
+              <div className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2">Features</div>
+              <ul className="space-y-1.5 text-sm text-ink">
                 <li>• Live roast session logging with phase milestone buttons</li>
                 <li>• Full roast history with heat/fan/temp charts</li>
                 <li>• Green bean inventory with auto-deduction</li>
                 <li>• Brew &amp; tasting session notes</li>
               </ul>
             </div>
-            <div className="my-5 border-t border-zinc-800/60" />
-            <div className="text-center text-sm text-zinc-400">Built for home roasters, by a home roaster. ☕</div>
+            <div className="my-5 border-t border-border/60" />
+            <div className="text-center text-sm text-ink-muted">Built for home roasters, by a home roaster. ☕</div>
           </div>
         </div>
       )}
 
       {/* Styled delete confirmation — same pattern as the in-progress-roast discard modal */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/90 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-900/20 text-red-500">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/90 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-error/20 text-error-text">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
             </div>
-            <h3 className="text-xl font-bold text-white mb-2">
+            <h3 className="text-xl font-bold text-ink mb-2">
               {confirmDelete.type === "roast" ? "Delete this roast?" : "Delete this tasting?"}
             </h3>
-            <p className="text-sm text-zinc-400 mb-6">This cannot be undone.</p>
+            <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition"
+                className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition"
               >
                 CANCEL
               </button>

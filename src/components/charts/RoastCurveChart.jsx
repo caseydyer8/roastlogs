@@ -85,16 +85,16 @@ function buildMonotoneInterpolator(points) {
 
 function StatTile({ label, value, accent }) {
   return (
-    <div className="rounded-2xl border border-zinc-800/60 bg-zinc-950/40 px-2 py-2.5 text-center">
-      <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500">{label}</div>
+    <div className="rounded-2xl border border-border/60 bg-primary/40 px-2 py-2.5 text-center">
+      <div className="text-[9px] font-semibold uppercase tracking-widest text-ink-muted">{label}</div>
       <div className={`mt-0.5 text-base font-extrabold tabular-nums ${accent}`}>{value}</div>
     </div>
   );
 }
 
 const tooltipStyle = {
-  backgroundColor: "#09090b",
-  border: "1px solid #3f3f46",
+  backgroundColor: "rgb(var(--bg-card))",
+  border: "1px solid rgb(var(--border-color))",
   borderRadius: "14px",
   fontSize: "12px",
   padding: "8px 12px",
@@ -250,21 +250,21 @@ export default function RoastCurveChart({ roast }) {
     if (variant === "temp") {
       const temp = valOf("temp");
       const ror = valOf("ror");
-      if (temp != null) rows.push(["Temp", `${temp}°`, "#f59e0b"]);
-      if (ror != null) rows.push(["RoR", `${ror}°/min`, "#a78bfa"]);
+      if (temp != null) rows.push(["Temp", `${temp}°`, "rgb(var(--chart-temp))"]);
+      if (ror != null) rows.push(["RoR", `${ror}°/min`, "rgb(var(--chart-ror))"]);
     } else {
       const heat = valOf("heat");
       const fan = valOf("fan");
-      if (heat != null) rows.push(["Heat", `${heat}`, "#ef4444"]);
-      if (fan != null) rows.push(["Fan", `${fan}`, "#38bdf8"]);
+      if (heat != null) rows.push(["Heat", `${heat}`, "rgb(var(--chart-heat))"]);
+      if (fan != null) rows.push(["Fan", `${fan}`, "rgb(var(--chart-fan))"]);
     }
     return (
       <div style={tooltipStyle}>
-        <div style={{ color: "#fafafa", fontWeight: 700, marginBottom: 3 }}>{formatMMSS(t)}</div>
+        <div style={{ color: "rgb(var(--text-primary))", fontWeight: 700, marginBottom: 3 }}>{formatMMSS(t)}</div>
         {phase && (
           <div style={{ fontSize: 11, marginBottom: 2 }}>
-            <span style={{ color: "#71717a" }}>Phase </span>
-            <span style={{ color: "#e4e4e7", fontWeight: 600 }}>{phase}</span>
+            <span style={{ color: "rgb(var(--text-muted))" }}>Phase </span>
+            <span style={{ color: "rgb(var(--text-primary))", fontWeight: 600 }}>{phase}</span>
           </div>
         )}
         {rows.map(([label, val, color]) => (
@@ -286,7 +286,7 @@ export default function RoastCurveChart({ roast }) {
     const boxY = topY - h - 2;
     return (
       <g>
-        <rect x={cx - w / 2} y={boxY} width={w} height={h} rx={3} fill="#18181b" stroke="#3f3f46" strokeWidth={0.5} opacity={0.92} />
+        <rect x={cx - w / 2} y={boxY} width={w} height={h} rx={3} fill="rgb(var(--bg-surface))" stroke="rgb(var(--border-color))" strokeWidth={0.5} opacity={0.92} />
         <text x={cx} y={boxY + h / 2 + 0.5} textAnchor="middle" dominantBaseline="central" fill={color} fontSize={10} fontWeight={600}>
           {text}
         </text>
@@ -309,18 +309,18 @@ export default function RoastCurveChart({ roast }) {
   const phaseLines = (withLabels, axisId) => (
     <>
       {yellowing != null && (
-        <ReferenceLine yAxisId={axisId} x={yellowing} stroke="#52525b" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("YELLOW", "#a1a1aa")} />}
+        <ReferenceLine yAxisId={axisId} x={yellowing} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
+          {withLabels && <Label content={phaseLabelContent("YELLOW", "rgb(var(--text-muted))")} />}
         </ReferenceLine>
       )}
       {firstCrack != null && (
-        <ReferenceLine yAxisId={axisId} x={firstCrack} stroke="#52525b" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("FC", "#a78bfa")} />}
+        <ReferenceLine yAxisId={axisId} x={firstCrack} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
+          {withLabels && <Label content={phaseLabelContent("FC", "rgb(var(--chart-ror))")} />}
         </ReferenceLine>
       )}
       {coolingStart != null && (
-        <ReferenceLine yAxisId={axisId} x={coolingStart} stroke="#52525b" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("DROP", "#a1a1aa")} />}
+        <ReferenceLine yAxisId={axisId} x={coolingStart} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
+          {withLabels && <Label content={phaseLabelContent("DROP", "rgb(var(--text-muted))")} />}
         </ReferenceLine>
       )}
     </>
@@ -331,9 +331,9 @@ export default function RoastCurveChart({ roast }) {
     type: "number",
     domain: [0, total],
     tickFormatter: formatMMSS,
-    stroke: "#52525b",
+    stroke: "rgb(var(--border-color))",
     fontSize: 10,
-    tick: { fill: "#71717a" },
+    tick: { fill: "rgb(var(--chart-tick))" },
     minTickGap: 40,
   };
 
@@ -341,34 +341,34 @@ export default function RoastCurveChart({ roast }) {
     <div className="space-y-4">
       {/* Headline metric tiles */}
       <div className="grid grid-cols-4 gap-2">
-        <StatTile label="Avg RoR" value={avgRor != null ? `${avgRor.toFixed(1)}°/m` : "—"} accent="text-violet-400" />
-        <StatTile label="Avg Temp" value={avgTemp != null ? `${Math.round(avgTemp)}°` : "—"} accent="text-amber-400" />
-        <StatTile label="Drop Temp" value={dropTemp != null ? `${Math.round(dropTemp)}°` : "—"} accent="text-red-400" />
-        <StatTile label="DTR" value={dtr != null ? `${dtr.toFixed(1)}%` : "—"} accent="text-green-400" />
+        <StatTile label="Avg RoR" value={avgRor != null ? `${avgRor.toFixed(1)}°/m` : "—"} accent="text-chart-ror" />
+        <StatTile label="Avg Temp" value={avgTemp != null ? `${Math.round(avgTemp)}°` : "—"} accent="text-accent-text" />
+        <StatTile label="Drop Temp" value={dropTemp != null ? `${Math.round(dropTemp)}°` : "—"} accent="text-error-text" />
+        <StatTile label="DTR" value={dtr != null ? `${dtr.toFixed(1)}%` : "—"} accent="text-success-text" />
       </div>
 
       {/* Top chart — Development curve: temp + RoR over phase bands */}
-      <div className="rounded-3xl border border-zinc-800/50 bg-zinc-950/50 p-4">
-        <div className="mb-2 flex items-center gap-4 text-[11px] text-zinc-400">
-          <span className="font-semibold uppercase tracking-widest text-zinc-500">Development curve</span>
-          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-amber-500 align-middle" />Temp</span>
-          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-violet-400 align-middle" />RoR</span>
+      <div className="rounded-3xl border border-border/50 bg-primary/50 p-4">
+        <div className="mb-2 flex items-center gap-4 text-[11px] text-ink-muted">
+          <span className="font-semibold uppercase tracking-widest text-ink-muted">Development curve</span>
+          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-temp align-middle" />Temp</span>
+          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-ror align-middle" />RoR</span>
         </div>
         <div className="h-56 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} syncId="roastStory" margin={{ top: 22, right: 10, left: -14, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--chart-grid))" vertical={false} />
               {bands("temp")}
               <XAxis {...xAxisProps} />
-              <YAxis yAxisId="temp" stroke="#52525b" fontSize={10} tick={{ fill: "#a1a1aa" }} domain={["auto", "auto"]} width={44} />
+              <YAxis yAxisId="temp" stroke="rgb(var(--border-color))" fontSize={10} tick={{ fill: "rgb(var(--chart-tick))" }} domain={["auto", "auto"]} width={44} />
               <YAxis yAxisId="ror" hide domain={[0, (dataMax) => Math.max(10, dataMax * 1.15)]} />
               <Tooltip content={<CustomTooltip variant="temp" />} />
               {phaseLines(true, "temp")}
               {hasTemp && (
-                <Line yAxisId="ror" type="monotone" dataKey="ror" stroke="#a78bfa" strokeWidth={1.75} dot={false} name="RoR" connectNulls isAnimationActive={false} />
+                <Line yAxisId="ror" type="monotone" dataKey="ror" stroke="rgb(var(--chart-ror))" strokeWidth={1.75} dot={false} name="RoR" connectNulls isAnimationActive={false} />
               )}
               {hasTemp && (
-                <Line yAxisId="temp" type="monotone" dataKey="temp" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Temp" connectNulls isAnimationActive={false} />
+                <Line yAxisId="temp" type="monotone" dataKey="temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.5} dot={false} name="Temp" connectNulls isAnimationActive={false} />
               )}
             </ComposedChart>
           </ResponsiveContainer>
@@ -376,30 +376,30 @@ export default function RoastCurveChart({ roast }) {
       </div>
 
       {/* Bottom chart — Control map: heat + fan steps, same phase timing */}
-      <div className="rounded-3xl border border-zinc-800/50 bg-zinc-950/50 p-4">
-        <div className="mb-2 flex items-center gap-4 text-[11px] text-zinc-400">
-          <span className="font-semibold uppercase tracking-widest text-zinc-500">Control map</span>
-          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-red-500 align-middle" />Heat</span>
-          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-sky-400 align-middle" />Fan</span>
+      <div className="rounded-3xl border border-border/50 bg-primary/50 p-4">
+        <div className="mb-2 flex items-center gap-4 text-[11px] text-ink-muted">
+          <span className="font-semibold uppercase tracking-widest text-ink-muted">Control map</span>
+          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-heat align-middle" />Heat</span>
+          <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-fan align-middle" />Fan</span>
           {deviations.length > 0 && (
-            <span className="ml-auto text-[10px] text-red-400">⚠ {deviations.length} profile deviation{deviations.length > 1 ? "s" : ""}</span>
+            <span className="ml-auto text-[10px] text-error-text">⚠ {deviations.length} profile deviation{deviations.length > 1 ? "s" : ""}</span>
           )}
         </div>
         <div className="h-40 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} syncId="roastStory" margin={{ top: 22, right: 10, left: -14, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--chart-grid))" vertical={false} />
               {bands("dial")}
               <XAxis {...xAxisProps} />
-              <YAxis yAxisId="dial" stroke="#52525b" fontSize={10} tick={{ fill: "#a1a1aa" }} domain={[0, 10]} ticks={[1, 3, 5, 7, 9]} width={44} />
+              <YAxis yAxisId="dial" stroke="rgb(var(--border-color))" fontSize={10} tick={{ fill: "rgb(var(--chart-tick))" }} domain={[0, 10]} ticks={[1, 3, 5, 7, 9]} width={44} />
               <Tooltip content={<CustomTooltip variant="dial" />} />
               {phaseLines(true, "dial")}
-              <Line yAxisId="dial" type="stepAfter" dataKey="heat" stroke="#ef4444" strokeWidth={2.25} dot={false} name="Heat" isAnimationActive={false} />
-              <Line yAxisId="dial" type="stepAfter" dataKey="fan" stroke="#38bdf8" strokeWidth={2} dot={false} name="Fan" isAnimationActive={false} />
+              <Line yAxisId="dial" type="stepAfter" dataKey="heat" stroke="rgb(var(--chart-heat))" strokeWidth={2.25} dot={false} name="Heat" isAnimationActive={false} />
+              <Line yAxisId="dial" type="stepAfter" dataKey="fan" stroke="rgb(var(--chart-fan))" strokeWidth={2} dot={false} name="Fan" isAnimationActive={false} />
               {/* IDEA-004: profile deviation markers */}
               {deviations.map((d, idx) =>
                 d.logged !== 0 ? (
-                  <ReferenceDot key={`dev-${idx}`} yAxisId="dial" x={d.t} y={d.logged} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5} isFront />
+                  <ReferenceDot key={`dev-${idx}`} yAxisId="dial" x={d.t} y={d.logged} r={5} fill="rgb(var(--chart-heat))" stroke="#fff" strokeWidth={1.5} isFront />
                 ) : null
               )}
             </ComposedChart>

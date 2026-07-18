@@ -1,0 +1,57 @@
+/* RoastLogs theme tokens — CSS custom properties consumed via tailwind.config.js
+   theme.extend.colors, so `bg-surface`, `text-ink`, etc. work with any Tailwind
+   opacity modifier (bg-surface/30) automatically. Values are RGB triplets
+   (space-separated, no commas) so Tailwind's rgb(var(--x) / <alpha-value>)
+   color functions can apply opacity. Dark is the default (:root); light
+   overrides via [data-theme="light"] on <html>. */
+
+:root {
+  --bg-primary: 9 9 11;         /* #09090b zinc-950 */
+  --bg-surface: 24 24 27;       /* #18181b zinc-900 */
+  --bg-card: 39 39 42;          /* #27272a zinc-800 */
+  --text-primary: 244 244 245;  /* #f4f4f5 zinc-100 */
+  --text-muted: 113 113 122;    /* #71717a zinc-500 */
+  --border-color: 39 39 42;     /* #27272a zinc-800 */
+
+  --accent-fill: 245 158 11;    /* #f59e0b amber-500 */
+  --accent-text: 251 191 36;    /* #fbbf24 amber-400 */
+
+  --error-fill: 220 38 38;      /* #dc2626 red-600 */
+  --error-text: 248 113 113;    /* #f87171 red-400 */
+  --success-fill: 22 163 74;    /* #16a34a green-600 */
+  --success-text: 74 222 128;   /* #4ade80 green-400 */
+
+  --chart-ror: 167 139 250;     /* #a78bfa violet-400 */
+  --chart-heat: 239 68 68;      /* #ef4444 red-500 */
+  --chart-fan: 56 189 248;      /* #38bdf8 sky-400 */
+  --chart-temp: 245 158 11;     /* #f59e0b amber-500 — matches original chart hex exactly */
+  --chart-grid: 39 39 42;       /* #27272a */
+  --chart-tick: 113 113 122;    /* #71717a */
+}
+
+[data-theme="light"] {
+  --bg-primary: 253 246 227;    /* #fdf6e3 warm cream */
+  --bg-surface: 245 230 200;    /* #f5e6c8 light kraft paper */
+  --bg-card: 237 224 196;       /* #ede0c4 card background */
+  --text-primary: 44 26 14;     /* #2c1a0e dark espresso */
+  --text-muted: 122 90 61;      /* #7a5a3d medium roast brown, AA on all light surfaces */
+  --border-color: 212 169 106;  /* #d4a96a warm tan */
+
+  /* Amber-500 fails 3:1 as a foreground mark on cream (1.99:1) — accent-fill
+     stays amber-500 for solid buttons/fills only. accent-text (amber-800) is
+     for text and foreground marks (chips, stars, chart lines) on light bg. */
+  --accent-fill: 245 158 11;    /* #f59e0b amber-500 */
+  --accent-text: 146 64 14;     /* #92400e amber-800 */
+
+  --error-fill: 220 38 38;      /* #dc2626 red-600 */
+  --error-text: 185 28 28;      /* #b91c1c red-700 */
+  --success-fill: 22 163 74;    /* #16a34a green-600 */
+  --success-text: 21 128 61;    /* #15803d green-700 */
+
+  --chart-ror: 109 40 217;      /* #6d28d9 violet-700 */
+  --chart-heat: 220 38 38;      /* #dc2626 red-600 */
+  --chart-fan: 3 105 161;       /* #0369a1 sky-700 */
+  --chart-temp: 146 64 14;      /* #92400e amber-800 — matches accent-text, foreground mark on light bg */
+  --chart-grid: 212 169 106;    /* #d4a96a */
+  --chart-tick: 122 90 61;      /* #7a5a3d */
+}
