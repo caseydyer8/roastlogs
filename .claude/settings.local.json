@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git rm *)",
-      "Bash(npm run *)",
-      "Bash([ -f \"$f\" ])"
-    ]
-  }
-}

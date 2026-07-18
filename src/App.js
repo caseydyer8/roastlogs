@@ -1,17 +1,5 @@
 import RoastCurveChart from "./components/charts/RoastCurveChart";
 import React from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-  ReferenceDot,
-  Label,
-} from "recharts";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
@@ -19,207 +7,6 @@ import "./lightMode.css"; // IDEA-008: light mode theme overrides
 
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
 const TABS = ["Roast", "History", "Brew", "Beans"];
-
-const formatMMSS = (s) => {
-  const mm = String(Math.floor(s / 60)).padStart(2, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return `${mm}:${ss}`;
-};
-
-function RoastSparkline({ data }) {
-  if (!data || data.length === 0) return null;
-  return (
-    <div className="h-20 w-32">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data}>
-          <Line
-            type="monotone"
-            dataKey="temp"
-            stroke="#ef4444"
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function RoastDetailChart({ roast }) {
-  if (!roast || !roast.roastLog) return null;
-
-  const chartData = [];
-  const startEntry = (roast.roastLog || []).find((e) => e.type === "start_settings" || (e.type === "adjustment" && e.t === 0));
-  
-  let currentHeat = startEntry?.heat || 0;
-  let currentFan = startEntry?.fan || 0;
-  let currentTemp = startEntry?.temp || 0;
-
-  for (let t = 0; t <= (roast.totalSeconds || 0); t++) {
-    const logEntry = (roast.roastLog || []).find((e) => e.t === t && (e.type === "adjustment" || e.type === "start_settings"));
-    if (logEntry) {
-      if (logEntry.heat) currentHeat = Number(logEntry.heat);
-      if (logEntry.fan) currentFan = Number(logEntry.fan);
-      if (logEntry.temp) currentTemp = Number(logEntry.temp);
-    }
-
-    // Calculate RoR (Rate of Rise) per 30 seconds
-    let ror = null;
-    if (t >= 30) {
-      const prevTempEntry = chartData[t - 30];
-      if (prevTempEntry && prevTempEntry.temp && currentTemp) {
-        ror = currentTemp - prevTempEntry.temp;
-      }
-    }
-
-    chartData.push({
-      t,
-      displayTime: formatMMSS(t),
-      heat: currentHeat,
-      fan: currentFan,
-      temp: currentTemp ? Number(currentTemp) : null,
-      ror: ror,
-    });
-  }
-
-  const phases = (roast.roastLog || []).filter((e) => e.type === "phase" && ["YELLOWING", "FIRST CRACK", "COOLING START"].includes(e.label));
-
-  const totalTime = formatMMSS(roast.totalSeconds || 0);
-  
-  const firstCrack = (roast.roastLog || []).find(e => e.label === "FIRST CRACK");
-  const coolingStart = (roast.roastLog || []).find(e => e.label === "COOLING START");
-  
-  let dtr = "—";
-  if (firstCrack && coolingStart && (roast.totalSeconds || 0) > 0) {
-    const devTime = coolingStart.t - firstCrack.t;
-    dtr = `${((devTime / roast.totalSeconds) * 100).toFixed(1)}%`;
-  }
-
-  const weightLoss = roast.greenWeight && roast.roastedWeight
-    ? `${(((Number(roast.greenWeight) - Number(roast.roastedWeight)) / Number(roast.greenWeight)) * 100).toFixed(1)}%`
-    : "—";
-
-  // IDEA-004: Profile vs. Actual deviations. Compare the heat/fan in effect at each
-  // profile step's time against the profile target. A deviation is a difference > ±1 step.
-  const profileSteps = (roast.profile && Array.isArray(roast.profile.steps)) ? roast.profile.steps : [];
-  const hasProfile = profileSteps.length > 0;
-  const stepSecondsOf = (step) => {
-    if (step.totalSeconds !== undefined && step.totalSeconds !== null) return step.totalSeconds;
-    if (typeof step.time === "string" && step.time.includes(":")) {
-      const [mm, ss] = step.time.split(":");
-      return (parseInt(mm, 10) || 0) * 60 + (parseInt(ss, 10) || 0);
-    }
-    return 0;
-  };
-  const deviations = [];
-  profileSteps.forEach((step) => {
-    const stepSeconds = stepSecondsOf(step);
-    const idx = Math.min(Math.max(stepSeconds, 0), chartData.length - 1);
-    const inEffect = chartData[idx];
-    // Skip this step if no real adjustment data exists at this time yet
-    if (!inEffect || (Number(inEffect.heat) === 0 && Number(inEffect.fan) === 0)) return;
-    const checks = [
-      { field: "Heat", yKey: "heat", target: Number(step.heat), logged: Number(inEffect.heat) },
-      { field: "Fan", yKey: "fan", target: Number(step.fan), logged: Number(inEffect.fan) },
-    ];
-    checks.forEach((c) => {
-      if (Number.isNaN(c.target) || Number.isNaN(c.logged)) return;
-      if (Math.abs(c.logged - c.target) > 1) {
-        deviations.push({ t: stepSeconds, field: c.field, yKey: c.yKey, target: c.target, logged: c.logged, diff: c.logged - c.target });
-      }
-    });
-  });
-
-  return (
-    <div className="space-y-6">
-      <div className="h-64 w-full bg-zinc-950/50 rounded-3xl p-4 border border-zinc-800/50">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-            <XAxis
-              dataKey="t"
-              tickFormatter={formatMMSS}
-              stroke="#52525b"
-              fontSize={10}
-              tick={{fill: '#71717a'}}
-              minTickGap={30}
-            />
-            <YAxis stroke="#52525b" fontSize={10} tick={{fill: '#71717a'}} />
-            <Tooltip
-              contentStyle={{ backgroundColor: "#09090b", border: "1px solid #27272a", borderRadius: "12px", fontSize: "12px" }}
-              labelFormatter={formatMMSS}
-              itemStyle={{ padding: "2px 0" }}
-            />
-
-            {phases?.map((p, idx) => (
-              <ReferenceLine key={idx} x={p.t} stroke="#52525b" strokeDasharray="3 3">
-                <Label value={p.label} position="top" fill="#71717a" fontSize={10} offset={10} />
-              </ReferenceLine>
-            ))}
-
-            <Line type="monotone" dataKey="temp" stroke="#ef4444" strokeWidth={2} dot={false} name="Temp" />
-            <Line type="stepAfter" dataKey="heat" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Heat" />
-            <Line type="stepAfter" dataKey="fan" stroke="#f97316" strokeWidth={1.5} dot={false} name="Fan" />
-            <Line type="monotone" dataKey="ror" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="RoR" />
-
-            {/* IDEA-004: deviation markers (skip empty 0-value points) */}
-            {deviations.map((d, idx) => (
-              d.logged !== 0 ? (
-                <ReferenceDot key={`dev-${idx}`} x={d.t} y={d.logged} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5} isFront={true} />
-              ) : null
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* IDEA-004: deviation legend (no Recharts <Legend> in use) */}
-      {hasProfile && deviations.length > 0 && (
-        <div className="flex items-center gap-2 -mt-3 text-[11px] text-zinc-400">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500 border border-white" />
-          ⚠ Profile deviation
-        </div>
-      )}
-
-      {/* IDEA-004: Profile Deviations text section (only when a profile was attached) */}
-      {hasProfile && (
-        <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5">
-          <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-3">Profile Deviations</div>
-          {deviations.length === 0 ? (
-            <div className="text-sm font-bold text-green-500">✓ Followed profile exactly</div>
-          ) : (
-            <div className="space-y-2">
-              {deviations.map((d, idx) => (
-                <div key={idx} className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                  <span className="font-mono text-xs text-amber-300/80">{formatMMSS(d.t)}</span>
-                  <span className="text-xs text-zinc-300">
-                    {d.field}: logged <span className="font-bold text-zinc-100">{d.logged}</span>, profile called for <span className="font-bold text-zinc-100">{d.target}</span>
-                    <span className="ml-1 font-bold text-amber-400">(difference: {d.diff > 0 ? "+" : ""}{d.diff})</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Total Time</div>
-          <div className="text-sm font-bold text-zinc-100 font-mono">{totalTime}</div>
-        </div>
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">DTR</div>
-          <div className="text-sm font-bold text-red-400 font-mono">{dtr}</div>
-        </div>
-        <div className="bg-zinc-900/50 border border-zinc-800/60 rounded-2xl p-3 text-center">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Weight Loss</div>
-          <div className="text-sm font-bold text-amber-400 font-mono">{weightLoss}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
   const outerFill = active ? "#f59e0b" : "#52525b"; // amber-500 / zinc-600
@@ -566,76 +353,258 @@ function PrimaryButton({ children, onClick }) {
   );
 }
 
-function DrumRollPicker({ values, selectedValue, onChange, label, displayFn }) {
-  const [isOpen, setIsOpen] = React.useState(false);
-  const listRef = React.useRef(null);
-  const ITEM_HEIGHT = 52;
-  const VISIBLE_COUNT = 5;
+// Semantic roast-level color spectrum (light tan → dark roast) — separate from the amber
+// brand accent; used only where the color MEANS roast level (History rows, level chips).
+const ROAST_LEVEL_COLORS = {
+  "Cinnamon (Light+)": "#e8c99a",
+  "City (Light)": "#c98f52",
+  "City+ (Light-Medium)": "#a56a3a",
+  "Full City (Medium)": "#8a5230",
+  "Full City+ (Medium-Dark)": "#7a482b",
+  "Vienna (Dark)": "#6b4226",
+  "French (Very Dark)": "#5a3620",
+  "Italian (Darkest)": "#4a2c1a",
+};
+const roastLevelColor = (level) => ROAST_LEVEL_COLORS[level] || "#c98f52";
 
+// Display-only shortening for History list rows: keep "Country Region Process",
+// drop varietal/lot codes, years, and trailing detail so rows scan cleanly.
+// e.g. "Ethiopia Duwancho Natural Variety: 74148, 74110" → "Ethiopia Duwancho Natural".
+// The stored name is never changed — detail views always show the full name.
+const shortBeanName = (name) => {
+  if (!name) return name;
+  let s = String(name).split(/[:([]/)[0];                 // cut at ":" "(" "["
+  s = s.replace(/[\s,·—–-]+$/g, "");                      // trailing separators
+  s = s.replace(/\b(19|20)\d{2}$/, "").trim();            // trailing year
+  s = s.replace(/\b(variety|varietal|lot|grade|selection|no\.?)$/i, "").trim();
+  const isStopWord = (w) => /^(el|la|los|las|de|del|da|do|dos|the|of|and|y|e)$/i.test(w);
+  const words = s.split(/\s+/);
+  while (words.join(" ").length > 30 && words.length > 2) words.pop();
+  while (words.length > 1 && isStopWord(words[words.length - 1])) words.pop();
+  return words.join(" ") || name;
+};
+
+// fill: 0 | 0.5 | 1 — half fill uses a hard-stop gradient on the star polygon.
+function Star({ fill, size = 14 }) {
+  // Strip the colons useId emits — SVG url(#…) fragment ids must be safe on all
+  // browsers (iOS Safari included), and ":r1:" is a risky fragment identifier.
+  const gradId = `star-half-${React.useId().replace(/:/g, "")}`;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      {fill === 0.5 && (
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="50%" stopColor="#f59e0b" />
+            <stop offset="50%" stopColor="transparent" />
+          </linearGradient>
+        </defs>
+      )}
+      <polygon
+        points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+        fill={fill >= 1 ? "#f59e0b" : fill >= 0.5 ? `url(#${gradId})` : "none"}
+        stroke={fill > 0 ? "#f59e0b" : "#3f3f46"}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Read-only star display; supports half-star values (e.g. 3.5). Integer ratings render unchanged.
+function StarRow({ rating, size = 14 }) {
+  const r = Number(rating) || 0;
+  return (
+    <div className="flex gap-0.5">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <Star key={star} size={size} fill={r >= star ? 1 : r >= star - 0.5 ? 0.5 : 0} />
+      ))}
+    </div>
+  );
+}
+
+// Half-star input: each star has two tap zones — left half = x.5, right half = x.0.
+function StarRatingInput({ value, onChange }) {
+  const r = Number(value) || 0;
+  return (
+    <div className="flex gap-2">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <div key={star} className="relative transition active:scale-90">
+          <Star size={40} fill={r >= star ? 1 : r >= star - 0.5 ? 0.5 : 0} />
+          <button
+            type="button"
+            aria-label={`${star - 0.5} stars`}
+            onClick={() => onChange(star - 0.5)}
+            className="absolute inset-y-0 left-0 w-1/2"
+          />
+          <button
+            type="button"
+            aria-label={`${star} stars`}
+            onClick={() => onChange(star)}
+            className="absolute inset-y-0 right-0 w-1/2"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Replace-on-type for the 1-9 dial inputs: the LAST typed character wins ("5" then "7"
+// becomes "7", not a swallowed keystroke), and anything outside 1-9 (incl. 0) clears.
+const dialDigit = (raw) => {
+  const d = String(raw).slice(-1);
+  return /^[1-9]$/.test(d) ? d : "";
+};
+
+// Editable cockpit tile — the Fan/Heat/Temp starting inputs on session setup.
+// (The live hero readout uses its own inline tappable row per the mockup.)
+function CockpitTile({ label, value, accent = false, onChange }) {
+  const valueClass = `text-2xl font-black tabular-nums ${accent ? "text-amber-400" : "text-zinc-100"}`;
+  return (
+    <label className="block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-2 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</div>
+      <input
+        value={value}
+        onChange={onChange}
+        type="number"
+        inputMode="numeric"
+        placeholder="—"
+        className={`mt-1 w-full bg-transparent text-center outline-none placeholder:text-zinc-600 ${valueClass}`}
+      />
+    </label>
+  );
+}
+
+// Dashed-amber "bag label" shell shared by the Brew summary and both tasting-detail views.
+function BagLabelCard({ className = "", children }) {
+  return (
+    <section className={`rounded-3xl border border-zinc-800/60 p-6 shadow-xl ${className}`}>
+      <div className="flex flex-col items-center border-y-2 border-dashed border-amber-500/40 py-5 text-center">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+// Compact –/+ stepper for the discrete 1-9 Fan/Heat dials (Profile Builder).
+function Stepper({ label, value, onChange }) {
+  const v = Math.min(9, Math.max(1, parseInt(value, 10) || 5));
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">{label}</span>
+      <div className="flex items-center overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900">
+        <button
+          type="button"
+          aria-label={`Decrease ${label}`}
+          onClick={() => onChange(String(Math.max(1, v - 1)))}
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-zinc-300 transition active:bg-zinc-800 active:scale-95"
+        >
+          –
+        </button>
+        <div className="flex-1 text-center font-mono text-lg font-bold tabular-nums text-amber-400">{v}</div>
+        <button
+          type="button"
+          aria-label={`Increase ${label}`}
+          onClick={() => onChange(String(Math.min(9, v + 1)))}
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-xl font-bold text-zinc-300 transition active:bg-zinc-800 active:scale-95"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// One tappable MM:SS chip per profile step — opens a single picker with both wheels.
+function TimeChipColumn({ values, selected, onPick, itemHeight, visibleCount }) {
+  const listRef = React.useRef(null);
   React.useEffect(() => {
-    if (isOpen && listRef.current) {
-      const idx = values.indexOf(selectedValue);
+    if (listRef.current) {
+      const idx = values.indexOf(selected);
       if (idx >= 0) {
-        const scrollTo = Math.max(0, (idx - Math.floor(VISIBLE_COUNT / 2)) * ITEM_HEIGHT);
-        listRef.current.scrollTop = scrollTo;
+        listRef.current.scrollTop = Math.max(0, (idx - Math.floor(visibleCount / 2)) * itemHeight);
       }
     }
-  }, [isOpen]);
+  }, []);
+  return (
+    <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain" style={{ height: itemHeight * visibleCount }}>
+      {values.map((v) => (
+        <div
+          key={v}
+          style={{ height: itemHeight }}
+          className={`flex cursor-pointer select-none items-center justify-center text-xl font-bold transition-colors ${
+            v === selected ? "text-amber-400" : "text-white"
+          }`}
+          onClick={() => onPick(v)}
+        >
+          {String(v).padStart(2, "0")}
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  const display = displayFn ? displayFn(selectedValue) : String(selectedValue);
+function TimeChip({ totalSeconds, onChange }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const secs = Math.max(0, Math.floor(totalSeconds || 0));
+  const mm = Math.floor(secs / 60);
+  const ss = secs % 60;
+  const display = `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  const ITEM_HEIGHT = 52;
+  const VISIBLE_COUNT = 5;
 
   return (
     <>
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-center text-zinc-100 font-mono font-bold text-sm transition active:bg-zinc-800 active:scale-95"
+        className="h-11 rounded-xl border border-zinc-700 bg-zinc-900 px-3 text-center font-mono text-sm font-bold text-zinc-100 transition active:bg-zinc-800 active:scale-95"
       >
         {display}
       </button>
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-zinc-950/85 backdrop-blur-sm"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/85 p-4 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
         >
           <div
-            className="w-full max-w-sm rounded-3xl border border-zinc-700/60 bg-zinc-900 shadow-2xl overflow-hidden"
-            onClick={e => e.stopPropagation()}
+            className="w-full max-w-sm overflow-hidden rounded-3xl border border-zinc-700/60 bg-zinc-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* Label */}
-            <div className="px-4 py-3 border-b border-zinc-800/60 text-center">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">{label}</span>
+            <div className="border-b border-zinc-800/60 px-4 py-3 text-center">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">STEP TIME (MM:SS)</span>
             </div>
-
-            {/* Picker list with amber center-highlight band */}
             <div className="relative">
               <div
-                className="pointer-events-none absolute left-0 right-0 bg-amber-500/10 border-t border-b border-amber-500/25 z-10"
+                className="pointer-events-none absolute left-0 right-0 z-10 border-b border-t border-amber-500/25 bg-amber-500/10"
                 style={{ height: ITEM_HEIGHT, top: ITEM_HEIGHT * Math.floor(VISIBLE_COUNT / 2) }}
               />
-              <div
-                ref={listRef}
-                className="overflow-y-auto overscroll-contain"
-                style={{ height: ITEM_HEIGHT * VISIBLE_COUNT }}
-              >
-                {values.map(v => {
-                  const isSelected = v === selectedValue;
-                  return (
-                    <div
-                      key={v}
-                      style={{ height: ITEM_HEIGHT }}
-                      className={`flex items-center justify-center cursor-pointer select-none text-xl font-bold transition-colors
-                        ${isSelected ? "text-amber-400" : "text-white"}`}
-                      onClick={() => { onChange(v); setIsOpen(false); }}
-                    >
-                      {displayFn ? displayFn(v) : String(v)}
-                    </div>
-                  );
-                })}
+              <div className="flex">
+                <TimeChipColumn
+                  values={Array.from({ length: 26 }, (_, i) => i)}
+                  selected={mm}
+                  onPick={(v) => onChange(v * 60 + ss)}
+                  itemHeight={ITEM_HEIGHT}
+                  visibleCount={VISIBLE_COUNT}
+                />
+                <div className="flex items-center font-mono text-xl font-bold text-zinc-500">:</div>
+                <TimeChipColumn
+                  values={Array.from({ length: 60 }, (_, i) => i)}
+                  selected={ss}
+                  onPick={(v) => onChange(mm * 60 + v)}
+                  itemHeight={ITEM_HEIGHT}
+                  visibleCount={VISIBLE_COUNT}
+                />
               </div>
             </div>
-            <div className="h-4" />
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="m-4 w-[calc(100%-2rem)] rounded-2xl bg-amber-500 py-3 text-sm font-bold text-zinc-950 transition active:scale-[0.98]"
+            >
+              DONE
+            </button>
           </div>
         </div>
       )}
@@ -653,15 +622,6 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
     return `${mm}:${ss}`;
   };
 
-  const parseMMSS = (timeStr) => {
-    if (!timeStr || !timeStr.includes(':')) return 0;
-    const parts = timeStr.split(':');
-    if (parts.length !== 2) return 0;
-    const mm = parseInt(parts[0], 10) || 0;
-    const ss = parseInt(parts[1], 10) || 0;
-    return (mm * 60) + ss;
-  };
-
   const addStep = () => {
     setProfile(prev => ({
       ...prev,
@@ -671,15 +631,7 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 
   const updateStep = (idx, field, value) => {
     const newSteps = [...profile.steps];
-    if (field === 'minutes') {
-      const currentSecs = (newSteps[idx].totalSeconds || 0) % 60;
-      newSteps[idx] = { ...newSteps[idx], totalSeconds: value * 60 + currentSecs };
-    } else if (field === 'seconds') {
-      const currentMins = Math.floor((newSteps[idx].totalSeconds || 0) / 60);
-      newSteps[idx] = { ...newSteps[idx], totalSeconds: currentMins * 60 + value };
-    } else {
-      newSteps[idx] = { ...newSteps[idx], [field]: value };
-    }
+    newSteps[idx] = { ...newSteps[idx], [field]: value };
     setProfile(prev => ({ ...prev, steps: newSteps }));
   };
 
@@ -710,48 +662,31 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
           className="w-full rounded-xl bg-zinc-950/40 border border-zinc-800 px-4 py-3 mb-4 text-sm text-zinc-100"
         />
         <div className="space-y-3 mb-6">
+          {profile.steps.length > 0 && (
+            <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">
+              Steps are sorted by time when saved
+            </div>
+          )}
           {profile.steps.map((step, idx) => (
-            <div key={idx} className="flex gap-2 items-center bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
-              {/* Time: MM and SS side-by-side drum roll pickers */}
-              <div className="flex items-center gap-0.5 shrink-0">
-                <DrumRollPicker
-                  values={Array.from({ length: 26 }, (_, i) => i)}
-                  selectedValue={Math.floor((step.totalSeconds || 0) / 60)}
-                  onChange={v => updateStep(idx, 'minutes', v)}
-                  label="MINUTES"
-                  displayFn={v => String(v).padStart(2, '0')}
-                />
-                <span className="text-zinc-500 font-mono text-sm">:</span>
-                <DrumRollPicker
-                  values={Array.from({ length: 60 }, (_, i) => i)}
-                  selectedValue={(step.totalSeconds || 0) % 60}
-                  onChange={v => updateStep(idx, 'seconds', v)}
-                  label="SECONDS"
-                  displayFn={v => String(v).padStart(2, '0')}
+            <div key={idx} className="flex gap-2 items-end bg-zinc-950/20 p-3 rounded-2xl border border-zinc-800/40">
+              {/* Time: one tappable MM:SS chip */}
+              <div className="flex flex-col gap-1 shrink-0">
+                <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Time</span>
+                <TimeChip
+                  totalSeconds={step.totalSeconds || 0}
+                  onChange={(secs) => updateStep(idx, "totalSeconds", secs)}
                 />
               </div>
-              {/* Fan and Heat drum roll pickers */}
+              {/* Fan and Heat inline steppers (discrete 1-9) */}
               <div className="flex-1 grid grid-cols-2 gap-2">
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Fan</span>
-                  <DrumRollPicker
-                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
-                    selectedValue={parseInt(step.fan) || 5}
-                    onChange={v => updateStep(idx, "fan", String(v))}
-                    label="FAN"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-zinc-500 font-bold ml-1">Heat</span>
-                  <DrumRollPicker
-                    values={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
-                    selectedValue={parseInt(step.heat) || 5}
-                    onChange={v => updateStep(idx, "heat", String(v))}
-                    label="HEAT"
-                  />
-                </div>
+                <Stepper label="Fan" value={step.fan} onChange={v => updateStep(idx, "fan", v)} />
+                <Stepper label="Heat" value={step.heat} onChange={v => updateStep(idx, "heat", v)} />
               </div>
-              <button onClick={() => setProfile({...profile, steps: profile.steps.filter((_, i) => i !== idx)})} className="text-red-500 p-2 text-xl">×</button>
+              <button
+                aria-label="Remove step"
+                onClick={() => setProfile({...profile, steps: profile.steps.filter((_, i) => i !== idx)})}
+                className="text-red-500 p-2 text-xl h-11 flex items-center"
+              >×</button>
             </div>
           ))}
           <button onClick={addStep} className="w-full py-3 rounded-2xl border-2 border-dashed border-zinc-800 text-zinc-500 text-xs font-bold hover:border-zinc-700 hover:text-zinc-400">+ ADD STEP</button>
@@ -929,9 +864,6 @@ function App() {
   const [brewGrindSize, setBrewGrindSize] = React.useState("Medium");
   const [brewTemp, setBrewTemp] = React.useState("");
   const [customRatio, setCustomRatio] = React.useState("");
-  const [brewPhoto, setBrewPhoto] = React.useState(null);
-  const [brewPhotoDataUrl, setBrewPhotoDataUrl] = React.useState(null);
-  const [brewPhotoError, setBrewPhotoError] = React.useState(""); // BUG-003 FIXED: user-facing photo validation error
   
   // New Tasting wizard state
   const [acidityRating, setAcidityRating] = React.useState(3);
@@ -940,7 +872,6 @@ function App() {
   const [selectedDescriptors, setSelectedDescriptors] = React.useState([]);
   const [expandedFruitType, setExpandedFruitType] = React.useState([]);
   const [selectedTastingNote, setSelectedTastingNote] = React.useState(null);
-  const [selectedTastingPhotoDataUrl, setSelectedTastingPhotoDataUrl] = React.useState(null);
   const [showTastingHistory, setShowTastingHistory] = React.useState(false);
   const [historySegment, setHistorySegment] = React.useState("ROASTS");
   const [historySearch, setHistorySearch] = React.useState("");
@@ -948,95 +879,13 @@ function App() {
   const [editedRoast, setEditedRoast] = React.useState(null);
   const [hasChanges, setHasChanges] = React.useState(false);
   const [showDiscardModal, setShowDiscardModal] = React.useState(false);
+  // Styled delete confirmation (replaces native window.confirm): { type: 'roast' | 'tasting', id }
+  const [confirmDelete, setConfirmDelete] = React.useState(null);
   const [syncStatus, setSyncStatus] = React.useState('idle'); // 'idle', 'syncing', 'success', 'error'
 
-  // IndexedDB photo storage functions
-  async function savePhotoLocally(key, base64) {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('roastlogs-photos', 1);
-      request.onupgradeneeded = (e) => {
-        e.target.result.createObjectStore('photos');
-      };
-      request.onsuccess = (e) => {
-        const db = e.target.result;
-        const tx = db.transaction('photos', 'readwrite');
-        tx.objectStore('photos').put(base64, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async function getPhotoLocally(key) {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('roastlogs-photos', 1);
-      request.onupgradeneeded = (e) => {
-        e.target.result.createObjectStore('photos');
-      };
-      request.onsuccess = (e) => {
-        const db = e.target.result;
-        const tx = db.transaction('photos', 'readonly');
-        const req = tx.objectStore('photos').get(key);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => reject(req.error);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async function deletePhotoLocally(key) {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('roastlogs-photos', 1);
-      request.onupgradeneeded = (e) => {
-        e.target.result.createObjectStore('photos');
-      };
-      request.onsuccess = (e) => {
-        const db = e.target.result;
-        const tx = db.transaction('photos', 'readwrite');
-        tx.objectStore('photos').delete(key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  // Load photo data when photo key changes
-  React.useEffect(() => {
-    const loadPhoto = async () => {
-      if (brewPhoto) {
-        try {
-          const dataUrl = await getPhotoLocally(brewPhoto);
-          setBrewPhotoDataUrl(dataUrl);
-        } catch (error) {
-          console.error('Failed to load photo:', error);
-          setBrewPhotoDataUrl(null);
-        }
-      } else {
-        setBrewPhotoDataUrl(null);
-      }
-    };
-    loadPhoto();
-  }, [brewPhoto]);
-
-  // Load tasting note photo data when tasting note changes
-  React.useEffect(() => {
-    const loadTastingPhoto = async () => {
-      if (selectedTastingNote?.photo) {
-        try {
-          const dataUrl = await getPhotoLocally(selectedTastingNote.photo);
-          setSelectedTastingPhotoDataUrl(dataUrl);
-        } catch (error) {
-          console.error('Failed to load tasting photo:', error);
-          setSelectedTastingPhotoDataUrl(null);
-        }
-      } else {
-        setSelectedTastingPhotoDataUrl(null);
-      }
-    };
-    loadTastingPhoto();
-  }, [selectedTastingNote]);
+  // Photo feature removed 2026-07 (was brew-only, IndexedDB-only, never synced to Supabase).
+  // Old records may still carry a `photo` key — it is simply ignored; orphaned IndexedDB
+  // blobs in 'roastlogs-photos' are harmless.
 
   // Supabase sync on mount
   React.useEffect(() => {
@@ -1251,6 +1100,7 @@ function App() {
     } else if (activeNumpad === "fan") {
       setFan(digit); // Max 9, so just replace
     } else if (activeNumpad === "temp") {
+      // Temp always opens blank (never prefilled), so plain append is safe.
       setTemp((prev) => {
         const next = prev + digit;
         return next.length <= 4 ? next : prev;
@@ -1320,6 +1170,11 @@ function App() {
   }, [isDevTimerRunning, isTimerRunning]);
 
   const logMilestone = (label) => {
+    // A logged milestone is done — ignore re-taps. The amber-filled button reads like a
+    // toggle, and a duplicate FIRST CRACK would also reset firstCrackTime while the DEV
+    // counter keeps running, corrupting the saved dev time.
+    if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
+
     setRoastLog((prev) => [{ type: 'phase', label, t: elapsedSeconds }, ...prev]);
     
     if (label === "FIRST CRACK") {
@@ -1334,7 +1189,13 @@ function App() {
 
   const handleStart = () => {
     if (isTimerRunning) return;
-    
+
+    // Resuming a paused roast — don't re-ask for a profile, just continue.
+    if (roastStarted) {
+      startRoast(null);
+      return;
+    }
+
     // Find profiles for the current bean
     const beanProfiles = (profiles || []).filter(p => p.beanName === beanName);
     if (beanProfiles.length > 0 || (profiles || []).some(p => !p.beanName)) {
@@ -1344,11 +1205,18 @@ function App() {
     }
   };
 
+  const handlePause = () => {
+    setIsTimerRunning(false);
+    // Loud cue — an accidental pause mid-roast silently compresses every later
+    // timestamp, and the small status pill alone is easy to miss.
+    showToast("Roast paused — beans are still roasting! Tap RESUME to continue.");
+  };
+
   const startRoast = (profile) => {
     setShowRoastModeDialog(false);
     setIsTimerRunning(true);
-    
-    if (elapsedSeconds === 0) {
+
+    if (!roastStarted) {
       if (profile) {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
@@ -1433,6 +1301,41 @@ function App() {
     setAdjPopupTimestamp(null);
   };
 
+  // Most recently logged Fan/Heat/Temp for the hero readout — scans the newest-first
+  // roastLog by FIELD NAME (never array position) so each value carries forward
+  // independently even when an adjustment left some fields blank.
+  const latestLogged = React.useMemo(() => {
+    const out = { fan: "", heat: "", temp: "" };
+    for (const entry of roastLog || []) {
+      if (entry.type !== "adjustment" && entry.type !== "start_settings") continue;
+      if (!out.fan && entry.fan) out.fan = entry.fan;
+      if (!out.heat && entry.heat) out.heat = entry.heat;
+      if (!out.temp && entry.temp) out.temp = entry.temp;
+      if (out.fan && out.heat && out.temp) break;
+    }
+    return out;
+  }, [roastLog]);
+
+  // A session counts as started once ANYTHING is logged — not only once the clock has
+  // ticked. Pausing within the first second (elapsedSeconds still 0) must not look like
+  // a fresh session, or restarting would replace the whole roastLog.
+  const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
+
+  // Open the adjustment logger. Fan/Heat prefill from the last logged values (they are
+  // dial STATES — carry-forward is truth), but Temp always opens BLANK: it is a fresh
+  // measurement each time, and re-saving a carried-forward temp at a new timestamp
+  // would write a phantom flat reading into the roast curve and RoR.
+  // Both entry points (hero value tap + floating "+") land here; a hero tap also
+  // focuses that field's numpad.
+  const openAdjPopup = (focusField) => {
+    setFan(latestLogged.fan);
+    setHeat(latestLogged.heat);
+    setTemp("");
+    setAdjPopupTimestamp(elapsedSeconds);
+    setIsAdjPopupOpen(true);
+    setActiveNumpad(focusField || null);
+  };
+
   const handleSaveEdit = () => {
     if (!editedRoast) return;
 
@@ -1500,9 +1403,8 @@ function App() {
     updateEditedRoast('roastLog', newLog);
   };
 
+  // Performs the delete — confirmation happens in the styled modal (confirmDelete state).
   const handleDeleteRoast = (id) => {
-    if (!window.confirm("Are you sure you want to delete this roast?")) return;
-    
     const existingRoasts = (() => {
       try {
         return JSON.parse(localStorage.getItem("roasts") || "[]");
@@ -1525,9 +1427,8 @@ function App() {
     setSelectedRoast(null);
   };
 
-  const handleDeleteTasting = async (id) => {
-    if (!window.confirm("Delete this tasting? This cannot be undone.")) return;
-
+  // Performs the delete — confirmation happens in the styled modal (confirmDelete state).
+  const handleDeleteTasting = (id) => {
     const existingBrews = (() => {
       try {
         return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
@@ -1536,19 +1437,8 @@ function App() {
         return [];
       }
     })();
-    const tastingToDelete = (existingBrews || []).find((t) => t.id === id);
     const updatedBrews = (existingBrews || []).filter((t) => t.id !== id);
     localStorage.setItem("tastingNotes", JSON.stringify(updatedBrews));
-
-    // Remove the app's own IndexedDB copy of the brew photo. This only deletes our cached
-    // copy — the original photo in the user's iPhone Photos library is never touched.
-    if (tastingToDelete?.photo) {
-      try {
-        await deletePhotoLocally(tastingToDelete.photo);
-      } catch (e) {
-        console.warn("Failed to delete tasting photo from IndexedDB", e);
-      }
-    }
 
     // Supabase Sync
     setSyncStatus('syncing');
@@ -1563,7 +1453,8 @@ function App() {
 
   const BREW_METHODS = ["Pour Over", "Espresso Machine", "Chemex", "French Press", "AeroPress", "Moka Pot", "Hario V60"];
   const GRIND_SIZES = ["Extra Fine", "Fine", "Medium-Fine", "Medium", "Medium-Coarse", "Coarse"];
-  const WATER_RATIOS = ["1:14", "1:15", "1:16", "1:17", "1:18", "Custom"];
+  // One-tap ratio chips (older saved brews may hold other ratio strings — display-only, still fine)
+  const RATIO_CHIPS = ["1:15", "1:16", "1:17", "Custom"];
 
   const FLAVOR_FAMILIES = [
     { id: 'chocolatey', label: 'Chocolatey', emoji: '☕' },
@@ -1595,48 +1486,6 @@ function App() {
     fermented: ["Red Wine", "White Wine", "Whiskey", "Bourbon", "Overripe Fruit", "Vinegar", "Kombucha"]
   };
 
-  // BUG-003 FIXED: validate file type/size, surface a user-facing error, then store base64 in IndexedDB only.
-  // SECURITY: file type/size validated. Base64 in IndexedDB only, never Supabase.
-  const handleBrewPhotoSelect = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-
-    const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"];
-    const MAX_BYTES = 5 * 1024 * 1024; // 5MB
-
-    // Some browsers report HEIC with an empty/odd MIME type; allow by extension as a fallback.
-    const nameLower = (file.name || "").toLowerCase();
-    const looksHeic = nameLower.endsWith(".heic") || nameLower.endsWith(".heif");
-    if (!ALLOWED_TYPES.includes(file.type) && !looksHeic) {
-      setBrewPhotoError("Unsupported file type. Use a JPEG, PNG, WebP, or HEIC image.");
-      e.target.value = "";
-      return;
-    }
-    if (file.size > MAX_BYTES) {
-      setBrewPhotoError("Image is too large (max 5MB). Choose a smaller photo.");
-      e.target.value = "";
-      return;
-    }
-
-    setBrewPhotoError("");
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = reader.result;
-      const photoKey = `brew-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      try {
-        await savePhotoLocally(photoKey, base64);
-        setBrewPhoto(photoKey);
-      } catch (error) {
-        console.warn("Failed to save photo:", error);
-        setBrewPhotoError("Could not save the photo. Please try again.");
-      }
-    };
-    reader.onerror = () => setBrewPhotoError("Could not read the file. Please try again.");
-    reader.readAsDataURL(file);
-    // Allow re-selecting the same file later
-    e.target.value = "";
-  };
-
   const handleSaveBrew = () => {
     const newBrew = {
       id: Date.now(),
@@ -1648,7 +1497,6 @@ function App() {
       ratio: brewRatio === "Custom" ? customRatio : brewRatio,
       grindSize: brewGrindSize,
       temp: brewTemp,
-      photo: brewPhoto,
       acidity: acidityRating,
       body: bodyRating,
       families: selectedFamilies,
@@ -1689,9 +1537,6 @@ function App() {
     setBrewAgain(null);
     setBrewNotes("");
     setCustomRatio("");
-    setBrewPhoto(null);
-    setBrewPhotoDataUrl(null);
-    setBrewPhotoError("");
   };
 
   // IDEA-007: Export Data — CSV roast log + full JSON backup. Pure client-side download, no server.
@@ -1746,7 +1591,7 @@ function App() {
       const noteByRoastId = {};
       brews.forEach(t => { if (t && t.roastId != null && t.roastId !== "") noteByRoastId[String(t.roastId)] = t; });
 
-      const headers = ["Date", "Bean Name", "Origin", "Green Weight (g)", "Roasted Weight (g)", "Weight Loss %", "Target Roast Level", "Visual Color", "Rating (1-5)", "Brew Again (Yes/No/Maybe)", "Session Notes"];
+      const headers = ["Date", "Bean Name", "Origin", "Green Weight (g)", "Roasted Weight (g)", "Weight Loss %", "Target Roast Level", "Visual Color", "Rating (0.5-5)", "Brew Again (Yes/No/Maybe)", "Session Notes"];
       const rows = roasts.map(r => {
         const bean = beanByName[r.beanName] || {};
         const note = noteByRoastId[String(r.id)] || {};
@@ -1783,7 +1628,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.1.0",
+        appVersion: "1.2.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -1848,89 +1693,76 @@ function App() {
                 Session
               </div>
 
-              {/* Starting Settings */}
-              {elapsedSeconds === 0 && !isTimerRunning && (
+              {/* Starting Settings — editable cockpit tiles, hidden once the session has begun */}
+              {!roastStarted && !isTimerRunning && (
                 <div className="mt-4 grid grid-cols-3 gap-3">
-                  <label className="block">
-                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Fan (1-9)</div>
-                    <input
-                      value={startingFan}
-                      onChange={(e) => setStartingFan(e.target.value.slice(0, 1))}
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="—"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                    />
-                  </label>
-                  <label className="block">
-                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Heat (1-9)</div>
-                    <input
-                      value={startingHeat}
-                      onChange={(e) => setStartingHeat(e.target.value.slice(0, 1))}
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="—"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                    />
-                  </label>
-                  <label className="block">
-                    <div className="text-[10px] font-bold uppercase tracking-tight text-zinc-400">Temp</div>
-                    <input
-                      value={startingTemp}
-                      onChange={(e) => setStartingTemp(e.target.value)}
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="—"
-                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center text-lg font-bold text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                    />
-                  </label>
+                  <CockpitTile
+                    label="Fan (1-9)"
+                    value={startingFan}
+                    onChange={(e) => setStartingFan(dialDigit(e.target.value))}
+                  />
+                  <CockpitTile
+                    label="Heat (1-9)"
+                    value={startingHeat}
+                    onChange={(e) => setStartingHeat(dialDigit(e.target.value))}
+                  />
+                  <CockpitTile
+                    label="Temp"
+                    accent
+                    value={startingTemp}
+                    onChange={(e) => setStartingTemp(e.target.value)}
+                  />
                 </div>
               )}
 
-              <div className={`${elapsedSeconds === 0 && !isTimerRunning ? "mt-6 border-t border-zinc-800/50 pt-4" : "mt-2"} grid grid-cols-1 gap-3`}>
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Bean Name</div>
-                  <input
-                    value={beanName}
-                    onChange={(e) => setBeanName(e.target.value)}
-                    type="text"
-                    placeholder="e.g., Ethiopia Yirgacheffe"
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  />
-                </label>
+              {/* Bean fields grouped under one labeled card */}
+              <div className={`${!roastStarted && !isTimerRunning ? "mt-4" : "mt-2"} rounded-2xl border border-zinc-800/60 bg-zinc-950/20 p-4`}>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Bean</div>
+                <div className="mt-3 grid grid-cols-1 gap-3">
+                  <label className="block">
+                    <div className="text-xs font-medium text-zinc-300">Bean Name</div>
+                    <input
+                      value={beanName}
+                      onChange={(e) => setBeanName(e.target.value)}
+                      type="text"
+                      placeholder="e.g., Ethiopia Yirgacheffe"
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </label>
 
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Green Weight (g)</div>
-                  <input
-                    value={greenWeightGrams}
-                    onChange={(e) => setGreenWeightGrams(e.target.value)}
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    placeholder="e.g., 250"
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  />
-                </label>
+                  <label className="block">
+                    <div className="text-xs font-medium text-zinc-300">Green Weight (g)</div>
+                    <input
+                      value={greenWeightGrams}
+                      onChange={(e) => setGreenWeightGrams(e.target.value)}
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      placeholder="e.g., 250"
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </label>
 
-                <label className="block">
-                  <div className="text-xs font-medium text-zinc-300">Target Roast Level</div>
-                  <select
-                    value={targetRoastLevel}
-                    onChange={(e) => setTargetRoastLevel(e.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  >
-                    {ROAST_LEVEL_OPTIONS.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <label className="block">
+                    <div className="text-xs font-medium text-zinc-300">Target Roast Level</div>
+                    <select
+                      value={targetRoastLevel}
+                      onChange={(e) => setTargetRoastLevel(e.target.value)}
+                      className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    >
+                      {ROAST_LEVEL_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </div>
             </section>
 
             {/* PROMINENT PROFILE BUILDER CARD */}
-            {elapsedSeconds === 0 && !isTimerRunning && (
+            {!roastStarted && !isTimerRunning && (
               <section 
                 onClick={() => setIsProfileBuilderOpen(true)}
                 className="rounded-3xl bg-amber-500/10 border border-amber-500/20 p-4 cursor-pointer hover:bg-amber-500/15 transition-colors"
@@ -1956,22 +1788,68 @@ function App() {
               </section>
             )}
 
-            {/* 2) LARGE TIMER */}
-            <section className="rounded-3xl border border-zinc-800/60 bg-gradient-to-b from-zinc-900/35 to-zinc-900/10 p-5 text-center">
-              <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Live Timer
+            {/* 2) HERO COCKPIT — amber-tinted hero card per the taste-skill mockup:
+                status pill, DEV in the corner, big left-aligned timer, and an inline
+                Fan·Heat·Temp readout row. Each readout value is a tap target that opens
+                the adjustment logger pre-filled (the FAB is the second entry point). */}
+            <section className="rounded-3xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 via-amber-500/[0.03] to-zinc-950/40 p-5">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      isTimerRunning ? "animate-pulse bg-amber-500 ring-[3px] ring-amber-500/20" : "bg-zinc-600"
+                    }`}
+                  />
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-[0.12em] ${
+                      isTimerRunning ? "text-amber-500" : "text-zinc-500"
+                    }`}
+                  >
+                    {isTimerRunning ? "Roasting" : roastStarted ? "Paused" : "Ready"}
+                  </span>
+                </div>
+                {firstCrackTime !== null && (
+                  <div className="animate-in fade-in duration-300 font-mono text-xs font-bold tabular-nums text-red-500">
+                    DEV {devSeconds}s
+                  </div>
+                )}
               </div>
-              <div className="mt-3 font-mono text-6xl font-semibold tracking-tight text-amber-400">
+
+              <div className="mt-2 font-mono text-[68px] font-extrabold leading-none tracking-[-0.035em] tabular-nums text-amber-400">
                 {formatTime(elapsedSeconds)}
               </div>
-              {firstCrackTime !== null && (
-                <div className="mt-2 text-2xl font-bold tracking-tight text-red-500 animate-in fade-in slide-in-from-top-2 duration-300">
-                  DEV: {devSeconds}s
+
+              {/* Tappable readout — the ONLY F/H/T display on this screen */}
+              {(roastStarted || isTimerRunning) && (
+                <div className="mt-4 flex border-t border-zinc-800/60 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => openAdjPopup("fan")}
+                    className="flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg py-1.5 transition active:scale-95 active:bg-zinc-900/40"
+                  >
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Fan</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">{latestLogged.fan || "—"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openAdjPopup("heat")}
+                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-zinc-800/60 py-1.5 pl-3 transition active:scale-95 active:bg-zinc-900/40"
+                  >
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Heat</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">{latestLogged.heat || "—"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openAdjPopup("temp")}
+                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-zinc-800/60 py-1.5 pl-3 transition active:scale-95 active:bg-zinc-900/40"
+                  >
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-zinc-500">Temp</span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-zinc-100">
+                      {latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—"}
+                    </span>
+                  </button>
                 </div>
               )}
-              <div className="mt-2 text-xs text-zinc-500">
-                {isTimerRunning ? "Running" : "Paused"}
-              </div>
             </section>
 
             {/* 3) PHASE MILESTONES */}
@@ -2012,34 +1890,53 @@ function App() {
                 </div>
               )}
 
+              {/* Roomy large-target layout (kept deliberately); logged milestones fill amber. */}
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={handleStart}
-                  className="col-span-2 rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90"
+                  onClick={isTimerRunning ? handlePause : handleStart}
+                  className="col-span-2 rounded-3xl bg-amber-500 px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90 active:scale-[0.99]"
                 >
-                  START
+                  {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
                 </button>
                 {[
                   "YELLOWING",
                   "FIRST CRACK",
-                ].map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => logMilestone(label)}
-                    className="rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
-                  >
-                    {label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => logMilestone("COOLING START")}
-                  className="col-span-2 rounded-3xl border border-zinc-800/70 bg-zinc-950/30 px-4 py-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-900/50 active:bg-zinc-900/70"
-                >
-                  COOLING START
-                </button>
+                ].map((label) => {
+                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === label);
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => logMilestone(label)}
+                      className={[
+                        "rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
+                        logged
+                          ? "border border-amber-600 bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20"
+                          : "border border-zinc-800/70 bg-zinc-950/30 text-zinc-100 hover:bg-zinc-900/50 active:bg-zinc-900/70",
+                      ].join(" ")}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+                {(() => {
+                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === "COOLING START");
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => logMilestone("COOLING START")}
+                      className={[
+                        "col-span-2 rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
+                        logged
+                          ? "border border-amber-600 bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20"
+                          : "border border-zinc-800/70 bg-zinc-950/30 text-zinc-100 hover:bg-zinc-900/50 active:bg-zinc-900/70",
+                      ].join(" ")}
+                    >
+                      COOLING START
+                    </button>
+                  );
+                })()}
               </div>
             </section>
 
@@ -2103,76 +2000,56 @@ function App() {
                 Roast Timeline
               </div>
 
+              {/* Compressed color-barred list: amber bar = phase entry, gray bar = adjustment */}
               <div className="mt-4 max-h-[400px] overflow-y-auto rounded-2xl border border-zinc-800/60 bg-zinc-950/20">
                 {roastLog.length === 0 ? (
                   <div className="px-4 py-3 text-xs text-zinc-500">
                     Timeline events will appear here as they occur.
                   </div>
                 ) : (
-                  <ul className="divide-y divide-zinc-800/60">
-                    {(roastLog || []).map((entry, idx) => (
-                      <li key={`${entry.t}-${idx}`} className="px-4 py-3">
-                        {entry.type === 'phase' ? (
-                          <div className="flex items-center justify-between rounded-xl bg-amber-500/10 px-3 py-2 border border-amber-500/20">
-                            <div className="text-sm font-bold uppercase tracking-wide text-amber-400">
-                              {entry.label}
-                            </div>
-                            <div className="font-mono text-sm font-semibold text-amber-300">
+                  <ul className="py-1">
+                    {(roastLog || []).map((entry, idx) => {
+                      const isPhase = entry.type === 'phase';
+                      const isStart = entry.type === 'start_settings';
+                      return (
+                        <li key={`${entry.t}-${idx}`} className="flex items-stretch gap-2.5 px-3 py-1.5">
+                          <span className={`w-1 shrink-0 rounded-full ${isPhase || isStart ? "bg-amber-500" : "bg-zinc-700"}`} />
+                          <div className="flex flex-1 items-center justify-between gap-2">
+                            <span className={`font-mono text-xs ${isPhase ? "font-bold text-amber-300" : "text-amber-300/70"}`}>
                               {formatTime(entry.t)}
-                            </div>
-                          </div>
-                        ) : entry.type === 'start_settings' ? (
-                          <div className="flex items-center justify-between px-1">
-                            <div className="font-mono text-sm text-amber-300">
-                              {formatTime(entry.t)}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-xs text-zinc-400">
-                                Fan{" "}
-                                <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
-                                {" · "}Heat{" "}
-                                <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                                {" · "}Temp{" "}
-                                <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
-                              </div>
-                              <div className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 border border-amber-500/30">
+                            </span>
+                            {isPhase ? (
+                              <span className="text-xs font-bold uppercase tracking-wide text-amber-400">
                                 {entry.label}
-                              </div>
-                            </div>
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1.5 text-xs text-zinc-400 tabular-nums">
+                                <span>
+                                  F: <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
+                                  {" · "}H: <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
+                                  {" · "}T: <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
+                                </span>
+                                {isStart && (
+                                  <span className="rounded-md border border-amber-500/30 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                                    {entry.label}
+                                  </span>
+                                )}
+                              </span>
+                            )}
                           </div>
-                        ) : (
-                          <div className="flex items-center justify-between px-1">
-                            <div className="font-mono text-sm text-amber-300">
-                              {formatTime(entry.t)}
-                            </div>
-                            <div className="text-xs text-zinc-400">
-                              Fan{" "}
-                              <span className="font-semibold text-zinc-100">{entry.fan || "—"}</span>
-                              {" · "}Heat{" "}
-                              <span className="font-semibold text-zinc-100">{entry.heat || "—"}</span>
-                              {" · "}Temp{" "}
-                              <span className="font-semibold text-zinc-100">{toDisplayTemp(entry.temp)}</span>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
             </section>
 
-            {/* Floating Adjustment Log Button */}
+            {/* Floating Adjustment Log Button — second entry to the same pre-filled popup */}
             {isTimerRunning && (
               <button
                 type="button"
-                onClick={() => {
-                  setHeat("");
-                  setFan("");
-                  setTemp("");
-                  setAdjPopupTimestamp(elapsedSeconds);
-                  setIsAdjPopupOpen(true);
-                }}
+                onClick={() => openAdjPopup(null)}
                 className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl shadow-amber-500/20 transition active:scale-95"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -2287,8 +2164,9 @@ function App() {
           <div className="space-y-4">
             {brewStep === 0 && (
               <div className="space-y-6">
+                {/* SESSION — what you're drinking */}
                 <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
-                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Brew Setup</div>
+                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Session</div>
                   <div className="mt-4 space-y-4">
                     <label className="block">
                       <div className="text-xs font-medium text-zinc-300">Link to Roast Session</div>
@@ -2335,18 +2213,72 @@ function App() {
                         className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       />
                     </label>
+                  </div>
+                </section>
 
+                {/* PARAMETERS — how you're brewing it */}
+                <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-5 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">Parameters</div>
+                  <div className="mt-4 space-y-4">
+                    {/* Method + Grind as cockpit-style tiles (native select overlaid for the picker) */}
                     <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <div className="text-xs font-medium text-zinc-300">Brew Method</div>
+                      <label className="relative block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Method</div>
+                        <div className="mt-1 truncate text-sm font-bold text-zinc-100">{brewMethod}</div>
                         <select
                           value={brewMethod}
                           onChange={(e) => setBrewMethod(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          aria-label="Brew Method"
                         >
                           {BREW_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </label>
+                      <label className="relative block rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-3 py-3 text-center transition focus-within:border-amber-500/60 focus-within:ring-2 focus-within:ring-amber-500/20">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Grind</div>
+                        <div className="mt-1 truncate text-sm font-bold text-zinc-100">{brewGrindSize}</div>
+                        <select
+                          value={brewGrindSize}
+                          onChange={(e) => setBrewGrindSize(e.target.value)}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          aria-label="Grind Size"
+                        >
+                          {GRIND_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </label>
+                    </div>
+
+                    {/* Ratio — one-tap quick-select chips */}
+                    <div>
+                      <div className="text-xs font-medium text-zinc-300">Ratio</div>
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                        {RATIO_CHIPS.map(r => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setBrewRatio(r)}
+                            className={`rounded-2xl border py-3 text-sm font-bold transition active:scale-95 ${
+                              brewRatio === r
+                                ? "border-amber-500 bg-amber-500/20 text-amber-400"
+                                : "border-zinc-800 bg-zinc-950/40 text-zinc-400"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                      {brewRatio === "Custom" && (
+                        <input
+                          type="text"
+                          placeholder="e.g. 1:15.5"
+                          value={customRatio}
+                          onChange={(e) => setCustomRatio(e.target.value)}
+                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        />
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
                       <label className="block">
                         <div className="text-xs font-medium text-zinc-300">Device Name</div>
                         <input
@@ -2357,95 +2289,17 @@ function App() {
                           className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                         />
                       </label>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
                       <label className="block">
-                        <div className="text-xs font-medium text-zinc-300">Ratio</div>
-                        <select
-                          value={brewRatio}
-                          onChange={(e) => setBrewRatio(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                        >
-                          {WATER_RATIOS.map(r => <option key={r} value={r}>{r}</option>)}
-                        </select>
-                        {brewRatio === "Custom" && (
-                          <input
-                            type="text"
-                            placeholder="e.g. 1:15.5"
-                            value={customRatio}
-                            onChange={(e) => setCustomRatio(e.target.value)}
-                            className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                          />
-                        )}
-                      </label>
-                      <label className="block">
-                        <div className="text-xs font-medium text-zinc-300">Grind Size</div>
-                        <select
-                          value={brewGrindSize}
-                          onChange={(e) => setBrewGrindSize(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                        >
-                          {GRIND_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <div className="text-xs font-medium text-zinc-300">Water Temp (°F)</div>
+                        <input
+                          value={brewTemp}
+                          onChange={(e) => setBrewTemp(e.target.value)}
+                          type="number"
+                          placeholder="205"
+                          className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        />
                       </label>
                     </div>
-
-                    <label className="block">
-                      <div className="text-xs font-medium text-zinc-300">Water Temp (°F)</div>
-                      <input
-                        value={brewTemp}
-                        onChange={(e) => setBrewTemp(e.target.value)}
-                        type="number"
-                        placeholder="205"
-                        className="mt-2 w-full rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                      />
-                    </label>
-
-                    <div className="text-xs font-medium text-zinc-300">Photo</div>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/heic"
-                      capture="environment"
-                      id="brewPhotoInput"
-                      className="hidden"
-                      onChange={handleBrewPhotoSelect}
-                    />
-                    {brewPhotoError && (
-                      <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-medium text-red-300">
-                        {brewPhotoError}
-                      </div>
-                    )}
-                    {!brewPhotoDataUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => document.getElementById('brewPhotoInput').click()}
-                        className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-800 bg-zinc-950/20 py-8 text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-400"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-                        <span className="text-xs font-medium">Tap to add photo</span>
-                      </button>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="relative rounded-3xl overflow-hidden border border-zinc-800">
-                          <img src={brewPhotoDataUrl} alt="Brew" className="w-full h-48 object-cover" />
-                          <button
-                            type="button"
-                            onClick={() => { setBrewPhoto(null); setBrewPhotoError(""); }}
-                            className="absolute top-2 right-2 rounded-full bg-zinc-950/60 p-2 text-white hover:bg-zinc-950 transition"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => { setBrewPhoto(null); setBrewPhotoError(""); }}
-                          className="text-red-400 text-xs font-bold"
-                        >
-                          REMOVE PHOTO
-                        </button>
-                      </div>
-                    )}
 
                     <button
                       onClick={() => setBrewStep(1)}
@@ -2720,10 +2574,10 @@ function App() {
                   <p className="text-lg font-medium leading-relaxed text-zinc-100">"Here are the flavor notes you identified."</p>
                 </div>
 
-                <section className="rounded-3xl border border-zinc-800/60 bg-white p-8 shadow-xl text-zinc-950">
-                  <div className="flex flex-col items-center text-center">
-                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 mb-1">Single Origin Roast</div>
-                    <h3 className="text-2xl font-black uppercase tracking-tight mb-0.5">{brewBeanName}</h3>
+                {/* One combined dark "bag label" card — dashed amber rules evoke a printed label */}
+                <BagLabelCard className="bg-zinc-900/40">
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Single Origin Roast</div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{brewBeanName || "Unnamed Bean"}</h3>
                     {(() => {
                       if (brewLinkedRoastId) {
                         const roasts = (() => {
@@ -2734,65 +2588,62 @@ function App() {
                           }
                         })();
                         const roast = roasts.find(r => String(r.id) === brewLinkedRoastId);
-                        if (roast) return <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-6">{roast.targetLevel}</div>;
+                        if (roast) return <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{roast.targetLevel}</div>;
                       }
-                      return <div className="mb-6" />;
+                      return null;
                     })()}
-                    
-                    <div className="w-12 h-[2px] bg-amber-500 mb-6" />
-                    
+                    <div className="mt-2 text-sm font-bold tracking-wide text-zinc-300">
+                      {[brewDevice || brewMethod, brewRatio === "Custom" ? customRatio : brewRatio, brewTemp ? `${brewTemp}°F` : ""]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </div>
+
+                    <div className="w-12 h-[2px] bg-amber-500 my-5" />
+
                     <div className="space-y-2">
-                      <div className="text-lg font-bold text-amber-600 tracking-tight leading-relaxed italic">
+                      <div className="text-lg font-bold text-amber-400 tracking-tight leading-relaxed italic">
                         {selectedDescriptors?.join(' · ')}
                       </div>
-                      <div className="text-sm font-medium text-zinc-600">
+                      <div className="text-sm font-medium text-zinc-400">
                         Acidity: {["Delicate", "Mild", "Balanced", "Bright", "Sharp"][acidityRating-1]} <span className="mx-2">·</span> Body: {["Watery", "Delicate", "Medium", "Round", "Syrupy"][bodyRating-1]}
                       </div>
                     </div>
-                  </div>
-                </section>
 
-                <div className="space-y-6">
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Overall Rating</div>
-                    <div className="mt-4 flex gap-2">
-                      {[1, 2, 3, 4, 5].map(star => (
-                        <button key={star} onClick={() => setBrewRating(star)} className="transition active:scale-90">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill={brewRating >= star ? "#f59e0b" : "none"} stroke={brewRating >= star ? "#f59e0b" : "#3f3f46"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                          </svg>
-                        </button>
-                      ))}
+                    <div className="mt-6">
+                      <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Overall Rating</div>
+                      <div className="mt-3 flex justify-center">
+                        <StarRatingInput value={brewRating} onChange={setBrewRating} />
+                      </div>
                     </div>
-                  </div>
 
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Brew again?</div>
-                    <div className="mt-4 grid grid-cols-3 gap-2">
-                      {['Yes', 'No', 'Maybe'].map(opt => (
-                        <button
-                          key={opt}
-                          onClick={() => setBrewAgain(opt)}
-                          className={`rounded-2xl border py-3 text-sm font-bold transition ${
-                            brewAgain === opt ? "border-amber-500 bg-amber-500/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
+                    <div className="mt-5 w-full">
+                      <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Brew again?</div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {['Yes', 'No', 'Maybe'].map(opt => (
+                          <button
+                            key={opt}
+                            onClick={() => setBrewAgain(opt)}
+                            className={`rounded-2xl border py-3 text-sm font-bold transition ${
+                              brewAgain === opt ? "border-amber-500 bg-amber-500/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                            }`}
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                </BagLabelCard>
 
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Free Notes</div>
-                    <textarea
-                      value={brewNotes}
-                      onChange={(e) => setBrewNotes(e.target.value)}
-                      placeholder="Any additional thoughts on this cup?"
-                      className="mt-4 min-h-[120px] w-full rounded-3xl border border-zinc-800 bg-zinc-950/40 p-5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                    />
-                  </div>
-                </div>
+                {/* Free-text notes stay a separate labeled field below the label card */}
+                <label className="block">
+                  <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Free Notes</div>
+                  <textarea
+                    value={brewNotes}
+                    onChange={(e) => setBrewNotes(e.target.value)}
+                    placeholder="Any additional thoughts on this cup?"
+                    className="mt-4 min-h-[120px] w-full rounded-3xl border border-zinc-800 bg-zinc-950/40 p-5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </label>
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
@@ -2848,7 +2699,7 @@ function App() {
               !selectedRoast ? (
                 <div className="space-y-3">
                   {(() => {
-                    let savedRoasts = (() => {
+                    const allRoasts = (() => {
                       try {
                         const stored = localStorage.getItem("roasts");
                         const parsed = JSON.parse(stored || "[]");
@@ -2858,14 +2709,33 @@ function App() {
                         return [];
                       }
                     })();
-                    if (historySearch) {
-                      savedRoasts = (savedRoasts || []).filter(r => r.beanName?.toLowerCase().includes(historySearch.toLowerCase()));
+                    const savedRoasts = historySearch
+                      ? (allRoasts || []).filter(r => r.beanName?.toLowerCase().includes(historySearch.toLowerCase()))
+                      : allRoasts;
+
+                    // Distinct empty states: nothing logged yet vs. no search results.
+                    if (!allRoasts || allRoasts.length === 0) {
+                      return (
+                        <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
+                          <div className="text-sm font-semibold text-zinc-300">No roasts yet</div>
+                          <div className="mt-1 text-xs text-zinc-500">
+                            Your roast history will build here as you log sessions.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("Roast")}
+                            className="mt-4 rounded-2xl bg-amber-500 px-5 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 active:scale-95"
+                          >
+                            START YOUR FIRST ROAST
+                          </button>
+                        </div>
+                      );
                     }
-                    if (!savedRoasts || savedRoasts.length === 0) {
+                    if (savedRoasts.length === 0) {
                       return (
                         <div className="rounded-3xl border border-zinc-800/60 bg-zinc-900/10 p-8 text-center">
                           <div className="text-zinc-500 text-sm">
-                            No roast history found matching your search.
+                            No roasts match “{historySearch}”.
                           </div>
                         </div>
                       );
@@ -2876,30 +2746,36 @@ function App() {
                         key={roast.id}
                         type="button"
                         onClick={() => setSelectedRoast(roast)}
-                        className="group relative flex w-full items-center justify-between rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 transition hover:bg-zinc-800/50 active:scale-[0.98]"
+                        className="group flex w-full items-stretch gap-3 rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-4 text-left transition hover:bg-zinc-800/50 active:scale-[0.98]"
                       >
-                        <div className="flex items-center gap-4">
-                          <RoastSparkline 
-                            data={(roast.roastLog || [])
-                              .filter(e => (e.type === 'adjustment' || e.type === 'start_settings') && e.temp)
-                              .map(e => ({ temp: Number(e.temp) }))
-                            } 
-                          />
-                          <div className="text-left">
-                            <div className="text-xs font-bold uppercase tracking-widest text-zinc-500 group-hover:text-zinc-400 transition">
-                              {roast.date}
+                        {/* Semantic roast-level accent bar (light tan → dark roast) */}
+                        <span
+                          className="w-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: roastLevelColor(roast.targetLevel) }}
+                        />
+                        {/* Name truncates to one line — the full name lives in the detail view */}
+                        <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-[15px] font-bold tracking-tight text-zinc-100 transition group-hover:text-amber-400">
+                              {shortBeanName(roast.beanName)}
                             </div>
-                            <div className="mt-0.5 text-lg font-bold tracking-tight text-zinc-100 group-hover:text-amber-400 transition">
-                              {roast.beanName}
+                            <div className="mt-1 font-mono text-[11px] tabular-nums text-zinc-500">
+                              {(roast.date || "").split(",")[0]}
                             </div>
                           </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-mono text-sm font-semibold text-amber-400">
-                            {roast.duration}
-                          </div>
-                          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
-                            {roast.targetLevel?.split(" ")[0]}
+                          <div className="shrink-0 text-right">
+                            <div className="font-mono text-sm font-semibold tabular-nums text-amber-400">
+                              {roast.duration}
+                            </div>
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5">
+                              <span
+                                className="h-2 w-2 rounded-full"
+                                style={{ backgroundColor: roastLevelColor(roast.targetLevel) }}
+                              />
+                              <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                                {roast.targetLevel?.split(" ")[0]}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </button>
@@ -3243,7 +3119,7 @@ function App() {
                   <div className="pt-4">
                     <button
                       type="button"
-                      onClick={() => handleDeleteRoast(selectedRoast.id)}
+                      onClick={() => setConfirmDelete({ type: "roast", id: selectedRoast.id })}
                       className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
                     >
                       DELETE ROAST
@@ -3282,17 +3158,13 @@ function App() {
                         onClick={() => setSelectedTastingNote(tasting)}
                         className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
                       >
-                        <div className="flex justify-between items-start mb-1">
-                          <div className="text-base font-bold text-white">{tasting.beanName || "Unknown Bean"}</div>
-                          <div className="flex gap-0.5">
-                            {[1, 2, 3, 4, 5].map(star => (
-                              <svg key={star} xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={tasting.rating >= star ? "#f59e0b" : "none"} stroke={tasting.rating >= star ? "#f59e0b" : "#3f3f46"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                              </svg>
-                            ))}
+                        <div className="mb-1 flex items-start justify-between gap-3">
+                          <div className="min-w-0 truncate text-[15px] font-bold text-white">{shortBeanName(tasting.beanName) || "Unknown Bean"}</div>
+                          <div className="shrink-0 pt-0.5">
+                            <StarRow rating={tasting.rating} size={12} />
                           </div>
                         </div>
-                        <div className="text-[11px] text-zinc-400 mb-3">{tasting.date} · {tasting.method}</div>
+                        <div className="mb-3 font-mono text-[11px] tabular-nums text-zinc-400">{(tasting.date || "").split(",")[0]} · {tasting.method}</div>
                         
                         <div className="flex flex-wrap gap-1.5 mb-3">
                           {tasting.descriptors?.slice(0, 3).map((d, i) => (
@@ -3323,15 +3195,6 @@ function App() {
                   </button>
 
                   <section className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-sm">
-                    {selectedTastingPhotoDataUrl && (
-                      <div className="mb-6 rounded-3xl overflow-hidden border border-zinc-800/50 shadow-lg">
-                        <img 
-                          src={selectedTastingPhotoDataUrl} 
-                          alt="Brew" 
-                          className="w-full h-48 object-cover"
-                        />
-                      </div>
-                    )}
                     <div className="text-xs font-medium uppercase tracking-wider text-zinc-400">{selectedTastingNote.date}</div>
                     <h2 className="mt-2 text-3xl font-bold text-zinc-50 leading-tight">{selectedTastingNote.beanName || "Unknown Bean"}</h2>
                     <div className="mt-1 text-sm font-medium text-amber-500/80">{selectedTastingNote.method} · {selectedTastingNote.device}</div>
@@ -3352,12 +3215,8 @@ function App() {
                         </div>
                         <div>
                           <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Rating</div>
-                          <div className="flex gap-0.5 mt-0.5">
-                            {[1, 2, 3, 4, 5].map(star => (
-                              <svg key={star} xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill={selectedTastingNote.rating >= star ? "#f59e0b" : "none"} stroke={selectedTastingNote.rating >= star ? "#f59e0b" : "#3f3f46"} strokeWidth="2">
-                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                              </svg>
-                            ))}
+                          <div className="mt-0.5">
+                            <StarRow rating={selectedTastingNote.rating} size={14} />
                           </div>
                         </div>
                       </div>
@@ -3400,16 +3259,14 @@ function App() {
                         ))}
                       </div>
 
-                      <section className="rounded-3xl border border-zinc-800/60 bg-white p-8 shadow-xl text-zinc-950">
-                        <div className="flex flex-col items-center text-center">
-                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 mb-1">Tasting Summary</div>
-                          <h3 className="text-xl font-black uppercase tracking-tight mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
+                      <BagLabelCard className="bg-zinc-950/40">
+                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Tasting Summary</div>
+                          <h3 className="text-xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
                           <div className="w-10 h-[2px] bg-amber-500 my-4" />
-                          <div className="text-base font-bold text-amber-600 tracking-tight italic leading-relaxed">
+                          <div className="text-base font-bold text-amber-400 tracking-tight italic leading-relaxed">
                             {selectedTastingNote.descriptors?.slice(0, 5).join(' · ')}
                           </div>
-                        </div>
-                      </section>
+                      </BagLabelCard>
 
                       {selectedTastingNote.notes && (
                         <div className="rounded-2xl bg-zinc-950/40 p-5 border border-zinc-800/40">
@@ -3423,7 +3280,7 @@ function App() {
                   <div className="pt-4">
                     <button
                       type="button"
-                      onClick={() => handleDeleteTasting(selectedTastingNote.id)}
+                      onClick={() => setConfirmDelete({ type: "tasting", id: selectedTastingNote.id })}
                       className="w-full rounded-2xl border border-red-900/30 bg-red-900/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-900/20 active:bg-red-900/30"
                     >
                       DELETE TASTING
@@ -3500,7 +3357,7 @@ function App() {
                       const manualData = (manualBeans || []).find(b => b.name === name);
                       
                       // Calculate average rating
-                      const ratings = (beanTastings || []).map(t => t.rating).filter(r => r > 0);
+                      const ratings = (beanTastings || []).map(t => Number(t.rating)).filter(r => r > 0);
                       const avgRating = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : null;
                       
                       // Find most recent activity date
@@ -3517,25 +3374,39 @@ function App() {
                             setSelectedBean({ name, ...manualData });
                             setBeansView("beanDetail");
                           }}
-                          className="w-full rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-5 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
+                          className="flex w-full items-center gap-4 rounded-3xl border border-zinc-800/60 bg-zinc-900/20 p-4 text-left transition hover:bg-zinc-900/35 active:scale-[0.98]"
                         >
-                          <div className="flex justify-between items-start mb-1">
-                            <div className="text-base font-bold text-white">{name}</div>
-                            {avgRating && (
-                              <div className="flex items-center gap-1 text-amber-500">
-                                <span className="text-xs font-bold">{avgRating}</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                                </svg>
-                              </div>
-                            )}
+                          {/* Monogram avatar — beans have no photo field, this is the honest anchor */}
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-950/60 text-lg font-black text-amber-400 ring-2 ring-amber-500/40">
+                            {name.charAt(0).toUpperCase()}
                           </div>
-                          <div className="flex justify-between items-center mt-1">
-                            <div className="text-[11px] text-zinc-400">
-                              {beanRoasts.length} roasts · {beanTastings.length} tastings
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-base font-bold text-white">{name}</div>
+                                {manualData?.origin && (
+                                  <div className="truncate text-[11px] text-zinc-400">{manualData.origin}</div>
+                                )}
+                              </div>
+                              {avgRating && (
+                                <div className="flex shrink-0 items-center gap-1 text-amber-500">
+                                  <span className="text-xs font-bold tabular-nums">{avgRating}</span>
+                                  <Star size={12} fill={1} />
+                                </div>
+                              )}
                             </div>
-                            <div className="text-[10px] text-zinc-500 uppercase tracking-wider">
-                              Last: {recentDate}
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <div className="flex gap-1.5">
+                                <span className="rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5 text-[10px] font-bold text-zinc-400">
+                                  {beanRoasts.length} roasts
+                                </span>
+                                <span className="rounded-full border border-zinc-800 bg-zinc-950/40 px-2 py-0.5 text-[10px] font-bold text-zinc-400">
+                                  {beanTastings.length} tastings
+                                </span>
+                              </div>
+                              <div className="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500">
+                                Last: {recentDate}
+                              </div>
                             </div>
                           </div>
                         </button>
@@ -3851,15 +3722,7 @@ function App() {
                               <div className="text-sm font-bold text-zinc-100">{t.date}</div>
                               <div className="text-[11px] text-zinc-500">{t.method}</div>
                             </div>
-                            {t.rating > 0 && (
-                              <div className="flex gap-0.5">
-                                {[1, 2, 3, 4, 5].map(star => (
-                                  <svg key={star} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill={t.rating >= star ? "#f59e0b" : "none"} stroke={t.rating >= star ? "#f59e0b" : "#3f3f46"} strokeWidth="2">
-                                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                                  </svg>
-                                ))}
-                              </div>
-                            )}
+                            {t.rating > 0 && <StarRow rating={t.rating} size={10} />}
                           </div>
                           <div className="flex flex-wrap gap-1">
                             {t.descriptors?.slice(0, 3).map((d, i) => (
@@ -3974,12 +3837,8 @@ function App() {
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-1">Rating</div>
-                        <div className="flex gap-0.5 mt-0.5">
-                          {[1, 2, 3, 4, 5].map(star => (
-                            <svg key={star} xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill={selectedTastingNote.rating >= star ? "#f59e0b" : "none"} stroke={selectedTastingNote.rating >= star ? "#f59e0b" : "#3f3f46"} strokeWidth="2">
-                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                            </svg>
-                          ))}
+                        <div className="mt-0.5">
+                          <StarRow rating={selectedTastingNote.rating} size={14} />
                         </div>
                       </div>
                     </div>
@@ -4022,16 +3881,14 @@ function App() {
                       ))}
                     </div>
 
-                    <section className="rounded-3xl border border-zinc-800/60 bg-white p-8 shadow-xl text-zinc-950">
-                      <div className="flex flex-col items-center text-center">
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 mb-1">Tasting Summary</div>
-                        <h3 className="text-xl font-black uppercase tracking-tight mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
+                    <BagLabelCard className="bg-zinc-950/40">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Tasting Summary</div>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-zinc-50 mb-0.5">{selectedTastingNote.beanName || "Unknown Bean"}</h3>
                         <div className="w-10 h-[2px] bg-amber-500 my-4" />
-                        <div className="text-base font-bold text-amber-600 tracking-tight italic leading-relaxed">
+                        <div className="text-base font-bold text-amber-400 tracking-tight italic leading-relaxed">
                           {(selectedTastingNote.descriptors || [])?.slice(0, 5).join(' · ')}
                         </div>
-                      </div>
-                    </section>
+                    </BagLabelCard>
 
                     {selectedTastingNote.notes && (
                       <div className="rounded-2xl bg-zinc-950/40 p-5 border border-zinc-800/40">
@@ -4290,7 +4147,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-amber-400">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-zinc-400">v1.1.0</div>
+              <div className="mt-1 text-sm font-mono text-zinc-400">v1.2.0</div>
               <div className="mt-3 text-sm text-zinc-300">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-zinc-800/60" />
@@ -4305,6 +4162,42 @@ function App() {
             </div>
             <div className="my-5 border-t border-zinc-800/60" />
             <div className="text-center text-sm text-zinc-400">Built for home roasters, by a home roaster. ☕</div>
+          </div>
+        </div>
+      )}
+
+      {/* Styled delete confirmation — same pattern as the in-progress-roast discard modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/90 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-zinc-800/60 bg-zinc-900 p-6 shadow-2xl text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-900/20 text-red-500">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">
+              {confirmDelete.type === "roast" ? "Delete this roast?" : "Delete this tasting?"}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-6">This cannot be undone.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmDelete.type === "roast") {
+                    handleDeleteRoast(confirmDelete.id);
+                  } else {
+                    handleDeleteTasting(confirmDelete.id);
+                  }
+                  setConfirmDelete(null);
+                }}
+                className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+              >
+                DELETE
+              </button>
+            </div>
           </div>
         </div>
       )}
