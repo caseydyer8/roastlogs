@@ -10,7 +10,19 @@ Pages at https://caseydyer8.github.io/roastlogs/.
   `F: · H: · T:`.
 - **Heat and Fan are discrete 1–9 dials** — chart lines for them MUST use
   `type="stepAfter"`, never smoothed. Temp uses `type="monotone"`.
-- UI is **dark-only** (zinc-950 background, amber-500 accent). No light mode.
+- UI supports **dark (default) and light themes** via a semantic color-token
+  system: CSS custom properties in `src/theme.css` (dark in `:root`, light
+  under `[data-theme="light"]`), mapped to Tailwind classes in
+  `tailwind.config.js` (`bg-primary`, `bg-surface`, `bg-card`, `text-ink`,
+  `text-ink-muted`, `border-border`, `bg-accent`/`text-accent-text`,
+  `bg-error`/`text-error-text`, `bg-success`/`text-success-text`,
+  `chart-ror`/`chart-heat`/`chart-fan`/`chart-temp`). New UI should use these
+  semantic classes, not raw `zinc-*`/`amber-*` Tailwind colors — raw color
+  classes don't respond to the theme toggle. `RoastCurveChart.jsx` and the
+  `Star`/nav-icon SVGs pass colors as `rgb(var(--token))` strings (SVG
+  presentation attributes don't resolve bare `var()`, but do resolve a
+  properly-wrapped `rgb()` function). The theme toggle lives in Settings and
+  persists to `localStorage.roastlogs_theme`.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.

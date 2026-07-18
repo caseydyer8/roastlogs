@@ -35,25 +35,25 @@ export default function LoginScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-50 flex items-center justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
+    <div className="min-h-screen bg-primary text-ink flex items-center justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center text-center mb-8">
           <div className="text-5xl mb-3" aria-hidden="true">
             ☕
           </div>
-          <h1 className="text-3xl font-black tracking-tight text-zinc-50">
+          <h1 className="text-3xl font-black tracking-tight text-ink">
             RoastLogs
           </h1>
-          <p className="mt-1 text-sm text-zinc-400 font-medium">
+          <p className="mt-1 text-sm text-ink-muted font-medium">
             Fresh Roast SR540 Roast Logger
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="rounded-3xl border border-zinc-800/60 bg-zinc-900/30 p-6 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]"
+          className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]"
         >
-          <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 mb-2">
+          <label className="block text-xs font-medium uppercase tracking-wider text-ink-muted mb-2">
             Email
           </label>
           <input
@@ -66,10 +66,10 @@ export default function LoginScreen() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full min-h-[44px] rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-full min-h-[44px] rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-base text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
           />
 
-          <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 mb-2 mt-4">
+          <label className="block text-xs font-medium uppercase tracking-wider text-ink-muted mb-2 mt-4">
             Password
           </label>
           <input
@@ -78,19 +78,19 @@ export default function LoginScreen() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
-            className="w-full min-h-[44px] rounded-2xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-full min-h-[44px] rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-base text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
           />
 
           <button
             type="submit"
             disabled={submitting}
-            className="mt-6 w-full min-h-[44px] inline-flex items-center justify-center rounded-2xl bg-amber-500 px-4 py-3 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-amber-500/90 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="mt-6 w-full min-h-[44px] inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-3 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {submitting ? "Signing in..." : "Sign In"}
           </button>
 
           {error && (
-            <p className="mt-4 text-center text-sm font-medium text-red-400">
+            <p className="mt-4 text-center text-sm font-medium text-error-text">
               {error}
             </p>
           )}

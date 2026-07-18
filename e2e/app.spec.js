@@ -111,3 +111,54 @@ test("history: roast detail renders the split roast-story chart", async ({ page 
 
   await expect(page).toHaveScreenshot("history-chart.png", { fullPage: true });
 });
+
+test.describe("light mode", () => {
+  test.beforeEach(async ({ page }) => {
+    // Base beforeEach already seeded roasts/tastingNotes and loaded dark mode;
+    // flip the theme and reload so App.js's data-theme effect applies before
+    // any of these tests interact with the page.
+    await page.evaluate(() => window.localStorage.setItem("roastlogs_theme", "light"));
+    await page.reload();
+    await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("roast tab renders in light mode", async ({ page }) => {
+    await expect(page).toHaveScreenshot("roast-tab-light.png", { fullPage: true });
+  });
+
+  test("brew: bag-label summary renders in light mode", async ({ page }) => {
+    await page.getByRole("button", { name: "Brew" }).click();
+    await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Brew Bean");
+    await page.getByText("START TASTING").click();
+    await page.getByText("NEXT").click();
+    await page.getByText("Chocolatey").click();
+    await page.getByText("NEXT").click();
+    await page.getByText("Dark Chocolate", { exact: true }).click();
+    await page.getByText("NEXT").click();
+
+    await expect(page.getByText("SINGLE ORIGIN ROAST")).toBeVisible();
+    await page.getByLabel("3.5 stars").click();
+
+    await expect(page).toHaveScreenshot("brew-summary-light.png", { fullPage: true });
+  });
+
+  test("history tastings: list renders in light mode", async ({ page }) => {
+    await page.getByRole("button", { name: "History" }).click();
+    await page.getByText("TASTINGS").click();
+
+    await expect(page.getByText("E2E Ethiopia Test").first()).toBeVisible();
+    await expect(page.getByText("Dark Chocolate").first()).toBeVisible();
+
+    await expect(page).toHaveScreenshot("tastings-list-light.png", { fullPage: true });
+  });
+
+  test("history: roast detail chart renders in light mode", async ({ page }) => {
+    await page.getByRole("button", { name: "History" }).click();
+    await page.getByText("E2E Ethiopia Test").first().click();
+
+    await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
+    await expect(page.getByText("FC", { exact: true }).first()).toBeVisible();
+
+    await expect(page).toHaveScreenshot("history-chart-light.png", { fullPage: true });
+  });
+});
