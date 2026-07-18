@@ -7,3 +7,7 @@ build/
 # Playwright
 test-results/
 playwright-report/
+
+# Local-only files (audit 2026-07-17): per-machine Claude permissions + macOS metadata
+.claude/settings.local.json
+.DS_Store
