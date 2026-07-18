@@ -7,6 +7,28 @@ import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
 const TABS = ["Roast", "History", "Brew", "Beans"];
 
+const EMPTY_BEAN_FORM = {
+  name: "",
+  baggedName: "",
+  origin: "",
+  region: "",
+  producer: "",
+  variety: "",
+  process: "",
+  masl: "",
+  sourcedFrom: "",
+  purchaseDate: "",
+  purchaseWeight: "",
+  tastingTargets: ""
+};
+
+// toISOString() reports UTC, which drifts a day off local date near midnight
+// in negative-UTC-offset zones — build the date string from local getters instead.
+function todayLocalDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function CoffeeIcon({ active, sizeClass = "h-6 w-6" }) {
   const fillColor = active ? "rgb(var(--accent-text))" : "rgb(var(--text-muted))"; // theme-aware: darker amber on light, muted gray/brown inactive
   const creaseColor = active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"; // theme-aware highlight tone
@@ -893,15 +915,23 @@ function App() {
   };
   
   // Beans tab state
-  const [beansView, setBeansView] = React.useState("list"); // 'list', 'addBean', 'beanDetail', 'roastDetail', 'tastingDetail'
+  const [beansView, setBeansView] = React.useState("list"); // 'list', 'addBean', 'editBean', 'beanDetail', 'roastDetail', 'tastingDetail'
   const [selectedBean, setSelectedBean] = React.useState(null);
-  const [newBean, setNewBean] = React.useState({
-    name: "",
-    origin: "",
-    farm: "",
-    purchaseDate: "",
-    purchaseWeight: ""
-  });
+  const [newBean, setNewBean] = React.useState({ ...EMPTY_BEAN_FORM });
+  const [isAdjustingWeight, setIsAdjustingWeight] = React.useState(false);
+  const [weightAdjustmentForm, setWeightAdjustmentForm] = React.useState({ date: "", delta: "", reason: "" });
+
+  // Writes updatedFields onto selectedBean, persists to the "beans" array by id (promoting
+  // a virtual/derived bean to a real saved record if it has no id yet), and refreshes selectedBean.
+  const persistBeanUpdate = (updatedFields) => {
+    const existing = readLocalJSON("beans");
+    const savedBean = { ...selectedBean, ...updatedFields, id: (selectedBean && selectedBean.id) || Date.now() };
+    const idx = existing.findIndex(b => b.id === savedBean.id);
+    const updatedBeans = idx === -1 ? [...existing, savedBean] : existing.map(b => b.id === savedBean.id ? savedBean : b);
+    localStorage.setItem("beans", JSON.stringify(updatedBeans));
+    setSelectedBean(savedBean);
+    return savedBean;
+  };
 
   const [brewRating, setBrewRating] = React.useState(0);
   const [brewAgain, setBrewAgain] = React.useState(null); // 'Yes', 'No', 'Maybe'
@@ -1552,7 +1582,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.2.2",
+        appVersion: "1.3.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -3220,7 +3250,10 @@ function App() {
                   <h1 className="text-3xl font-black tracking-tight text-ink">RoastLogs</h1>
                   <div className="flex gap-2">        
                     <button
-                      onClick={() => setBeansView("addBean")}
+                      onClick={() => {
+                        setNewBean({ ...EMPTY_BEAN_FORM });
+                        setBeansView("addBean");
+                      }}
                       className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
                     >
                       ADD BEAN
@@ -3291,6 +3324,7 @@ function App() {
                         <button
                           key={name}
                           onClick={() => {
+                            setIsAdjustingWeight(false);
                             setSelectedBean({ name, ...manualData });
                             setBeansView("beanDetail");
                           }}
@@ -3337,119 +3371,269 @@ function App() {
               </div>
             )}
 
-            {beansView === "addBean" && (
+            {(beansView === "addBean" || beansView === "editBean") && (() => {
+              const isEditMode = beansView === "editBean";
+              const fieldClass = "mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20";
+              const sectionLabelClass = "text-[10px] font-black uppercase tracking-[0.15em] text-ink-muted mb-3";
+              return (
               <div className="space-y-6">
                 <button
-                  onClick={() => setBeansView("list")}
+                  onClick={() => setBeansView(isEditMode ? "beanDetail" : "list")}
                   className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                  BACK TO BEANS
+                  {isEditMode ? "BACK TO BEAN" : "BACK TO BEANS"}
                 </button>
-                
+
                 <header>
-                  <h2 className="text-2xl font-bold text-ink">Add New Bean</h2>
+                  <h2 className="text-2xl font-bold text-ink">{isEditMode ? "Edit Bean" : "Add New Bean"}</h2>
                 </header>
 
-                <div className="space-y-4 rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
-                  <label className="block">
-                    <div className="text-xs font-medium text-ink">Bean Name (Required)</div>
-                    <input
-                      type="text"
-                      value={newBean.name}
-                      onChange={(e) => setNewBean({ ...newBean, name: e.target.value })}
-                      placeholder="e.g., Ethiopia Yirgacheffe"
-                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                    />
-                  </label>
+                <div className="space-y-6 rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-sm">
+                  <div className="space-y-4">
+                    <label className="block">
+                      <div className="text-xs font-medium text-ink">Bean Name (Required)</div>
+                      <input
+                        type="text"
+                        value={newBean.name}
+                        onChange={(e) => setNewBean({ ...newBean, name: e.target.value })}
+                        placeholder="e.g., Ethiopia Yirgacheffe"
+                        disabled={isEditMode}
+                        className={`${fieldClass} disabled:opacity-60`}
+                      />
+                      {isEditMode && (
+                        <div className="mt-1 text-[11px] text-ink-muted">Name can't be changed here — it's how this bean is linked to its roast and tasting history.</div>
+                      )}
+                    </label>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <label className="block">
-                      <div className="text-xs font-medium text-ink">Origin/Country</div>
-                      <input
-                        type="text"
-                        value={newBean.origin}
-                        onChange={(e) => setNewBean({ ...newBean, origin: e.target.value })}
-                        placeholder="e.g., Ethiopia"
-                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                      />
-                    </label>
-                    <label className="block">
-                      <div className="text-xs font-medium text-ink">Farm/Producer</div>
-                      <input
-                        type="text"
-                        value={newBean.farm}
-                        onChange={(e) => setNewBean({ ...newBean, farm: e.target.value })}
-                        placeholder="Optional"
-                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                      />
-                    </label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <label className="block">
+                        <div className="text-xs font-medium text-ink">Country of Origin</div>
+                        <input
+                          type="text"
+                          value={newBean.origin}
+                          onChange={(e) => setNewBean({ ...newBean, origin: e.target.value })}
+                          placeholder="e.g., Ethiopia"
+                          className={fieldClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="text-xs font-medium text-ink">Producer</div>
+                        <input
+                          type="text"
+                          value={newBean.producer}
+                          onChange={(e) => setNewBean({ ...newBean, producer: e.target.value })}
+                          placeholder="Optional"
+                          className={fieldClass}
+                        />
+                      </label>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <label className="block">
-                      <div className="text-xs font-medium text-ink">Purchase Date</div>
-                      <input
-                        type="date"
-                        value={newBean.purchaseDate}
-                        onChange={(e) => setNewBean({ ...newBean, purchaseDate: e.target.value })}
-                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                      />
-                    </label>
-                    <label className="block">
-                      <div className="text-xs font-medium text-ink">Purchase Weight (g)</div>
-                      <input
-                        type="number"
-                        value={newBean.purchaseWeight}
-                        onChange={(e) => setNewBean({ ...newBean, purchaseWeight: e.target.value })}
-                        placeholder="e.g., 1000"
-                        className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                      />
-                    </label>
+                  <div>
+                    <div className={sectionLabelClass}>Origin Details</div>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Region</div>
+                          <input
+                            type="text"
+                            value={newBean.region}
+                            onChange={(e) => setNewBean({ ...newBean, region: e.target.value })}
+                            placeholder="e.g., Yirgacheffe"
+                            className={fieldClass}
+                          />
+                        </label>
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Variety</div>
+                          <input
+                            type="text"
+                            value={newBean.variety}
+                            onChange={(e) => setNewBean({ ...newBean, variety: e.target.value })}
+                            placeholder="e.g., Heirloom"
+                            className={fieldClass}
+                          />
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Process</div>
+                          <input
+                            type="text"
+                            value={newBean.process}
+                            onChange={(e) => setNewBean({ ...newBean, process: e.target.value })}
+                            placeholder="e.g., Washed"
+                            className={fieldClass}
+                          />
+                        </label>
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Altitude (MASL)</div>
+                          <input
+                            type="number"
+                            value={newBean.masl}
+                            onChange={(e) => setNewBean({ ...newBean, masl: e.target.value })}
+                            placeholder="e.g., 1900"
+                            className={fieldClass}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className={sectionLabelClass}>Purchase</div>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Purchase Date</div>
+                          <input
+                            type="date"
+                            value={newBean.purchaseDate}
+                            onChange={(e) => setNewBean({ ...newBean, purchaseDate: e.target.value })}
+                            className={fieldClass}
+                          />
+                        </label>
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Purchase Weight (g)</div>
+                          <input
+                            type="number"
+                            value={newBean.purchaseWeight}
+                            onChange={(e) => setNewBean({ ...newBean, purchaseWeight: e.target.value })}
+                            placeholder="e.g., 1000"
+                            className={fieldClass}
+                          />
+                        </label>
+                      </div>
+                      <label className="block">
+                        <div className="text-xs font-medium text-ink">Sourced From</div>
+                        <input
+                          type="text"
+                          value={newBean.sourcedFrom}
+                          onChange={(e) => setNewBean({ ...newBean, sourcedFrom: e.target.value })}
+                          placeholder="e.g., Sweet Maria's"
+                          className={fieldClass}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className={sectionLabelClass}>Notes</div>
+                    <div className="space-y-4">
+                      <label className="block">
+                        <div className="text-xs font-medium text-ink">Original Bagged Name</div>
+                        <input
+                          type="text"
+                          value={newBean.baggedName}
+                          onChange={(e) => setNewBean({ ...newBean, baggedName: e.target.value })}
+                          placeholder="Name printed on the bag, if different"
+                          className={fieldClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="text-xs font-medium text-ink">Tasting Notes / Flavor Targets</div>
+                        <textarea
+                          value={newBean.tastingTargets}
+                          onChange={(e) => setNewBean({ ...newBean, tastingTargets: e.target.value })}
+                          placeholder="Flavor notes listed on the bag, or what you're aiming for"
+                          rows={3}
+                          className={`${fieldClass} resize-none`}
+                        />
+                      </label>
+                    </div>
                   </div>
 
                   <button
                     disabled={!newBean.name}
                     onClick={() => {
-                      const existing = (() => {
-                        try {
-                          return JSON.parse(localStorage.getItem("beans") || "[]");
-                        } catch (e) {
-                          console.warn("Failed to parse beans", e);
-                          return [];
-                        }
-                      })();
-                      localStorage.setItem("beans", JSON.stringify([...existing, { ...newBean, id: Date.now() }]));
-                      setNewBean({ name: "", origin: "", farm: "", purchaseDate: "", purchaseWeight: "" });
-                      setBeansView("list");
+                      if (isEditMode) {
+                        // farm: undefined drops the legacy pre-rename key so producer becomes authoritative;
+                        // otherwise a cleared Producer field would keep falling back to the stale farm value.
+                        persistBeanUpdate({ ...newBean, name: selectedBean.name, farm: undefined });
+                        setNewBean({ ...EMPTY_BEAN_FORM });
+                        setBeansView("beanDetail");
+                      } else {
+                        const existing = readLocalJSON("beans");
+                        const savedBean = { ...newBean, id: Date.now(), weightAdjustments: [] };
+                        localStorage.setItem("beans", JSON.stringify([...existing, savedBean]));
+                        setNewBean({ ...EMPTY_BEAN_FORM });
+                        setBeansView("list");
+                      }
                     }}
                     className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
-                    SAVE BEAN
+                    {isEditMode ? "SAVE CHANGES" : "SAVE BEAN"}
                   </button>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {beansView === "beanDetail" && selectedBean && (
               <div className="space-y-6 pb-20">
-                <button
-                  onClick={() => setBeansView("list")}
-                  className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                  BACK TO BEANS
-                </button>
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => {
+                      setIsAdjustingWeight(false);
+                      setBeansView("list");
+                    }}
+                    className="flex items-center gap-2 text-xs font-semibold text-ink-muted hover:text-ink transition"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    BACK TO BEANS
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNewBean({
+                        name: selectedBean.name || "",
+                        baggedName: selectedBean.baggedName || "",
+                        origin: selectedBean.origin || "",
+                        region: selectedBean.region || "",
+                        producer: selectedBean.producer ?? selectedBean.farm ?? "",
+                        variety: selectedBean.variety || "",
+                        process: selectedBean.process || "",
+                        masl: selectedBean.masl || "",
+                        sourcedFrom: selectedBean.sourcedFrom || "",
+                        purchaseDate: selectedBean.purchaseDate || "",
+                        purchaseWeight: selectedBean.purchaseWeight || "",
+                        tastingTargets: selectedBean.tastingTargets || ""
+                      });
+                      setBeansView("editBean");
+                    }}
+                    className="rounded-xl border border-border/60 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-ink-muted hover:text-ink hover:border-border transition"
+                  >
+                    EDIT
+                  </button>
+                </div>
 
                 <header>
                   <h2 className="text-3xl font-bold text-ink leading-tight">{selectedBean.name}</h2>
-                  {selectedBean.origin && (
+                  {selectedBean.baggedName && selectedBean.baggedName !== selectedBean.name && (
+                    <div className="mt-1 text-sm italic text-ink-muted">"{selectedBean.baggedName}"</div>
+                  )}
+                  {(selectedBean.origin || selectedBean.producer || selectedBean.farm) && (
                     <div className="mt-2 flex flex-wrap gap-4 text-sm text-ink-muted">
-                      <span>{selectedBean.origin}</span>
-                      {selectedBean.farm && <span>· {selectedBean.farm}</span>}
+                      {selectedBean.origin && <span>{selectedBean.origin}</span>}
+                      {(selectedBean.producer || selectedBean.farm) && <span>· {selectedBean.producer || selectedBean.farm}</span>}
+                    </div>
+                  )}
+                  {(selectedBean.region || selectedBean.variety || selectedBean.process || selectedBean.masl || selectedBean.sourcedFrom) && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {selectedBean.region && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.region}</span>}
+                      {selectedBean.variety && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.variety}</span>}
+                      {selectedBean.process && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.process}</span>}
+                      {selectedBean.masl && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.masl} MASL</span>}
+                      {selectedBean.sourcedFrom && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">via {selectedBean.sourcedFrom}</span>}
                     </div>
                   )}
                 </header>
+
+                {selectedBean.tastingTargets && (
+                  <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
+                    <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-2">Tasting Notes / Flavor Targets</div>
+                    <p className="text-sm text-ink whitespace-pre-wrap">{selectedBean.tastingTargets}</p>
+                  </section>
+                )}
 
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
@@ -3514,13 +3698,15 @@ function App() {
                   />
                 )}
 
-                {selectedBean.purchaseDate && (
-                  <section className="rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
+                {(selectedBean.purchaseDate || selectedBean.purchaseWeight) && (
+                  <section className="space-y-4 rounded-3xl border border-border/60 bg-surface/30 p-5 shadow-sm">
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Purchased</div>
-                        <div className="text-sm font-bold text-ink">{selectedBean.purchaseDate}</div>
-                      </div>
+                      {selectedBean.purchaseDate && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Purchased</div>
+                          <div className="text-sm font-bold text-ink">{selectedBean.purchaseDate}</div>
+                        </div>
+                      )}
                       <div>
                         <div className="text-[10px] uppercase tracking-widest font-black text-ink-muted mb-1">Stock</div>
                         <div className="text-sm font-bold text-ink">
@@ -3535,12 +3721,106 @@ function App() {
                             const usedWeight = (roasts || [])
                               .filter(r => r.beanName === selectedBean.name)
                               .reduce((sum, r) => sum + (Number(r.greenWeight) || 0), 0);
-                            const remaining = (Number(selectedBean.purchaseWeight) || 0) - usedWeight;
+                            const adjustmentTotal = (selectedBean.weightAdjustments || [])
+                              .reduce((sum, a) => sum + (Number(a.delta) || 0), 0);
+                            const remaining = (Number(selectedBean.purchaseWeight) || 0) - usedWeight + adjustmentTotal;
                             return `${remaining}g / ${selectedBean.purchaseWeight}g`;
                           })()}
                         </div>
                       </div>
                     </div>
+
+                    <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.15em] text-ink-muted">Weight Adjustments</h4>
+                      <button
+                        onClick={() => {
+                          setWeightAdjustmentForm({ date: todayLocalDateString(), delta: "", reason: "" });
+                          setIsAdjustingWeight(true);
+                        }}
+                        className="rounded-lg bg-accent/10 border border-accent/20 px-2 py-1 text-[10px] font-bold text-accent-text hover:bg-accent/20 transition"
+                      >
+                        + ADJUST WEIGHT
+                      </button>
+                    </div>
+
+                    {isAdjustingWeight && (() => {
+                      const adjustFieldClass = "mt-1 w-full rounded-xl border border-border/70 bg-primary/40 px-3 py-2 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20";
+                      return (
+                      <div className="space-y-3 rounded-2xl border border-border/50 bg-primary/30 p-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block">
+                            <div className="text-xs font-medium text-ink">Date</div>
+                            <input
+                              type="date"
+                              value={weightAdjustmentForm.date}
+                              onChange={(e) => setWeightAdjustmentForm({ ...weightAdjustmentForm, date: e.target.value })}
+                              className={adjustFieldClass}
+                            />
+                          </label>
+                          <label className="block">
+                            <div className="text-xs font-medium text-ink">Weight Change (g)</div>
+                            <input
+                              type="number"
+                              value={weightAdjustmentForm.delta}
+                              onChange={(e) => setWeightAdjustmentForm({ ...weightAdjustmentForm, delta: e.target.value })}
+                              placeholder="e.g., -15 or 250"
+                              className={adjustFieldClass}
+                            />
+                          </label>
+                        </div>
+                        <label className="block">
+                          <div className="text-xs font-medium text-ink">Reason</div>
+                          <input
+                            type="text"
+                            value={weightAdjustmentForm.reason}
+                            onChange={(e) => setWeightAdjustmentForm({ ...weightAdjustmentForm, reason: e.target.value })}
+                            placeholder="e.g., Spilled during grind, Restocked"
+                            className={adjustFieldClass}
+                          />
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setIsAdjustingWeight(false)}
+                            className="flex-1 rounded-xl border border-border/60 py-2 text-xs font-bold text-ink-muted hover:text-ink transition"
+                          >
+                            CANCEL
+                          </button>
+                          <button
+                            disabled={!weightAdjustmentForm.delta || Number(weightAdjustmentForm.delta) === 0}
+                            onClick={() => {
+                              const entry = {
+                                id: Date.now(),
+                                date: weightAdjustmentForm.date || todayLocalDateString(),
+                                delta: Number(weightAdjustmentForm.delta) || 0,
+                                reason: weightAdjustmentForm.reason
+                              };
+                              persistBeanUpdate({ weightAdjustments: [...(selectedBean.weightAdjustments || []), entry] });
+                              setIsAdjustingWeight(false);
+                            }}
+                            className="flex-1 rounded-xl bg-accent py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                          >
+                            SAVE
+                          </button>
+                        </div>
+                      </div>
+                      );
+                    })()}
+
+                    {(selectedBean.weightAdjustments || []).length > 0 && (
+                      <div className="space-y-2">
+                        {[...selectedBean.weightAdjustments].reverse().map(a => (
+                          <div key={a.id} className="flex items-center justify-between rounded-xl border border-border/40 bg-surface/15 px-3 py-2">
+                            <div>
+                              <div className="text-xs font-bold text-ink">{a.reason || "Adjustment"}</div>
+                              <div className="text-[10px] text-ink-muted">{a.date}</div>
+                            </div>
+                            <div className={`text-sm font-mono font-bold ${a.delta >= 0 ? "text-success-text" : "text-error-text"}`}>
+                              {a.delta >= 0 ? "+" : ""}{a.delta}g
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 )}
 
@@ -4067,7 +4347,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v1.2.2</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v1.3.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />

@@ -82,10 +82,6 @@ RoastLogs is a mobile-first Progressive Web App (PWA) built specifically for hom
 ### 3.4 Roast Level Reference System ✅ Complete
 - All 8 roast levels with SR540 + extension tube guidance
 
-### 3.5 AI Bean Recommendation Engine ✅ Complete
-- Claude API integration for bean roasting recommendations
-- Web search enabled for current origin data
-
 ### 3.6 Green Bean Inventory Tracker ✅ Complete
 - Add/edit/delete beans
 - Auto-deduct weight on roast
@@ -249,21 +245,15 @@ All planned v1 features and bugs shipped. Live at https://caseydyer8.github.io/r
 ### Branch Structure
 - main: production (live PWA)
 - develop: integration branch
-- feature/forge-v2: Forge AI profile builder (deferred to v2)
+- feature/forge-v2: Forge AI profile builder (declined, not planned — see "Forge Tab — Declined" below)
 - session/20260529-bugs-and-features: today's session (merged)
 
 ---
 
-## v2 — Forge Tab (Deferred Feature)
+## Forge Tab — Declined
 
-The Forge tab (AI roast profile generator powered by Claude API) was fully built and tested but deferred to v2. All code is preserved on branch feature/forge-v2.
-
-### To Resume Forge Development
-1. Check out feature/forge-v2: git checkout feature/forge-v2
-2. Pull the Forge master prompt from the Forge section of the RoastLogs project in Claude — it contains the complete Forge spec, system prompt, API integration, and all architectural decisions
-3. Feed that prompt to Claude Code on the feature/forge-v2 branch
-
-### Outstanding Decisions Before Forge Ships
-- Move REACT_APP_CLAUDE_API_KEY to serverless proxy (Netlify/Vercel) before public sharing
-- Resolve localStorage vs Supabase roast_profiles storage (currently saves to localStorage global_profiles)
-- Add AI badge back to profile lists when Forge is re-enabled
+Forge (an AI roast-profile generator powered by the Claude API) was evaluated
+and explicitly declined (2026-07-18): using AI to build a roast profile
+removed the enjoyment of manually roasting. Not planned. The prototype code
+remains on branch `feature/forge-v2` if ever revisited, but there is no
+current intent to merge or resume it.
