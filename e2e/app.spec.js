@@ -87,6 +87,70 @@ test("beans: monogram rows with count pills and half-star average", async ({ pag
   await expect(page).toHaveScreenshot("beans-list.png", { fullPage: true });
 });
 
+test("beans: add bean captures full provenance and shows on detail", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Provenance Bean");
+  await page.getByPlaceholder("e.g., Ethiopia", { exact: true }).fill("Kenya");
+  await page.getByPlaceholder("Optional").fill("Kiambu Cooperative");
+  await page.getByPlaceholder("e.g., Yirgacheffe").fill("Nyeri");
+  await page.getByPlaceholder("e.g., Heirloom").fill("SL28");
+  await page.getByPlaceholder("e.g., Washed").fill("Washed");
+  await page.getByPlaceholder("e.g., 1900").fill("1750");
+  await page.getByPlaceholder("e.g., Sweet Maria's").fill("Sweet Maria's");
+  await page.getByPlaceholder("Name printed on the bag, if different").fill("Sunrise Reserve");
+  await page.getByPlaceholder("Flavor notes listed on the bag, or what you're aiming for").fill("Blackcurrant, brown sugar");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Provenance Bean").click();
+  await expect(page.getByText('"Sunrise Reserve"')).toBeVisible();
+  await expect(page.getByText("Kiambu Cooperative")).toBeVisible();
+  await expect(page.getByText("Nyeri", { exact: true })).toBeVisible();
+  await expect(page.getByText("SL28", { exact: true })).toBeVisible();
+  await expect(page.getByText("1750 MASL")).toBeVisible();
+  await expect(page.getByText("via Sweet Maria's")).toBeVisible();
+  await expect(page.getByText("Blackcurrant, brown sugar")).toBeVisible();
+});
+
+test("beans: edit bean persists changes and keeps name read-only", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Edit Bean");
+  await page.getByPlaceholder("e.g., Ethiopia", { exact: true }).fill("Colombia");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Edit Bean").click();
+  await page.getByRole("button", { name: "EDIT" }).click();
+
+  await expect(page.getByPlaceholder("e.g., Ethiopia Yirgacheffe")).toBeDisabled();
+  await page.getByPlaceholder("Optional").fill("Finca La Esperanza");
+  await page.getByText("SAVE CHANGES").click();
+
+  await expect(page.getByText("Finca La Esperanza")).toBeVisible();
+});
+
+test("beans: weight adjustment updates remaining stock and log", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Weight Bean");
+  await page.getByPlaceholder("e.g., 1000").fill("500");
+  await page.locator('input[type="date"]').fill("2026-07-18");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Weight Bean").click();
+  await expect(page.getByText("500g / 500g")).toBeVisible();
+
+  await page.getByText("+ ADJUST WEIGHT").click();
+  await page.getByPlaceholder("e.g., -15 or 250").fill("-20");
+  await page.getByPlaceholder("e.g., Spilled during grind, Restocked").fill("Spilled");
+  await page.getByText("SAVE", { exact: true }).click();
+
+  await expect(page.getByText("480g / 500g")).toBeVisible();
+  await expect(page.getByText("Spilled")).toBeVisible();
+  await expect(page.getByText("-20g")).toBeVisible();
+});
+
 test("history tastings: half-star rating renders in list", async ({ page }) => {
   await page.getByRole("button", { name: "History" }).click();
   await page.getByText("TASTINGS").click();

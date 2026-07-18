@@ -1,3 +1,9 @@
+> **Archived 2026-07-18** — Forge (the AI roast-profile builder this document
+> was written to feed) was evaluated and declined. Kept only because it
+> contains real hand-tuned Fresh Roast SR540 calibration data — first-crack
+> timing, DTR, batch-size rules — that's useful as a manual-roasting
+> reference independent of the AI feature it was originally written for.
+
 [FORGE_roasting_science.md](https://github.com/user-attachments/files/27006090/FORGE_roasting_science.md)
 
 # FORGE Roasting Science — Master Reference Document
