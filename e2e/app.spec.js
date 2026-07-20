@@ -151,6 +151,70 @@ test("beans: weight adjustment updates remaining stock and log", async ({ page }
   await expect(page.getByText("-20g")).toBeVisible();
 });
 
+test("beans: delete bean with no history removes it immediately", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Delete No History");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Delete No History").click();
+  await page.getByText("DELETE BEAN").click();
+  await expect(page.getByText("This cannot be undone.")).toBeVisible();
+  await page.getByRole("button", { name: "DELETE", exact: true }).click();
+
+  await expect(page.getByText("E2E Delete No History")).toHaveCount(0);
+});
+
+test("beans: delete bean with history offers keep-or-remove choice; bean-only preserves history", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Ethiopia Test");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByText("DELETE BEAN").click();
+  await expect(page.getByText("This bean has 1 roast + 1 tasting. Choose whether to keep or remove them too.")).toBeVisible();
+  await page.getByText("KEEP HISTORY, DELETE BEAN ONLY").click();
+
+  // Bean reappears as a bare entry since the roast/tasting still reference its name
+  await expect(page.getByText("E2E Ethiopia Test").first()).toBeVisible();
+  await expect(page.getByText("1 roasts")).toBeVisible();
+});
+
+test("beans: cascade delete removes bean and all linked history", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("E2E Ethiopia Test");
+  await page.getByText("SAVE BEAN").click();
+
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByText("DELETE BEAN").click();
+  await page.getByText("DELETE BEAN + 1 ROAST + 1 TASTING").click();
+
+  await expect(page.getByText("E2E Ethiopia Test")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "History" }).click();
+  await expect(page.getByText("E2E Ethiopia Test")).toHaveCount(0);
+});
+
+test("beans: profile notes save, display, and are editable", async ({ page }) => {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByText("+ NEW PROFILE").click();
+
+  await page.getByPlaceholder("Profile Name (e.g. Light Roast)").fill("E2E Test Profile");
+  await page.getByPlaceholder("Notes (optional) — tasting result, what you'd change next time...").fill("First note");
+  await page.getByText("SAVE PROFILE").click();
+
+  await expect(page.getByText("First note")).toBeVisible();
+
+  await page.getByText("NOTES", { exact: true }).click();
+  await page.getByPlaceholder("Notes — tasting result, what you'd change next time...").fill("Updated note");
+  await page.getByText("SAVE", { exact: true }).click();
+
+  await expect(page.getByText("Updated note")).toBeVisible();
+});
+
 test("history tastings: half-star rating renders in list", async ({ page }) => {
   await page.getByRole("button", { name: "History" }).click();
   await page.getByText("TASTINGS").click();
