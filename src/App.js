@@ -559,7 +559,7 @@ function TimeChip({ totalSeconds, onChange }) {
 }
 
 function ProfileBuilder({ bean, onSave, onCancel }) {
-  const [profile, setProfile] = React.useState({ name: "", steps: [], isDefault: false });
+  const [profile, setProfile] = React.useState({ name: "", steps: [], isDefault: false, notes: "" });
 
   const formatMMSS = (totalSeconds) => {
     const s = Math.max(0, Math.floor(totalSeconds));
@@ -601,11 +601,18 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
         <h3 className="text-xl font-bold text-ink mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
-        <input 
+        <input
           placeholder="Profile Name (e.g. Light Roast)"
           value={profile.name}
           onChange={e => setProfile({...profile, name: e.target.value})}
           className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink"
+        />
+        <textarea
+          placeholder="Notes (optional) — tasting result, what you'd change next time..."
+          value={profile.notes}
+          onChange={e => setProfile({...profile, notes: e.target.value})}
+          rows={3}
+          className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink resize-none"
         />
         <div className="space-y-3 mb-6">
           {profile.steps.length > 0 && (
@@ -776,6 +783,8 @@ function App() {
   const [nextProfileStep, setNextProfileStep] = React.useState(null);
   const [profileBuilder, setProfileBuilder] = React.useState({ name: "", steps: [], isDefault: false });
   const [isProfileBuilderOpen, setIsProfileBuilderOpen] = React.useState(false);
+  const [editingProfileNotesId, setEditingProfileNotesId] = React.useState(null);
+  const [profileNotesDraft, setProfileNotesDraft] = React.useState("");
   const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = React.useState({ show: false, profileName: '', isDeleteAll: false });
 
@@ -1433,6 +1442,42 @@ function App() {
     setSelectedTastingNote(null);
   };
 
+  // cascade: also deletes every roast/tasting linked to this bean by name, not just the bean profile.
+  const handleDeleteBean = (bean, cascade) => {
+    if (prefillBean && prefillBean.name === bean.name) {
+      setPrefillBean(null);
+    }
+
+    if (cascade) {
+      const existingRoasts = readLocalJSON("roasts");
+      const matchedRoasts = existingRoasts.filter(r => r.beanName === bean.name);
+      localStorage.setItem("roasts", JSON.stringify(existingRoasts.filter(r => r.beanName !== bean.name)));
+
+      const existingBrews = readLocalJSON("tastingNotes");
+      const matchedBrews = existingBrews.filter(t => t.beanName === bean.name);
+      localStorage.setItem("tastingNotes", JSON.stringify(existingBrews.filter(t => t.beanName !== bean.name)));
+
+      setSyncStatus('syncing');
+      Promise.all([
+        ...matchedRoasts.map(r => deleteRoastFromSupabase(r.id)),
+        ...matchedBrews.map(t => deleteBrewFromSupabase(t.id)),
+        ...(bean.id ? [deleteBeanFromSupabase(bean.id)] : []),
+      ]).then(() => setSyncStatus('success')).catch(() => setSyncStatus('error'));
+    } else if (bean.id) {
+      setSyncStatus('syncing');
+      deleteBeanFromSupabase(bean.id).then(() => setSyncStatus('success')).catch(() => setSyncStatus('error'));
+    }
+
+    if (bean.id) {
+      const existingBeans = readLocalJSON("beans");
+      localStorage.setItem("beans", JSON.stringify(existingBeans.filter(b => b.id !== bean.id)));
+    }
+
+    setSelectedBean(null);
+    setBeansView("list");
+    setConfirmDelete(null);
+  };
+
   const BREW_METHODS = ["Pour Over", "Espresso Machine", "Chemex", "French Press", "AeroPress", "Moka Pot", "Hario V60"];
   const GRIND_SIZES = ["Extra Fine", "Fine", "Medium-Fine", "Medium", "Medium-Coarse", "Coarse"];
   // One-tap ratio chips (older saved brews may hold other ratio strings — display-only, still fine)
@@ -1611,7 +1656,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.4.0",
+        appVersion: "1.5.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -3685,36 +3730,78 @@ function App() {
                       <p className="text-sm text-ink-muted italic py-2">No profiles saved for this bean.</p>
                     ) : (
                       (profiles || []).filter(p => p.beanName === selectedBean.name).map(p => (
-                        <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-surface/30 border border-border/60">
-                          <div>
-                            <div className="font-bold text-ink flex items-center gap-2">
-                              {p.name}
-                              {p.isDefault && <span className="text-[8px] bg-accent text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
+                        <div key={p.id} className="p-4 rounded-2xl bg-surface/30 border border-border/60">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-bold text-ink flex items-center gap-2">
+                                {p.name}
+                                {p.isDefault && <span className="text-[8px] bg-accent text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
+                              </div>
+                              <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
                             </div>
-                            <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
-                          </div>
-                          <div className="flex gap-2">
-                            {!p.isDefault && (
-                              <button 
+                            <div className="flex gap-2">
+                              {!p.isDefault && (
+                                <button
+                                  onClick={() => {
+                                    const updated = profiles.map(profile => ({
+                                      ...profile,
+                                      isDefault: profile.id === p.id && profile.beanName === selectedBean.name
+                                    }));
+                                    setProfiles(updated);
+                                  }}
+                                  className="text-[10px] font-bold text-ink-muted hover:text-accent-text transition"
+                                >
+                                  SET DEFAULT
+                                </button>
+                              )}
+                              <button
                                 onClick={() => {
-                                  const updated = profiles.map(profile => ({
-                                    ...profile,
-                                    isDefault: profile.id === p.id && profile.beanName === selectedBean.name
-                                  }));
-                                  setProfiles(updated);
+                                  setEditingProfileNotesId(p.id);
+                                  setProfileNotesDraft(p.notes || "");
                                 }}
                                 className="text-[10px] font-bold text-ink-muted hover:text-accent-text transition"
                               >
-                                SET DEFAULT
+                                NOTES
                               </button>
-                            )}
-                            <button 
-                              onClick={() => setProfiles((profiles || []).filter(profile => profile.id !== p.id))}
-                              className="text-[10px] font-bold text-error-text/60 hover:text-error-text transition"
-                            >
-                              DELETE
-                            </button>
+                              <button
+                                onClick={() => setProfiles((profiles || []).filter(profile => profile.id !== p.id))}
+                                className="text-[10px] font-bold text-error-text/60 hover:text-error-text transition"
+                              >
+                                DELETE
+                              </button>
+                            </div>
                           </div>
+                          {p.notes && editingProfileNotesId !== p.id && (
+                            <div className="mt-2 text-[11px] text-ink-muted italic truncate">{p.notes}</div>
+                          )}
+                          {editingProfileNotesId === p.id && (
+                            <div className="mt-3 space-y-2">
+                              <textarea
+                                value={profileNotesDraft}
+                                onChange={(e) => setProfileNotesDraft(e.target.value)}
+                                placeholder="Notes — tasting result, what you'd change next time..."
+                                rows={3}
+                                className="w-full rounded-xl bg-primary/40 border border-border px-3 py-2 text-sm text-ink resize-none"
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setEditingProfileNotesId(null)}
+                                  className="flex-1 py-2 rounded-xl border border-border/60 text-ink font-bold text-xs hover:bg-card transition"
+                                >
+                                  CANCEL
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setProfiles(profiles.map(pr => pr.id === p.id ? { ...pr, notes: profileNotesDraft } : pr));
+                                    setEditingProfileNotesId(null);
+                                  }}
+                                  className="flex-1 py-2 rounded-xl bg-accent text-zinc-950 font-bold text-xs hover:bg-amber-400 transition"
+                                >
+                                  SAVE
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
@@ -3971,6 +4058,14 @@ function App() {
                     })()}
                   </div>
                 </section>
+
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete({ type: "bean", id: selectedBean.id, name: selectedBean.name })}
+                  className="w-full rounded-2xl border border-error/30 bg-error/10 py-3 text-sm font-semibold text-error-text transition hover:bg-error/20 active:bg-error/30"
+                >
+                  DELETE BEAN
+                </button>
               </div>
             )}
 
@@ -4382,7 +4477,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v1.4.0</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v1.5.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
@@ -4409,30 +4504,83 @@ function App() {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
             </div>
             <h3 className="text-xl font-bold text-ink mb-2">
-              {confirmDelete.type === "roast" ? "Delete this roast?" : "Delete this tasting?"}
+              {confirmDelete.type === "roast" ? "Delete this roast?" : confirmDelete.type === "tasting" ? "Delete this tasting?" : "Delete this bean?"}
             </h3>
-            <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition"
-              >
-                CANCEL
-              </button>
-              <button
-                onClick={() => {
-                  if (confirmDelete.type === "roast") {
-                    handleDeleteRoast(confirmDelete.id);
-                  } else {
-                    handleDeleteTasting(confirmDelete.id);
-                  }
-                  setConfirmDelete(null);
-                }}
-                className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
-              >
-                DELETE
-              </button>
-            </div>
+            {confirmDelete.type === "bean" ? (() => {
+              const linkedRoasts = readLocalJSON("roasts").filter(r => r.beanName === confirmDelete.name);
+              const linkedTastings = readLocalJSON("tastingNotes").filter(t => t.beanName === confirmDelete.name);
+              const hasHistory = linkedRoasts.length + linkedTastings.length > 0;
+              const hasSavedRecord = !!confirmDelete.id;
+              const historyLabel = `${linkedRoasts.length} roast${linkedRoasts.length === 1 ? "" : "s"} + ${linkedTastings.length} tasting${linkedTastings.length === 1 ? "" : "s"}`;
+              // History is matched by bean name, not id — a duplicate name means cascade delete
+              // here would also remove the other same-named bean's roasts/tastings.
+              const hasDuplicateBeanName = readLocalJSON("beans").filter(b => b.name === confirmDelete.name).length > 1;
+              const duplicateWarning = hasDuplicateBeanName && (
+                <p className="text-xs text-error-text mb-3">You have more than one bean named "{confirmDelete.name}" — deleting history here removes it for all of them, since roasts/tastings are matched by name.</p>
+              );
+
+              if (!hasHistory) {
+                return (
+                  <>
+                    <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
+                    <div className="flex gap-3">
+                      <button onClick={() => setConfirmDelete(null)} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE</button>
+                    </div>
+                  </>
+                );
+              }
+
+              if (!hasSavedRecord) {
+                return (
+                  <>
+                    <p className="text-sm text-ink-muted mb-6">This will delete {historyLabel} for this bean. This cannot be undone.</p>
+                    {duplicateWarning}
+                    <div className="flex flex-col gap-2">
+                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE {historyLabel.toUpperCase()}</button>
+                      <button onClick={() => setConfirmDelete(null)} className="w-full py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
+                    </div>
+                  </>
+                );
+              }
+
+              return (
+                <>
+                  <p className="text-sm text-ink-muted mb-6">This bean has {historyLabel}. Choose whether to keep or remove them too.</p>
+                  {duplicateWarning}
+                  <div className="flex flex-col gap-2">
+                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
+                    <button onClick={() => handleDeleteBean(confirmDelete, false)} className="w-full py-3 rounded-2xl border border-border/60 text-ink font-bold hover:bg-card transition">KEEP HISTORY, DELETE BEAN ONLY</button>
+                    <button onClick={() => setConfirmDelete(null)} className="w-full py-3 text-ink-muted font-bold hover:text-ink transition">CANCEL</button>
+                  </div>
+                </>
+              );
+            })() : (
+              <>
+                <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setConfirmDelete(null)}
+                    className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirmDelete.type === "roast") {
+                        handleDeleteRoast(confirmDelete.id);
+                      } else {
+                        handleDeleteTasting(confirmDelete.id);
+                      }
+                      setConfirmDelete(null);
+                    }}
+                    className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                  >
+                    DELETE
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
