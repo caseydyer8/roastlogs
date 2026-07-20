@@ -1,6 +1,6 @@
 import RoastCurveChart from "./components/charts/RoastCurveChart";
 import React from "react";
-import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase } from "./syncService";
+import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 
@@ -902,7 +902,29 @@ function App() {
           localStorage.setItem("tastingNotes", JSON.stringify(mergedBrews));
         }
       }
-      
+
+      // Sync beans
+      const cloudBeans = await fetchBeansFromSupabase();
+
+      if (cloudBeans && Array.isArray(cloudBeans)) {
+        const localBeans = readLocalJSON("beans");
+        const mergedBeans = [...localBeans];
+        let hasNewBeanData = false;
+
+        cloudBeans.forEach(cloudBean => {
+          const localIndex = mergedBeans.findIndex(b => Number(b.id) === Number(cloudBean.id));
+          if (localIndex === -1) {
+            mergedBeans.push(cloudBean);
+            hasNewBeanData = true;
+          }
+        });
+
+        if (hasNewBeanData) {
+          mergedBeans.sort((a, b) => b.id - a.id);
+          localStorage.setItem("beans", JSON.stringify(mergedBeans));
+        }
+      }
+
       setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
     };
     performInitialSync();
@@ -930,6 +952,12 @@ function App() {
     const updatedBeans = idx === -1 ? [...existing, savedBean] : existing.map(b => b.id === savedBean.id ? savedBean : b);
     localStorage.setItem("beans", JSON.stringify(updatedBeans));
     setSelectedBean(savedBean);
+
+    setSyncStatus('syncing');
+    syncBeanToSupabase(savedBean).then(success => {
+      setSyncStatus(success ? 'success' : 'error');
+    });
+
     return savedBean;
   };
 
@@ -1519,14 +1547,15 @@ function App() {
   };
 
   const gatherExportData = async () => {
-    const [remoteRoasts, remoteBrews] = await Promise.all([
+    const [remoteRoasts, remoteBrews, remoteBeans] = await Promise.all([
       fetchRoastsFromSupabase().catch(() => []),
       fetchBrewsFromSupabase().catch(() => []),
+      fetchBeansFromSupabase().catch(() => []),
     ]);
     return {
       roasts: mergeById(readLocalJSON("roasts"), remoteRoasts),
       brews: mergeById(readLocalJSON("tastingNotes"), remoteBrews),
-      beans: readLocalJSON("beans"),
+      beans: mergeById(readLocalJSON("beans"), remoteBeans),
       roastProfiles: readLocalJSON("global_profiles"),
     };
   };
@@ -1582,7 +1611,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "1.3.0",
+        appVersion: "1.4.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -3556,6 +3585,12 @@ function App() {
                         const existing = readLocalJSON("beans");
                         const savedBean = { ...newBean, id: Date.now(), weightAdjustments: [] };
                         localStorage.setItem("beans", JSON.stringify([...existing, savedBean]));
+
+                        setSyncStatus('syncing');
+                        syncBeanToSupabase(savedBean).then(success => {
+                          setSyncStatus(success ? 'success' : 'error');
+                        });
+
                         setNewBean({ ...EMPTY_BEAN_FORM });
                         setBeansView("list");
                       }
@@ -3592,10 +3627,10 @@ function App() {
                         producer: selectedBean.producer ?? selectedBean.farm ?? "",
                         variety: selectedBean.variety || "",
                         process: selectedBean.process || "",
-                        masl: selectedBean.masl || "",
+                        masl: selectedBean.masl ?? "",
                         sourcedFrom: selectedBean.sourcedFrom || "",
                         purchaseDate: selectedBean.purchaseDate || "",
-                        purchaseWeight: selectedBean.purchaseWeight || "",
+                        purchaseWeight: selectedBean.purchaseWeight ?? "",
                         tastingTargets: selectedBean.tastingTargets || ""
                       });
                       setBeansView("editBean");
@@ -3617,12 +3652,12 @@ function App() {
                       {(selectedBean.producer || selectedBean.farm) && <span>· {selectedBean.producer || selectedBean.farm}</span>}
                     </div>
                   )}
-                  {(selectedBean.region || selectedBean.variety || selectedBean.process || selectedBean.masl || selectedBean.sourcedFrom) && (
+                  {(selectedBean.region || selectedBean.variety || selectedBean.process || selectedBean.masl != null && selectedBean.masl !== "" || selectedBean.sourcedFrom) && (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {selectedBean.region && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.region}</span>}
                       {selectedBean.variety && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.variety}</span>}
                       {selectedBean.process && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.process}</span>}
-                      {selectedBean.masl && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.masl} MASL</span>}
+                      {selectedBean.masl != null && selectedBean.masl !== "" && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">{selectedBean.masl} MASL</span>}
                       {selectedBean.sourcedFrom && <span className="rounded-full bg-surface/40 border border-border/50 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">via {selectedBean.sourcedFrom}</span>}
                     </div>
                   )}
@@ -4347,7 +4382,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v1.3.0</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v1.4.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />

@@ -183,3 +183,92 @@ export async function fetchRoastsFromSupabase() {
     return [];
   }
 }
+
+// Numeric bean fields (masl, purchaseWeight) are optional text-input state and arrive
+// as "" when unset — Postgres numeric columns reject "" (22P02), so blank out to null.
+function numOrNull(value) {
+  return value === "" || value === undefined ? null : value;
+}
+
+export async function syncBeanToSupabase(bean) {
+  console.log('syncBeanToSupabase called with id:', bean.id)
+  try {
+    // Strip photo fields before syncing (beans have none today, kept for parity)
+    const cleanBean = stripPhotoFields(bean);
+
+    const { data, error } = await supabase
+      .from('beans')
+      .upsert({
+        id: Number(cleanBean.id),
+        name: cleanBean.name,
+        bagged_name: cleanBean.baggedName,
+        origin: cleanBean.origin,
+        region: cleanBean.region,
+        producer: cleanBean.producer,
+        variety: cleanBean.variety,
+        process: cleanBean.process,
+        masl: numOrNull(cleanBean.masl),
+        sourced_from: cleanBean.sourcedFrom,
+        tasting_targets: cleanBean.tastingTargets,
+        purchase_date: cleanBean.purchaseDate,
+        purchase_weight: numOrNull(cleanBean.purchaseWeight),
+        weight_adjustments: cleanBean.weightAdjustments || [],
+      });
+
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.warn("Failed to sync bean to Supabase", e);
+    return false;
+  }
+}
+
+export async function deleteBeanFromSupabase(id) {
+  try {
+    const { error } = await supabase
+      .from('beans')
+      .delete()
+      .eq('id', Number(id));
+
+    if (error) throw error;
+  } catch (e) {
+    console.warn("Failed to delete bean from Supabase", e);
+  }
+}
+
+export async function fetchBeansFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('beans')
+      .select('*');
+
+    if (error) {
+      console.warn("Supabase error fetching beans:", error);
+      return [];
+    }
+
+    if (!data || !Array.isArray(data)) {
+      return [];
+    }
+
+    return data.map(b => ({
+      id: b.id,
+      name: b.name,
+      baggedName: b.bagged_name,
+      origin: b.origin,
+      region: b.region,
+      producer: b.producer,
+      variety: b.variety,
+      process: b.process,
+      masl: b.masl,
+      sourcedFrom: b.sourced_from,
+      tastingTargets: b.tasting_targets,
+      purchaseDate: b.purchase_date,
+      purchaseWeight: b.purchase_weight,
+      weightAdjustments: b.weight_adjustments || [],
+    }));
+  } catch (e) {
+    console.warn("Failed to fetch beans from Supabase", e);
+    return [];
+  }
+}

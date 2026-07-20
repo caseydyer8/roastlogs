@@ -76,5 +76,6 @@ right moment — don't wait to be asked.** Casey wants these prompts.
 | Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
 
 Standing reminders to surface when relevant (not every session):
-- Beans, profiles, and photos do NOT sync to Supabase (roasts and tasting
-  notes do) — flag durability when those features are touched.
+- Profiles and photos do NOT sync to Supabase (roasts, tasting notes, and
+  beans do, as of 2026-07-20) — flag durability when profiles/photos are
+  touched.

@@ -8,10 +8,15 @@
 -- policies that restrict ALL operations to authenticated users only.
 -- After running this, unauthenticated requests will be blocked.
 --
--- Tables in scope: the codebase was searched for every supabase.from('...')
--- call. The ONLY tables referenced are `roasts` and `tasting_notes`
--- (all calls live in src/syncService.js). If you add tables later,
--- duplicate the 4-policy block for each new table.
+-- Tables in scope (originally): the codebase was searched for every
+-- supabase.from('...') call. At the time this file was written, the ONLY
+-- tables referenced were `roasts` and `tasting_notes` (all calls live in
+-- src/syncService.js). If you add tables later, duplicate the 4-policy
+-- block for each new table.
+--
+-- Update 2026-07-18: a `beans` table was added with the same 4-policy
+-- pattern — see docs/2026-07-18_beans_table.sql. Tables in scope are now
+-- `roasts`, `tasting_notes`, and `beans`.
 
 -- ---------------------------------------------------------------------------
 -- Enable RLS
