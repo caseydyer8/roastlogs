@@ -18,16 +18,30 @@ function stripPhotoFields(data) {
   return cleaned;
 }
 
+// Resolve the signed-in user's id for owner-stamping on write. Reads the cached
+// session (no network round-trip); returns undefined if not signed in, in which
+// case the DB column default (auth.uid()) still stamps the owner server-side.
+async function currentUserId() {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id;
+  } catch (e) {
+    return undefined;
+  }
+}
+
 export async function syncRoastToSupabase(roast) {
   console.log('syncRoastToSupabase called with id:', roast.id)
   try {
     // Strip photo fields before syncing
     const cleanRoast = stripPhotoFields(roast);
+    const uid = await currentUserId();
     
     const { data, error } = await supabase
       .from('roasts')
       .upsert({
         id: Number(cleanRoast.id),
+        user_id: uid,
         date: cleanRoast.date,
         bean_name: cleanRoast.beanName,
         green_weight: cleanRoast.greenWeight,
@@ -67,11 +81,13 @@ export async function syncBrewToSupabase(brew) {
   try {
     // Strip photo fields before syncing
     const cleanBrew = stripPhotoFields(brew);
+    const uid = await currentUserId();
     
     const { data, error } = await supabase
       .from('tasting_notes')
       .upsert({
         id: Number(cleanBrew.id),
+        user_id: uid,
         date: cleanBrew.date,
         roast_id: cleanBrew.roastId,
         bean_name: cleanBrew.beanName,
@@ -195,11 +211,13 @@ export async function syncBeanToSupabase(bean) {
   try {
     // Strip photo fields before syncing (beans have none today, kept for parity)
     const cleanBean = stripPhotoFields(bean);
+    const uid = await currentUserId();
 
     const { data, error } = await supabase
       .from('beans')
       .upsert({
         id: Number(cleanBean.id),
+        user_id: uid,
         name: cleanBean.name,
         bagged_name: cleanBean.baggedName,
         origin: cleanBean.origin,
@@ -269,6 +287,79 @@ export async function fetchBeansFromSupabase() {
     }));
   } catch (e) {
     console.warn("Failed to fetch beans from Supabase", e);
+    return [];
+  }
+}
+
+// --- Roast profiles (build-your-own target curves) ---------------------------
+// Profiles were localStorage-only until the multi-user migration; they now sync
+// per-user like roasts/tasting_notes/beans. Shape: { id, name, beanName,
+// steps: [{ totalSeconds, heat, fan }], isDefault, notes }.
+
+export async function syncProfileToSupabase(profile) {
+  console.log('syncProfileToSupabase called with id:', profile.id)
+  try {
+    const cleanProfile = stripPhotoFields(profile);
+    const uid = await currentUserId();
+
+    const { data, error } = await supabase
+      .from('roast_profiles')
+      .upsert({
+        id: Number(cleanProfile.id),
+        user_id: uid,
+        name: cleanProfile.name,
+        bean_name: cleanProfile.beanName,
+        steps: cleanProfile.steps || [],
+        is_default: cleanProfile.isDefault || false,
+        notes: cleanProfile.notes,
+      });
+
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.warn("Failed to sync profile to Supabase", e);
+    return false;
+  }
+}
+
+export async function deleteProfileFromSupabase(id) {
+  try {
+    const { error } = await supabase
+      .from('roast_profiles')
+      .delete()
+      .eq('id', Number(id));
+
+    if (error) throw error;
+  } catch (e) {
+    console.warn("Failed to delete profile from Supabase", e);
+  }
+}
+
+export async function fetchProfilesFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('roast_profiles')
+      .select('*');
+
+    if (error) {
+      console.warn("Supabase error fetching profiles:", error);
+      return [];
+    }
+
+    if (!data || !Array.isArray(data)) {
+      return [];
+    }
+
+    return data.map(p => ({
+      id: p.id,
+      name: p.name,
+      beanName: p.bean_name,
+      steps: p.steps || [],
+      isDefault: p.is_default || false,
+      notes: p.notes,
+    }));
+  } catch (e) {
+    console.warn("Failed to fetch profiles from Supabase", e);
     return [];
   }
 }
