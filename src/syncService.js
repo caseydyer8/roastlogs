@@ -18,16 +18,30 @@ function stripPhotoFields(data) {
   return cleaned;
 }
 
+// Resolve the signed-in user's id for owner-stamping on write. Reads the cached
+// session (no network round-trip); returns undefined if not signed in, in which
+// case the DB column default (auth.uid()) still stamps the owner server-side.
+async function currentUserId() {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id;
+  } catch (e) {
+    return undefined;
+  }
+}
+
 export async function syncRoastToSupabase(roast) {
   console.log('syncRoastToSupabase called with id:', roast.id)
   try {
     // Strip photo fields before syncing
     const cleanRoast = stripPhotoFields(roast);
+    const uid = await currentUserId();
     
     const { data, error } = await supabase
       .from('roasts')
       .upsert({
         id: Number(cleanRoast.id),
+        user_id: uid,
         date: cleanRoast.date,
         bean_name: cleanRoast.beanName,
         green_weight: cleanRoast.greenWeight,
@@ -67,11 +81,13 @@ export async function syncBrewToSupabase(brew) {
   try {
     // Strip photo fields before syncing
     const cleanBrew = stripPhotoFields(brew);
+    const uid = await currentUserId();
     
     const { data, error } = await supabase
       .from('tasting_notes')
       .upsert({
         id: Number(cleanBrew.id),
+        user_id: uid,
         date: cleanBrew.date,
         roast_id: cleanBrew.roastId,
         bean_name: cleanBrew.beanName,
@@ -195,11 +211,13 @@ export async function syncBeanToSupabase(bean) {
   try {
     // Strip photo fields before syncing (beans have none today, kept for parity)
     const cleanBean = stripPhotoFields(bean);
+    const uid = await currentUserId();
 
     const { data, error } = await supabase
       .from('beans')
       .upsert({
         id: Number(cleanBean.id),
+        user_id: uid,
         name: cleanBean.name,
         bagged_name: cleanBean.baggedName,
         origin: cleanBean.origin,

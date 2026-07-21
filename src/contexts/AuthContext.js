@@ -3,6 +3,47 @@ import { supabase } from "../supabaseClient";
 
 const AuthContext = React.createContext(null);
 
+// Data localStorage keys that hold USER-OWNED content (not device preferences
+// like theme/units). These are the roasts/tastings/beans caches plus profiles,
+// and the in-progress ("live_*") roast session. They must never carry across
+// accounts on a shared device.
+const USER_DATA_KEYS = ["roasts", "tastingNotes", "beans", "global_profiles"];
+const DATA_OWNER_KEY = "roastlogs_data_owner";
+
+function purgeCachedUserData() {
+  try {
+    USER_DATA_KEYS.forEach((k) => window.localStorage.removeItem(k));
+    // In-progress roast session keys are all prefixed "live_".
+    for (let i = window.localStorage.length - 1; i >= 0; i--) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith("live_")) window.localStorage.removeItem(key);
+    }
+  } catch (e) {
+    // localStorage unavailable (private mode etc.) — nothing to purge.
+  }
+}
+
+// RLS scopes what the SERVER returns; this scopes the DEVICE cache. If a
+// DIFFERENT account signs in on this device, purge the previous user's cached
+// rows so they can never surface for the new user. Device preferences
+// (theme/units) are intentionally left untouched. A plain sign-out leaves the
+// cache in place — a returning same-user login keeps it; a different-user login
+// purges it — so a user's own local data survives logging out and back in.
+function enforceLocalDataOwner(userId) {
+  try {
+    if (!userId) return;
+    const prevOwner = window.localStorage.getItem(DATA_OWNER_KEY);
+    if (prevOwner && prevOwner !== userId) {
+      purgeCachedUserData();
+    }
+    if (prevOwner !== userId) {
+      window.localStorage.setItem(DATA_OWNER_KEY, userId);
+    }
+  } catch (e) {
+    // ignore storage errors
+  }
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = React.useState(null);
   const [user, setUser] = React.useState(null);
@@ -16,6 +57,7 @@ export function AuthProvider({ children }) {
       .getSession()
       .then(({ data }) => {
         if (!mounted) return;
+        enforceLocalDataOwner(data.session?.user?.id);
         setSession(data.session);
         setUser(data.session?.user ?? null);
         setLoading(false);
@@ -30,6 +72,7 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {
         if (!mounted) return;
+        enforceLocalDataOwner(newSession?.user?.id);
         setSession(newSession);
         setUser(newSession?.user ?? null);
         setLoading(false);
