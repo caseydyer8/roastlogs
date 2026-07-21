@@ -290,3 +290,76 @@ export async function fetchBeansFromSupabase() {
     return [];
   }
 }
+
+// --- Roast profiles (build-your-own target curves) ---------------------------
+// Profiles were localStorage-only until the multi-user migration; they now sync
+// per-user like roasts/tasting_notes/beans. Shape: { id, name, beanName,
+// steps: [{ totalSeconds, heat, fan }], isDefault, notes }.
+
+export async function syncProfileToSupabase(profile) {
+  console.log('syncProfileToSupabase called with id:', profile.id)
+  try {
+    const cleanProfile = stripPhotoFields(profile);
+    const uid = await currentUserId();
+
+    const { data, error } = await supabase
+      .from('roast_profiles')
+      .upsert({
+        id: Number(cleanProfile.id),
+        user_id: uid,
+        name: cleanProfile.name,
+        bean_name: cleanProfile.beanName,
+        steps: cleanProfile.steps || [],
+        is_default: cleanProfile.isDefault || false,
+        notes: cleanProfile.notes,
+      });
+
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.warn("Failed to sync profile to Supabase", e);
+    return false;
+  }
+}
+
+export async function deleteProfileFromSupabase(id) {
+  try {
+    const { error } = await supabase
+      .from('roast_profiles')
+      .delete()
+      .eq('id', Number(id));
+
+    if (error) throw error;
+  } catch (e) {
+    console.warn("Failed to delete profile from Supabase", e);
+  }
+}
+
+export async function fetchProfilesFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('roast_profiles')
+      .select('*');
+
+    if (error) {
+      console.warn("Supabase error fetching profiles:", error);
+      return [];
+    }
+
+    if (!data || !Array.isArray(data)) {
+      return [];
+    }
+
+    return data.map(p => ({
+      id: p.id,
+      name: p.name,
+      beanName: p.bean_name,
+      steps: p.steps || [],
+      isDefault: p.is_default || false,
+      notes: p.notes,
+    }));
+  } catch (e) {
+    console.warn("Failed to fetch profiles from Supabase", e);
+    return [];
+  }
+}

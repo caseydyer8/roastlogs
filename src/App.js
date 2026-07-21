@@ -1,6 +1,6 @@
 import RoastCurveChart from "./components/charts/RoastCurveChart";
 import React from "react";
-import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase } from "./syncService";
+import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase, syncProfileToSupabase, deleteProfileFromSupabase, fetchProfilesFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 
@@ -934,6 +934,34 @@ function App() {
         }
       }
 
+      // Sync profiles (roast_profiles). Mirror beans, and additionally push any
+      // pre-existing local-only profiles up once (they predate profile sync).
+      const cloudProfiles = await fetchProfilesFromSupabase();
+
+      if (cloudProfiles && Array.isArray(cloudProfiles)) {
+        const localProfiles = readLocalJSON("global_profiles");
+        const cloudProfileIds = new Set(cloudProfiles.map(p => Number(p.id)));
+        localProfiles.forEach(p => {
+          if (!cloudProfileIds.has(Number(p.id))) syncProfileToSupabase(p);
+        });
+
+        const mergedProfiles = [...localProfiles];
+        let hasNewProfileData = false;
+
+        cloudProfiles.forEach(cloudProfile => {
+          const localIndex = mergedProfiles.findIndex(p => Number(p.id) === Number(cloudProfile.id));
+          if (localIndex === -1) {
+            mergedProfiles.push(cloudProfile);
+            hasNewProfileData = true;
+          }
+        });
+
+        if (hasNewProfileData) {
+          localStorage.setItem("global_profiles", JSON.stringify(mergedProfiles));
+          setProfiles(mergedProfiles);
+        }
+      }
+
       setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
     };
     performInitialSync();
@@ -1019,8 +1047,26 @@ function App() {
     localStorage.setItem("live_roastLog", JSON.stringify(roastLog));
   }, [roastLog]);
 
+  const prevProfilesRef = React.useRef(null);
   React.useEffect(() => {
     localStorage.setItem("global_profiles", JSON.stringify(profiles));
+    // Reconcile profiles to the cloud (roast_profiles). One diff-based hook
+    // covers every mutation path — create, delete, delete-all, notes edit,
+    // set-default — so no individual call site can be missed.
+    const prev = prevProfilesRef.current;
+    prevProfilesRef.current = profiles;
+    if (prev === null) return; // initial mount; the mount-sync effect seeds the cloud
+    const prevById = new Map(prev.map((p) => [String(p.id), p]));
+    profiles.forEach((p) => {
+      const old = prevById.get(String(p.id));
+      if (!old || JSON.stringify(old) !== JSON.stringify(p)) {
+        syncProfileToSupabase(p);
+      }
+    });
+    const curIds = new Set(profiles.map((p) => String(p.id)));
+    prev.forEach((p) => {
+      if (!curIds.has(String(p.id))) deleteProfileFromSupabase(p.id);
+    });
   }, [profiles]);
 
   // IDEA-008: apply the saved theme on mount and whenever it changes.
