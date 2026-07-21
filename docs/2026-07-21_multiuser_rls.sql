@@ -66,8 +66,8 @@ grant execute on function public.is_admin(uuid) to authenticated;
 insert into public.admins (user_id)
 select id from auth.users
 where email in (
-  'osu.cdyer91@gmail.com'            -- Casey (primary)
-  -- , 'SECOND_ADMIN_EMAIL_HERE'     -- Casey (second account) — FILL IN before applying
+  'osu.cdyer91@gmail.com',           -- Casey (primary)
+  'casey.j.dyer.8@gmail.com'         -- Casey (second account)
 )
 on conflict (user_id) do nothing;
 
