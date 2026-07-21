@@ -17,11 +17,12 @@
 -- is never a moment where a logged-in admin is locked out of the live app. If
 -- any statement fails, the entire migration rolls back and the app is untouched.
 --
--- BEFORE APPLYING — verify the account list (all current accounts become admins;
--- under invite-only signup these should be exactly Casey's two accounts):
---     select id, email, created_at from auth.users order by created_at;
--- If any account there should NOT be an admin, delete it from public.admins
--- after this runs (or amend the seed in section 1).
+-- BEFORE APPLYING:
+--   1. Confirm the account list is exactly the two intended admin accounts:
+--        select id, email, created_at from auth.users order by created_at;
+--   2. Confirm public signup is DISABLED in the Supabase Auth dashboard.
+--   3. Fill in the second admin email in section 1 (the seed is an explicit
+--      allowlist — it does NOT blanket-promote every account, on purpose).
 
 -- ============================================================================
 -- 0. Admin registry + helper function
@@ -55,18 +56,33 @@ revoke all on function public.is_admin(uuid) from public;
 grant execute on function public.is_admin(uuid) to authenticated;
 
 -- ============================================================================
--- 1. Seed admins = every currently-existing account (all Casey's, invite-only).
---    (See the BEFORE-APPLYING note above.)
+-- 1. Seed admins = an EXPLICIT allowlist of Casey's two accounts.
+--    Do NOT seed "all of auth.users": if any unexpected account ever exists
+--    (e.g. someone hit the /auth/v1/signup endpoint, which is independent of the
+--    client having no signup UI), a blanket seed would silently make them an
+--    all-data admin. Allowlisting by email is immune to that and is re-run-safe.
 -- ============================================================================
 
 insert into public.admins (user_id)
 select id from auth.users
+where email in (
+  'osu.cdyer91@gmail.com'            -- Casey (primary)
+  -- , 'SECOND_ADMIN_EMAIL_HERE'     -- Casey (second account) — FILL IN before applying
+)
 on conflict (user_id) do nothing;
 
 -- ============================================================================
 -- 2. Add `user_id` to each synced table, backfill legacy rows, lock down.
 --    Legacy owner = the earliest-created account (an admin). The other admin
 --    still sees this data via the co-ownership branch of the policies below.
+--    CAUTION: user_id FK is `on delete cascade`, and ALL legacy rows are owned
+--    (single column) by this one account. Deleting that account from auth.users
+--    would cascade-delete every legacy roast/tasting/bean — the co-ownership
+--    policy does NOT protect against the FK cascade. Before ever retiring an
+--    admin account, reassign its rows first:
+--        update public.roasts        set user_id = '<keeper>' where user_id = '<leaving>';
+--        update public.tasting_notes set user_id = '<keeper>' where user_id = '<leaving>';
+--        update public.beans         set user_id = '<keeper>' where user_id = '<leaving>';
 -- ============================================================================
 
 -- roasts
@@ -98,6 +114,16 @@ update public.beans
 alter table public.beans alter column user_id set not null;
 alter table public.beans alter column user_id set default auth.uid();
 create index if not exists beans_user_id_idx on public.beans(user_id);
+
+-- ============================================================================
+-- 2b. Assert RLS is ENABLED on every synced table (idempotent). Policies are
+--     inert if RLS is off, so this migration — which IS the isolation boundary —
+--     must not assume a precondition it can enforce itself.
+-- ============================================================================
+
+alter table public.roasts        enable row level security;
+alter table public.tasting_notes enable row level security;
+alter table public.beans         enable row level security;
 
 -- ============================================================================
 -- 3. Replace the permissive USING(true) policies with owner-or-admin policies.
@@ -222,7 +248,9 @@ create policy "owner or admin can delete beans" on public.beans
 --    anon PostgREST/GraphQL schema entirely.
 -- ============================================================================
 
-revoke select on public.roasts, public.tasting_notes, public.beans from anon;
+revoke select, insert, update, delete
+  on public.roasts, public.tasting_notes, public.beans
+  from anon;
 
 -- ----------------------------------------------------------------------------
 -- DONE SEPARATELY (not SQL in this file):
