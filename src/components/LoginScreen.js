@@ -2,11 +2,14 @@ import React from "react";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function LoginScreen() {
-  const { signIn } = useAuth();
+  const { signIn, requestPasswordReset } = useAuth();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+  // "signin" | "reset" — reset asks for the email only and sends a reset link.
+  const [mode, setMode] = React.useState("signin");
+  const [resetSent, setResetSent] = React.useState(false);
   const emailRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -34,6 +37,36 @@ export default function LoginScreen() {
     }
   };
 
+  const handleReset = async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError("");
+    if (!email.trim()) {
+      setError("Enter your email address first.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await requestPasswordReset(email.trim());
+      setResetSent(true);
+    } catch (err) {
+      setError(err?.message || "Couldn't send the reset email. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const switchMode = (next) => {
+    setMode(next);
+    setError("");
+    setResetSent(false);
+  };
+
+  const inputClass =
+    "w-full min-h-[44px] rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-base text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20";
+  const labelClass =
+    "block text-xs font-medium uppercase tracking-wider text-ink-muted mb-2";
+
   return (
     <div className="min-h-screen bg-primary text-ink flex items-center justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       <div className="w-full max-w-sm">
@@ -50,12 +83,16 @@ export default function LoginScreen() {
         </div>
 
         <form
-          onSubmit={handleSubmit}
+          onSubmit={mode === "signin" ? handleSubmit : handleReset}
           className="rounded-3xl border border-border/60 bg-surface/30 p-6 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]"
         >
-          <label className="block text-xs font-medium uppercase tracking-wider text-ink-muted mb-2">
-            Email
-          </label>
+          {mode === "reset" && (
+            <p className="mb-5 text-sm text-ink-muted leading-relaxed">
+              Enter your email and we'll send you a link to set a new password.
+            </p>
+          )}
+
+          <label className={labelClass}>Email</label>
           <input
             ref={emailRef}
             type="email"
@@ -66,34 +103,58 @@ export default function LoginScreen() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full min-h-[44px] rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-base text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className={inputClass}
           />
 
-          <label className="block text-xs font-medium uppercase tracking-wider text-ink-muted mb-2 mt-4">
-            Password
-          </label>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            className="w-full min-h-[44px] rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-base text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-          />
+          {mode === "signin" && (
+            <>
+              <label className={`${labelClass} mt-4`}>Password</label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className={inputClass}
+              />
+            </>
+          )}
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (mode === "reset" && resetSent)}
             className="mt-6 w-full min-h-[44px] inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-3 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {submitting ? "Signing in..." : "Sign In"}
+            {mode === "signin"
+              ? submitting
+                ? "Signing in..."
+                : "Sign In"
+              : submitting
+              ? "Sending..."
+              : resetSent
+              ? "Email Sent"
+              : "Send Reset Link"}
           </button>
+
+          {resetSent && (
+            <p className="mt-4 text-center text-sm font-medium text-success-text">
+              Check your inbox for the reset link. It expires in one hour.
+            </p>
+          )}
 
           {error && (
             <p className="mt-4 text-center text-sm font-medium text-error-text">
               {error}
             </p>
           )}
+
+          <button
+            type="button"
+            onClick={() => switchMode(mode === "signin" ? "reset" : "signin")}
+            className="mt-5 w-full text-center text-xs font-bold uppercase tracking-wider text-ink-muted transition hover:text-accent-text"
+          >
+            {mode === "signin" ? "Forgot password?" : "Back to sign in"}
+          </button>
         </form>
       </div>
     </div>

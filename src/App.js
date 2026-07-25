@@ -842,6 +842,12 @@ function App() {
   // Old records may still carry a `photo` key — it is simply ignored; orphaned IndexedDB
   // blobs in 'roastlogs-photos' are harmless.
 
+  // Profile reconcile bookkeeping. Declared here (above the mount sync) because
+  // the initial sync seeds them — prevProfilesRef is the diff baseline, and
+  // profilesDirtyRef records whether the user has already edited profiles.
+  const prevProfilesRef = React.useRef(null);
+  const profilesDirtyRef = React.useRef(false);
+
   // Supabase sync on mount
   React.useEffect(() => {
     const performInitialSync = async () => {
@@ -849,8 +855,17 @@ function App() {
       
       // Sync roasts
       const cloudRoasts = await fetchRoastsFromSupabase();
-      
-      if (!cloudRoasts || !Array.isArray(cloudRoasts)) {
+
+      if (cloudRoasts === null) {
+        // Couldn't reach the cloud (offline, expired token). Show a sync error
+        // rather than an empty app that looks like catastrophic data loss, and
+        // leave any quarantined pre-upgrade cache in place so it stays
+        // recoverable. The next successful launch restores everything.
+        setSyncStatus('error');
+        return;
+      }
+
+      if (!Array.isArray(cloudRoasts)) {
         setSyncStatus('idle');
         return;
       }
@@ -941,9 +956,17 @@ function App() {
       if (cloudProfiles && Array.isArray(cloudProfiles)) {
         const localProfiles = readLocalJSON("global_profiles");
         const cloudProfileIds = new Set(cloudProfiles.map(p => Number(p.id)));
-        localProfiles.forEach(p => {
-          if (!cloudProfileIds.has(Number(p.id))) syncProfileToSupabase(p);
-        });
+        const pushes = localProfiles
+          .filter(p => !cloudProfileIds.has(Number(p.id)))
+          .map(p => syncProfileToSupabase(p));
+
+        // Only mark profiles as cloud-backed once every push actually succeeded.
+        // AuthContext reads this flag to decide whether purging `global_profiles`
+        // on an unknown-owner device is safe — before the upload lands, that
+        // localStorage copy is the ONLY copy in existence.
+        if (pushes.length === 0 || (await Promise.all(pushes)).every(Boolean)) {
+          try { localStorage.setItem("roastlogs_profiles_uploaded", "1"); } catch (e) {}
+        }
 
         const mergedProfiles = [...localProfiles];
         let hasNewProfileData = false;
@@ -956,10 +979,35 @@ function App() {
           }
         });
 
-        if (hasNewProfileData) {
+        // Skip the merge if the user already edited/deleted a profile while this
+        // sync was in flight — cloudProfiles is stale by then and merging it
+        // would resurrect a row the user just deleted.
+        if (hasNewProfileData && !profilesDirtyRef.current) {
           localStorage.setItem("global_profiles", JSON.stringify(mergedProfiles));
+          // Seed the reconcile baseline BEFORE setProfiles so the diff hook does
+          // not immediately write these just-downloaded rows straight back up —
+          // which would also re-stamp a co-admin's rows with this account's id.
+          prevProfilesRef.current = mergedProfiles;
           setProfiles(mergedProfiles);
         }
+      }
+
+      // Only once EVERY fetch succeeded is a quarantined pre-upgrade cache
+      // redundant — at that point Supabase holds the authoritative copy, so the
+      // local backup can go. If any fetch failed, keep it as the undo path.
+      const allFetchesOk =
+        cloudBrews !== null && cloudBeans !== null && cloudProfiles !== null;
+      if (allFetchesOk) {
+        try {
+          ["roasts", "tastingNotes", "beans", "global_profiles"].forEach(k =>
+            localStorage.removeItem(k + "__quarantine")
+          );
+        } catch (e) {}
+      }
+
+      if (!allFetchesOk) {
+        setSyncStatus('error');
+        return;
       }
 
       setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
@@ -1047,7 +1095,6 @@ function App() {
     localStorage.setItem("live_roastLog", JSON.stringify(roastLog));
   }, [roastLog]);
 
-  const prevProfilesRef = React.useRef(null);
   React.useEffect(() => {
     localStorage.setItem("global_profiles", JSON.stringify(profiles));
     // Reconcile profiles to the cloud (roast_profiles). One diff-based hook
@@ -1056,17 +1103,34 @@ function App() {
     const prev = prevProfilesRef.current;
     prevProfilesRef.current = profiles;
     if (prev === null) return; // initial mount; the mount-sync effect seeds the cloud
+
+    // From here on the user has actually changed something, so the initial
+    // sync must not merge its (now stale) snapshot back in and resurrect rows.
+    profilesDirtyRef.current = true;
+
     const prevById = new Map(prev.map((p) => [String(p.id), p]));
+    const writes = [];
     profiles.forEach((p) => {
       const old = prevById.get(String(p.id));
       if (!old || JSON.stringify(old) !== JSON.stringify(p)) {
-        syncProfileToSupabase(p);
+        writes.push(syncProfileToSupabase(p));
       }
     });
     const curIds = new Set(profiles.map((p) => String(p.id)));
     prev.forEach((p) => {
-      if (!curIds.has(String(p.id))) deleteProfileFromSupabase(p.id);
+      if (!curIds.has(String(p.id))) writes.push(deleteProfileFromSupabase(p.id));
     });
+
+    // Surface profile sync failures the same way roasts/beans/brews do. Without
+    // this a failed write is invisible and the user believes it was saved.
+    if (writes.length > 0) {
+      setSyncStatus('syncing');
+      Promise.all(writes)
+        .then((results) =>
+          setSyncStatus(results.every(Boolean) ? 'success' : 'error')
+        )
+        .catch(() => setSyncStatus('error'));
+    }
   }, [profiles]);
 
   // IDEA-008: apply the saved theme on mount and whenever it changes.
