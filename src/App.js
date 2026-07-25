@@ -850,11 +850,16 @@ function App() {
 
   // Supabase sync on mount
   React.useEffect(() => {
+    // Set when this App instance unmounts (e.g. the signed-in account changed).
+    // Every write below is gated on it so a previous user's in-flight sync can
+    // never write into the next user's session.
+    let cancelled = false;
     const performInitialSync = async () => {
       setSyncStatus('syncing');
-      
+
       // Sync roasts
       const cloudRoasts = await fetchRoastsFromSupabase();
+      if (cancelled) return;
 
       if (cloudRoasts === null) {
         // Couldn't reach the cloud (offline, expired token). Show a sync error
@@ -898,6 +903,7 @@ function App() {
       
       // Sync brews/tasting notes
       const cloudBrews = await fetchBrewsFromSupabase();
+      if (cancelled) return;
       
       if (cloudBrews && Array.isArray(cloudBrews)) {
         const localBrews = (() => {
@@ -929,6 +935,7 @@ function App() {
 
       // Sync beans
       const cloudBeans = await fetchBeansFromSupabase();
+      if (cancelled) return;
 
       if (cloudBeans && Array.isArray(cloudBeans)) {
         const localBeans = readLocalJSON("beans");
@@ -952,6 +959,7 @@ function App() {
       // Sync profiles (roast_profiles). Mirror beans, and additionally push any
       // pre-existing local-only profiles up once (they predate profile sync).
       const cloudProfiles = await fetchProfilesFromSupabase();
+      if (cancelled) return;
 
       if (cloudProfiles && Array.isArray(cloudProfiles)) {
         const localProfiles = readLocalJSON("global_profiles");
@@ -960,13 +968,8 @@ function App() {
           .filter(p => !cloudProfileIds.has(Number(p.id)))
           .map(p => syncProfileToSupabase(p));
 
-        // Only mark profiles as cloud-backed once every push actually succeeded.
-        // AuthContext reads this flag to decide whether purging `global_profiles`
-        // on an unknown-owner device is safe — before the upload lands, that
-        // localStorage copy is the ONLY copy in existence.
-        if (pushes.length === 0 || (await Promise.all(pushes)).every(Boolean)) {
-          try { localStorage.setItem("roastlogs_profiles_uploaded", "1"); } catch (e) {}
-        }
+        await Promise.all(pushes);
+        if (cancelled) return;
 
         const mergedProfiles = [...localProfiles];
         let hasNewProfileData = false;
@@ -992,18 +995,13 @@ function App() {
         }
       }
 
-      // Only once EVERY fetch succeeded is a quarantined pre-upgrade cache
-      // redundant — at that point Supabase holds the authoritative copy, so the
-      // local backup can go. If any fetch failed, keep it as the undo path.
+      // NOTE: quarantined caches (`<key>__quarantine`) are deliberately NEVER
+      // auto-cleared here. A successful sync only proves THIS account's data is
+      // in the cloud — it says nothing about whose data was quarantined. Clearing
+      // on that signal would let one user's first sync permanently destroy
+      // another user's pre-upgrade cache, with no PITR to recover from.
       const allFetchesOk =
         cloudBrews !== null && cloudBeans !== null && cloudProfiles !== null;
-      if (allFetchesOk) {
-        try {
-          ["roasts", "tastingNotes", "beans", "global_profiles"].forEach(k =>
-            localStorage.removeItem(k + "__quarantine")
-          );
-        } catch (e) {}
-      }
 
       if (!allFetchesOk) {
         setSyncStatus('error');
@@ -1013,6 +1011,10 @@ function App() {
       setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
     };
     performInitialSync();
+    // Abort the in-flight sync if the account changes mid-flight. Without this,
+    // the previous user's async writes land AFTER the new user's cache purge —
+    // re-seeding their data and even uploading it under the new account's id.
+    return () => { cancelled = true; };
   }, []);
 
   const startEditing = (roast) => {
@@ -1703,10 +1705,18 @@ function App() {
 
   const gatherExportData = async () => {
     const [remoteRoasts, remoteBrews, remoteBeans] = await Promise.all([
-      fetchRoastsFromSupabase().catch(() => []),
-      fetchBrewsFromSupabase().catch(() => []),
-      fetchBeansFromSupabase().catch(() => []),
+      fetchRoastsFromSupabase().catch(() => null),
+      fetchBrewsFromSupabase().catch(() => null),
+      fetchBeansFromSupabase().catch(() => null),
     ]);
+    // A logical JSON export is the ONLY backup story on the free plan (no PITR),
+    // so a partial file labelled as a full backup is worse than no file. Fail
+    // loudly instead of silently treating an unreachable table as empty.
+    if (remoteRoasts === null || remoteBrews === null || remoteBeans === null) {
+      throw new Error(
+        "Couldn't reach the cloud — this backup would be incomplete. Reconnect and try again."
+      );
+    }
     return {
       roasts: mergeById(readLocalJSON("roasts"), remoteRoasts),
       brews: mergeById(readLocalJSON("tastingNotes"), remoteBrews),
