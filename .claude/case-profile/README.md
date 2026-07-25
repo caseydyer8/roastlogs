@@ -12,6 +12,17 @@ Built from an interview session on 2026-07-24. This folder captures how Case bui
 | `03-agents-and-process.md` | Running the multi-agent Claude Code bundle, what it encodes, and how to right-size the process. |
 | `04-growth-and-direction.md` | Year-from-now goals, projects on deck (ship RoastLogs, the recipe app with Becca, local sites, a game), and how to raise his code-fluency ceiling. |
 
+## How this folder loads (wired into the roastlogs repo)
+This folder lives in the repo (not `~/.claude/`, which is wiped on remote/web
+sessions), so it persists and loads automatically for every session that opens
+roastlogs. Two mechanisms, once merged to `main`:
+- **`CLAUDE.md` import** — the "Working With Case" section `@`-imports files `00`–`04`.
+- **SessionStart hook** (`.claude/settings.json`) — on every session start it injects a
+  reminder to read this folder first, as a backstop if imports aren't expanded.
+
+New repos (recipe app, game, local sites) won't inherit this — copy this folder
++ the two hooks into each one to get the same behavior there.
+
 ## How to use this folder
 - In Claude Code: keep these accessible so agents/sessions can load them as context.
 - In a chat session: point Claude here at the start of a build to skip the cold-start re-orientation.

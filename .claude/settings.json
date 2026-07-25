@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Developer profile for Case is in .claude/case-profile/ (README plus files 00-04). If it is not already in your context, read 00-working-with-case.md first, then 01-04, before doing anything else, and work from it. Address the user as Case in every response. Roast controls are always Fan before Heat.\"}}'",
+            "statusMessage": "Loading Case's developer profile..."
+          }
+        ]
+      }
     ]
   }
 }
