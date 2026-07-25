@@ -134,7 +134,7 @@ export async function fetchBrewsFromSupabase() {
 
     if (error) {
       console.warn("Supabase error fetching brews:", error);
-      return [];
+      return null;
     }
 
     if (!data || !Array.isArray(data)) {
@@ -161,7 +161,7 @@ export async function fetchBrewsFromSupabase() {
     }));
   } catch (e) {
     console.warn("Failed to fetch brews from Supabase", e);
-    return [];
+    return null;
   }
 }
 
@@ -172,8 +172,11 @@ export async function fetchRoastsFromSupabase() {
       .select('*');
 
     if (error) {
+      // null (not []) signals FAILURE, so callers can tell "couldn't reach the
+      // cloud" apart from "the cloud is genuinely empty" — the difference
+      // between showing a sync error and wrongly implying there's no data.
       console.warn("Supabase error fetching roasts:", error);
-      return [];
+      return null;
     }
 
     if (!data || !Array.isArray(data)) {
@@ -196,7 +199,7 @@ export async function fetchRoastsFromSupabase() {
     }));
   } catch (e) {
     console.warn("Failed to fetch roasts from Supabase", e);
-    return [];
+    return null;
   }
 }
 
@@ -262,7 +265,7 @@ export async function fetchBeansFromSupabase() {
 
     if (error) {
       console.warn("Supabase error fetching beans:", error);
-      return [];
+      return null;
     }
 
     if (!data || !Array.isArray(data)) {
@@ -287,7 +290,7 @@ export async function fetchBeansFromSupabase() {
     }));
   } catch (e) {
     console.warn("Failed to fetch beans from Supabase", e);
-    return [];
+    return null;
   }
 }
 
@@ -330,8 +333,12 @@ export async function deleteProfileFromSupabase(id) {
       .eq('id', Number(id));
 
     if (error) throw error;
+    return true;
   } catch (e) {
+    // Returns a boolean (unlike the older delete helpers) so the caller can
+    // surface sync failures — a silently-failed delete reappears on next launch.
     console.warn("Failed to delete profile from Supabase", e);
+    return false;
   }
 }
 
@@ -343,7 +350,7 @@ export async function fetchProfilesFromSupabase() {
 
     if (error) {
       console.warn("Supabase error fetching profiles:", error);
-      return [];
+      return null;
     }
 
     if (!data || !Array.isArray(data)) {
@@ -360,6 +367,6 @@ export async function fetchProfilesFromSupabase() {
     }));
   } catch (e) {
     console.warn("Failed to fetch profiles from Supabase", e);
-    return [];
+    return null;
   }
 }

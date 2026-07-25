@@ -4,9 +4,10 @@ import './index.css';
 import App from './App';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginScreen from './components/LoginScreen';
+import UpdatePasswordScreen from './components/UpdatePasswordScreen';
 
 function Root() {
-  const { session, loading } = useAuth();
+  const { session, loading, isRecovery } = useAuth();
 
   // E2E-only auth bypass. Two safety layers:
   // 1. NODE_ENV check — production builds dead-code-eliminate this entire
@@ -32,7 +33,18 @@ function Root() {
     return <LoginScreen />;
   }
 
-  return <App />;
+  // Arriving from a password-reset email creates a real session, so this check
+  // must come BEFORE rendering the app — otherwise the reset link would simply
+  // log the user in without ever letting them set a new password.
+  if (isRecovery) {
+    return <UpdatePasswordScreen />;
+  }
+
+  // Keyed by account id so a session that switches from user A to user B
+  // WITHOUT an intervening sign-out (e.g. signing in on a second tab) remounts
+  // App from scratch. Without this, A's in-memory state would survive and get
+  // written into B's account.
+  return <App key={session?.user?.id || "e2e-bypass"} />;
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
