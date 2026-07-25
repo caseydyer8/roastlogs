@@ -64,12 +64,33 @@ preferences otherwise trapped in agent config.
 ## Security
 
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
-- **RLS is ENABLED and verified enforced** (audited 2026-07-10: policies
-  present, anon read returns `[]`, anon write rejected 42501). Policies are
-  single-user by design (`USING (true)`, no user_id) — any authenticated
-  account sees ALL data. Two of Casey's own accounts exist; flag this design
-  if multi-user ever comes up. Public signups disabled + leaked-password
-  protection enabled (dashboard, 2026-07-10) — auth hardening complete.
+- **MULTI-USER as of 2026-07-21** (was single-user; migrated live). Every synced
+  table (`roasts`, `tasting_notes`, `beans`, `roast_profiles`) has a `user_id`
+  (`NOT NULL`, `DEFAULT auth.uid()`, FK to `auth.users` ON DELETE CASCADE), and
+  all 16 policies are owner-scoped — **no `USING (true)` remains**:
+  - read/update/delete: `user_id = auth.uid() OR (is_admin(auth.uid()) AND is_admin(user_id))`
+  - insert/update-check: `user_id = auth.uid()` (no owner spoofing)
+- **Admin co-ownership model:** `public.admins` (RLS-on, no policies, grants
+  revoked → default-deny) + `public.is_admin(uuid)` SECURITY DEFINER
+  (`search_path=''`). Casey's two accounts are admins: they co-own each other's
+  rows + the legacy data, but get **NO access to a regular user's private rows**.
+  Admins are seeded by an explicit EMAIL ALLOWLIST — never blanket-promote
+  `auth.users`.
+- **Verified live 2026-07-23:** simulated non-admin sees 0 rows across all four
+  tables; ownership-spoof insert blocked (0 rows written); `anon` cannot SELECT
+  the tables and cannot EXECUTE `rls_auto_enable()`.
+- **Public signups: DISABLED** — invite-only; Casey provisions accounts in the
+  Supabase dashboard. There is no signup UI by design.
+- **Leaked-password protection is PLAN-GATED, not enabled** — it's a Pro-plan
+  feature and the org is on FREE (staying free for now; not paying to host other
+  people's data). The security advisor will keep flagging it — annotate as
+  plan-gated, not an open finding. Compensating control: Email-provider password
+  policy (min length ≥8 + require digit/lower/upper/symbol).
+- **No PITR/managed snapshots on free.** Backups are logical JSON exports (see
+  the `docs/` migrations for schema). **Gate any destructive/PK migration —
+  e.g. the deferred Phase 3 composite-key work — on having a backup story.**
+- Device-cache isolation lives in `AuthContext.enforceLocalDataOwner()`: purges
+  cached localStorage data when a *different* account signs in (RLS can't do this).
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
 ## Workflow
