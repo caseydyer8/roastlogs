@@ -64,23 +64,39 @@ preferences otherwise trapped in agent config.
 ## Security
 
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
-- **MULTI-USER as of 2026-07-21** (was single-user; migrated live). Every synced
-  table (`roasts`, `tasting_notes`, `beans`, `roast_profiles`) has a `user_id`
-  (`NOT NULL`, `DEFAULT auth.uid()`, FK to `auth.users` ON DELETE CASCADE), and
-  all 16 policies are owner-scoped — **no `USING (true)` remains**:
-  - read/update/delete: `user_id = auth.uid() OR (is_admin(auth.uid()) AND is_admin(user_id))`
-  - insert/update-check: `user_id = auth.uid()` (no owner spoofing)
-- **Admin co-ownership model:** `public.admins` (RLS-on, no policies, grants
-  revoked → default-deny) + `public.is_admin(uuid)` SECURITY DEFINER
-  (`search_path=''`). Casey's two accounts are admins: they co-own each other's
-  rows + the legacy data, but get **NO access to a regular user's private rows**.
-  Admins are seeded by an explicit EMAIL ALLOWLIST — never blanket-promote
-  `auth.users`.
-- **Verified live 2026-07-23:** simulated non-admin sees 0 rows across all four
-  tables; ownership-spoof insert blocked (0 rows written); `anon` cannot SELECT
-  the tables and cannot EXECUTE `rls_auto_enable()`.
-- **Public signups: DISABLED** — invite-only; Casey provisions accounts in the
-  Supabase dashboard. There is no signup UI by design.
+- **PRIVATE 2-ACCOUNT APP as of 2026-07-25** (briefly multi-user 07-21→07-25;
+  reverted after Casey + Becca decided NOT to open it to others — a home-network
+  concern). The app is locked to Casey's two accounts ONLY: `primary@redacted.invalid`
+  and `secondary@redacted.invalid`. Every synced table (`roasts`, `tasting_notes`,
+  `beans`, `roast_profiles`) still carries `user_id` (`NOT NULL`, `DEFAULT
+  auth.uid()`, FK to `auth.users` ON DELETE CASCADE), but the RLS is now
+  **admin-only** — no per-user/owner branch remains, **no `USING (true)` remains**.
+  All 16 policies (4 tables × select/insert/update/delete) require BOTH:
+  - `(select public.is_admin((select auth.uid())))` — caller is one of the two admins
+  - `(select auth.jwt() ->> 'aal') = 'aal2'` — session completed MFA (2nd factor)
+- **`aal2` = server-side MFA enforcement** (`docs/2026-07-25_require_mfa_aal2.sql`,
+  applied + verified live 2026-07-27). A password-only (`aal1`) session — e.g. a
+  stolen/leaked password used directly against the Supabase REST API, bypassing
+  the app — can read/write **nothing**. The client also routes to a TOTP prompt
+  after login (`MfaChallengeScreen`); the DB rule is the real gate. **Precondition
+  for the `aal2` rule: every account MUST have a verified TOTP factor** or it locks
+  that account out of its own data. Rollback = re-run
+  `docs/2026-07-25_lock_to_admins_only.sql` (admin-only WITHOUT the `aal2` clause).
+- **MFA (TOTP):** both accounts enrolled + verified. Enroll/manage UI in
+  `MfaSettings` (Settings → Account); login challenge in `MfaChallengeScreen`;
+  auth plumbing in `AuthContext` (`enrollMfa`/`confirmMfaEnrollment`/
+  `submitMfaChallenge`/`listMfaFactors`/`unenrollMfa`/`refreshMfaStatus`,
+  `mfaRequired`). Supabase MFA is enabled (TOTP) in the dashboard.
+- **Admin infra:** `public.admins` (RLS-on, no policies, grants revoked →
+  default-deny) + `public.is_admin(uuid)` SECURITY DEFINER (`search_path=''`).
+  Both of Casey's accounts are seeded by an explicit EMAIL ALLOWLIST — never
+  blanket-promote `auth.users`.
+- **Verified live 2026-07-27:** 16/16 policies require `aal2`; `anon` has 0 grants
+  on all four tables (cannot SELECT). Earlier (2026-07-23) admin-only pen-test:
+  simulated non-admin saw 0 rows across all four tables; ownership-spoof insert
+  blocked; `anon` cannot EXECUTE `rls_auto_enable()`.
+- **Public signups: DISABLED** — Casey provisions the two accounts in the Supabase
+  dashboard. There is no signup UI by design.
 - **Leaked-password protection is PLAN-GATED, not enabled** — it's a Pro-plan
   feature and the org is on FREE (staying free for now; not paying to host other
   people's data). The security advisor will keep flagging it — annotate as
