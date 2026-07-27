@@ -18,9 +18,13 @@
 -- created a row). To revert, restore the owner-or-admin block from
 -- docs/2026-07-21_multiuser_rls.sql.
 --
--- NOTE: MFA (aal2) is intentionally NOT required in these policies yet — doing so
--- before the client supports the MFA challenge would lock both accounts out.
--- A follow-up migration adds the aal2 requirement once enrollment is in place.
+-- NOTE: these policies do NOT include the aal2 (MFA) requirement. That was
+-- intentional at the time (adding it before the client supported the MFA
+-- challenge, or before both accounts had a verified factor, would have locked
+-- both accounts out). As of 2026-07-27 the follow-up migration
+-- docs/2026-07-25_require_mfa_aal2.sql IS applied live and DOES require aal2, so
+-- this file now serves as the ROLLBACK: re-running it restores admin-only access
+-- at password-level (aal1) if a login ever can't reach the second factor.
 
 -- 1. Drop every existing policy on the four synced tables (name-agnostic).
 do $$

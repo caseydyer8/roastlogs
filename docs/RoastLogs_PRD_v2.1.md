@@ -19,7 +19,7 @@ RoastLogs is a mobile-first Progressive Web App (PWA) built specifically for hom
 | Charts | Recharts |
 | Local Storage | IndexedDB + localStorage |
 | Photo Storage | IndexedDB (local only, never synced to cloud) |
-| Cloud Sync | Supabase (free tier, RLS disabled) |
+| Cloud Sync | Supabase (free tier, RLS enabled — admin-only + aal2 MFA) |
 | Hosting | GitHub Pages |
 | AI Coding | Windsurf IDE (Cascade / SWE-1.5 model) |
 | Planning | Claude.ai |
@@ -202,8 +202,8 @@ Then reinstall PWA on iPhone: Safari → caseydyer8.github.io/roastlogs → Shar
 
 | Setting | Value |
 |---|---|
-| Tables | `roasts`, `tasting_notes` |
-| RLS | Disabled on both tables |
+| Tables | `roasts`, `tasting_notes`, `beans`, `roast_profiles` |
+| RLS | Enabled on all four tables — admin-only + `aal2` (MFA-required) policies |
 | Photos | Never stored in Supabase |
 | SQL Editor | Available for direct queries |
 

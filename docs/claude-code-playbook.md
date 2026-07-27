@@ -33,11 +33,12 @@ result. A clean build is not a working feature. Fixes now in place:
 Rule of thumb: **a task isn't done until something observed it working** — a
 curl, a screenshot, a phone-test, a policy query.
 
-**⚠️ Habit 2 — The RLS migration has been pending for over a month**
-`docs/enable_rls.sql` was written ~June 5 and still hasn't been run — meaning
-your deployed app's data has RLS OFF right now. This is the single highest-
-value 10 minutes on your list. Run `/rls-audit` to confirm state, then apply
-the migration (the Supabase MCP connection can do it directly).
+**✅ Habit 2 (RESOLVED 2026-07-27) — RLS is now fully enforced**
+`docs/enable_rls.sql` was the original pending migration. RLS is now ON for all
+four synced tables (`roasts`, `tasting_notes`, `beans`, `roast_profiles`) with
+**admin-only + `aal2` (MFA-required)** policies, verified live. `anon` has zero
+grants and `authenticated` is down to least-privilege. The lesson still stands
+(verify, don't assume) — but this specific gap is closed.
 
 **⚠️ Habit 3 — Multi-goal session sprawl**
 Bundling chart fix + reorder + picker + release into one session works, but
@@ -132,7 +133,7 @@ reformat all 4300 lines of App.js and pollute every diff).
 
 ## 6. Suggested next actions, in order of value
 
-1. Run `/rls-audit` and apply the pending RLS migration ← **do this first**
+1. ~~Run `/rls-audit` and apply the pending RLS migration~~ ✅ DONE — RLS enabled + `aal2` MFA enforced (2026-07-27)
 2. Review + commit `CLAUDE.md` and the three skills
 3. Install Hook B (commit guard) via `/update-config`, then Hook A if you like it
 4. Run `/fewer-permission-prompts` to clean up the allowlist
