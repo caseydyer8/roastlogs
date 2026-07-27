@@ -115,23 +115,48 @@ export function AuthProvider({ children }) {
   // them a real session at that point, so this flag is what keeps them on the
   // "choose a new password" screen instead of dropping them into the app.
   const [isRecovery, setIsRecovery] = React.useState(false);
+  // True when the account has a verified authenticator but THIS session hasn't
+  // entered a code yet (assurance level is aal1, could reach aal2). The router
+  // shows the 6-digit code prompt instead of the app until it clears.
+  const [mfaRequired, setMfaRequired] = React.useState(false);
 
   React.useEffect(() => {
     let mounted = true;
+
+    // Shared session-apply path. Computes the MFA step-up requirement BEFORE
+    // setLoading(false) so the router never briefly shows the app to a session
+    // that still owes a second factor.
+    const applySession = async (newSession) => {
+      if (!mounted) return;
+      enforceLocalDataOwner(newSession?.user?.id);
+      let needMfa = false;
+      if (newSession) {
+        try {
+          const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          // nextLevel = aal2 means a verified factor exists; currentLevel < aal2
+          // means this session hasn't entered a code yet.
+          needMfa = !!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2";
+        } catch (e) {
+          needMfa = false;
+        }
+      }
+      if (!mounted) return;
+      setMfaRequired(needMfa);
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+      setLoading(false);
+    };
 
     // Check for an existing session on mount.
     supabase.auth
       .getSession()
       .then(({ data }) => {
         if (!mounted) return;
-        enforceLocalDataOwner(data.session?.user?.id);
         // An abandoned password recovery must not drop into the app on reload.
         if (data.session?.user?.id && readRecoveryUid() === data.session.user.id) {
           setIsRecovery(true);
         }
-        setSession(data.session);
-        setUser(data.session?.user ?? null);
-        setLoading(false);
+        applySession(data.session);
       })
       .catch((e) => {
         console.warn("Failed to get Supabase session", e);
@@ -139,7 +164,7 @@ export function AuthProvider({ children }) {
         setLoading(false);
       });
 
-    // Subscribe to auth changes (sign in/out, token refresh, expiry, recovery).
+    // Subscribe to auth changes (sign in/out, token refresh, expiry, recovery, MFA).
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, newSession) => {
         if (!mounted) return;
@@ -151,10 +176,7 @@ export function AuthProvider({ children }) {
           clearRecoveryUid();
           setIsRecovery(false);
         }
-        enforceLocalDataOwner(newSession?.user?.id);
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-        setLoading(false);
+        applySession(newSession);
       }
     );
 
@@ -197,26 +219,114 @@ export function AuthProvider({ children }) {
     setIsRecovery(false);
   }, []);
 
+  // --- Multi-factor auth (TOTP / authenticator app) -------------------------
+
+  // Recompute the step-up requirement from the current session's assurance level.
+  const refreshMfaStatus = React.useCallback(async () => {
+    try {
+      const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      setMfaRequired(!!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2");
+    } catch (e) {
+      setMfaRequired(false);
+    }
+  }, []);
+
+  // Begin TOTP enrollment. Returns { id, totp: { qr_code, secret, uri } }.
+  // The factor is not active until confirmMfaEnrollment verifies the first code.
+  const enrollMfa = React.useCallback(async () => {
+    const { data, error } = await supabase.auth.mfa.enroll({
+      factorType: "totp",
+      // Friendly names must be unique per user; timestamp avoids clashing with a
+      // leftover unverified factor from an abandoned attempt.
+      friendlyName: "RoastLogs " + Date.now(),
+    });
+    if (error) throw error;
+    return data;
+  }, []);
+
+  // Finish enrollment by verifying the first code from the authenticator app.
+  const confirmMfaEnrollment = React.useCallback(
+    async (factorId, code) => {
+      const { data: ch, error: chErr } = await supabase.auth.mfa.challenge({ factorId });
+      if (chErr) throw chErr;
+      const { error } = await supabase.auth.mfa.verify({
+        factorId,
+        challengeId: ch.id,
+        code,
+      });
+      if (error) throw error;
+      await refreshMfaStatus();
+    },
+    [refreshMfaStatus]
+  );
+
+  // Answer the login-time challenge, stepping this session up to aal2.
+  const submitMfaChallenge = React.useCallback(
+    async (code) => {
+      const { data: factors, error: fErr } = await supabase.auth.mfa.listFactors();
+      if (fErr) throw fErr;
+      const totp = (factors?.totp || [])[0];
+      if (!totp) throw new Error("No authenticator is enrolled on this account.");
+      const { data: ch, error: chErr } = await supabase.auth.mfa.challenge({ factorId: totp.id });
+      if (chErr) throw chErr;
+      const { error } = await supabase.auth.mfa.verify({
+        factorId: totp.id,
+        challengeId: ch.id,
+        code,
+      });
+      if (error) throw error;
+      await refreshMfaStatus();
+    },
+    [refreshMfaStatus]
+  );
+
+  const listMfaFactors = React.useCallback(async () => {
+    const { data, error } = await supabase.auth.mfa.listFactors();
+    if (error) throw error;
+    return data;
+  }, []);
+
+  const unenrollMfa = React.useCallback(
+    async (factorId) => {
+      const { error } = await supabase.auth.mfa.unenroll({ factorId });
+      if (error) throw error;
+      await refreshMfaStatus();
+    },
+    [refreshMfaStatus]
+  );
+
   const value = React.useMemo(
     () => ({
       user,
       session,
       loading,
       isRecovery,
+      mfaRequired,
       signIn,
       signOut,
       requestPasswordReset,
       updatePassword,
+      enrollMfa,
+      confirmMfaEnrollment,
+      submitMfaChallenge,
+      listMfaFactors,
+      unenrollMfa,
     }),
     [
       user,
       session,
       loading,
       isRecovery,
+      mfaRequired,
       signIn,
       signOut,
       requestPasswordReset,
       updatePassword,
+      enrollMfa,
+      confirmMfaEnrollment,
+      submitMfaChallenge,
+      listMfaFactors,
+      unenrollMfa,
     ]
   );
 

@@ -5,9 +5,10 @@ import App from './App';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginScreen from './components/LoginScreen';
 import UpdatePasswordScreen from './components/UpdatePasswordScreen';
+import MfaChallengeScreen from './components/MfaChallengeScreen';
 
 function Root() {
-  const { session, loading, isRecovery } = useAuth();
+  const { session, loading, isRecovery, mfaRequired } = useAuth();
 
   // E2E-only auth bypass. Two safety layers:
   // 1. NODE_ENV check — production builds dead-code-eliminate this entire
@@ -38,6 +39,14 @@ function Root() {
   // log the user in without ever letting them set a new password.
   if (isRecovery) {
     return <UpdatePasswordScreen />;
+  }
+
+  // A correct password isn't enough when two-factor is on: hold at the code
+  // prompt until the session steps up to aal2. Comes before the app for the same
+  // reason recovery does — the app must never render to a half-authenticated
+  // session. (Enforced server-side too, once the aal2 RLS migration lands.)
+  if (mfaRequired && !isE2EBypass) {
+    return <MfaChallengeScreen />;
   }
 
   // Keyed by account id so a session that switches from user A to user B

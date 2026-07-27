@@ -2,6 +2,7 @@ import RoastCurveChart from "./components/charts/RoastCurveChart";
 import React from "react";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase, syncProfileToSupabase, deleteProfileFromSupabase, fetchProfilesFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
+import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
@@ -4475,6 +4476,9 @@ function App() {
                   Signed in as <span className="font-semibold text-ink">{user.email}</span>
                 </div>
               )}
+              <div className="mb-4 pb-4 border-b border-border/60">
+                <MfaSettings />
+              </div>
               <button
                 onClick={() => {
                   if (window.confirm("Sign out of RoastLogs?")) {
