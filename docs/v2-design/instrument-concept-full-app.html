@@ -56,6 +56,7 @@
   --accent:#d97d3d; --accent-ink:#17110b;
   --line:#352c24; --good:#7bb489; --warn:#d9b24c;
   --chart-temp:#d97d3d; --chart-ror:#b8a0d6; --chart-heat:#d0654a; --chart-fan:#6f9bb3;
+  --cmp-a:#d97d3d; --cmp-b:#8fb4c9; --cmp-c:#9ec49a;
   --r:18px;
 }
 :root[data-theme="light"], .app[data-theme="light"]{
@@ -64,6 +65,7 @@
   --accent:#c2601f; --accent-ink:#fffdf9;
   --line:#dcd8d1; --good:#3f7a52; --warn:#9c7a1e;
   --chart-temp:#c2601f; --chart-ror:#7a5aa8; --chart-heat:#b64a33; --chart-fan:#3f7590;
+  --cmp-a:#c2601f; --cmp-b:#3f7590; --cmp-c:#3f7a52;
 }
 
 *{box-sizing:border-box; margin:0; padding:0}
@@ -308,6 +310,23 @@
 .chart-svg text{ font-family:"IBM Plex Mono",monospace; fill:var(--ink-muted); font-variant-numeric:tabular-nums }
 .chart-svg .gridline{ stroke:var(--line); stroke-width:1 }
 .chart-svg .axttl{ letter-spacing:.08em; fill:var(--ink-muted) }
+
+/* ---------- roast comparison ---------- */
+.cmp-chip{ display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+  font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:11px;
+  letter-spacing:.03em; padding:7px 12px; border-radius:999px;
+  border:1px solid var(--line); background:var(--surface); color:var(--ink) }
+.cmp-chip.off{ opacity:.4 }
+.cmp-dot{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:none }
+.cmp-table{ display:grid; grid-template-columns:1.15fr 1fr 1fr 1fr; gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden }
+.cmp-table > div{ background:var(--surface); padding:10px 8px }
+.cmp-lab{ font-family:"IBM Plex Mono",monospace; font-size:8.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-muted); display:flex; align-items:center }
+.cmp-h{ font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:11px;
+  display:flex; align-items:center; justify-content:center; gap:5px }
+.cmp-v{ font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-variant-numeric:tabular-nums;
+  text-align:center; color:var(--ink) }
 
 /* ---------- bag label ---------- */
 .bag-label{ border:1.5px dashed color-mix(in srgb,var(--accent) 55%,transparent); border-radius:14px;
@@ -837,10 +856,111 @@
               </div>
 
               <div class="panel">
-                <div class="panel-title">Roast sessions · 4</div>
+                <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">Roast sessions · 4
+                  <button class="text-action" style="color:var(--accent);padding:0" onclick="setSub('beans','beans-compare')">⇄ Compare</button>
+                </div>
                 <div class="list">
                   <button class="row" onclick="go('history','hist-roast-detail')"><span class="row-accent"></span><span class="row-main"><span class="row-title">City+</span><span class="row-sub mono">09:45 · DTR 22%</span></span><span class="row-right">Jul 28</span></button>
                   <button class="row" onclick="go('history','hist-roast-detail')"><span class="row-accent" style="background:#b98a4e"></span><span class="row-main"><span class="row-title">City</span><span class="row-sub mono">09:20 · DTR 20%</span></span><span class="row-right">Jul 24</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- compare roasts -->
+          <div class="subview" data-sub="beans-compare">
+            <div class="pad">
+              <div class="detail-head">
+                <button class="back" onclick="setSub('beans','beans-detail')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Bean</button>
+              </div>
+              <div class="detail-title">Compare roasts</div>
+              <div class="eyebrow" style="margin:4px 0 14px">Ethiopia Guji Shakiso · 3 of 4 sessions</div>
+
+              <div class="chip-row" style="margin-bottom:14px">
+                <button class="cmp-chip" onclick="cmpToggle('a',this)"><span class="cmp-dot" style="background:var(--cmp-a)"></span>Jul 28 · City+</button>
+                <button class="cmp-chip" onclick="cmpToggle('b',this)"><span class="cmp-dot" style="background:var(--cmp-b)"></span>Jul 24 · City</button>
+                <button class="cmp-chip" onclick="cmpToggle('c',this)"><span class="cmp-dot" style="background:var(--cmp-c)"></span>Jul 15 · City</button>
+              </div>
+
+              <div class="chart-card">
+                <div class="chart-cap"><span class="eyebrow">Bean temp overlay</span><span class="chart-sub">°F · ● first crack</span></div>
+                <svg class="chart-svg" viewBox="0 0 330 178" role="img" aria-label="Overlay of bean temperature curves for three roasts of the same bean">
+                  <line class="gridline" x1="32" y1="14" x2="300" y2="14"/><text x="28" y="17" font-size="8" text-anchor="end">450</text>
+                  <line class="gridline" x1="32" y1="56" x2="300" y2="56"/><text x="28" y="59" font-size="8" text-anchor="end">350</text>
+                  <line class="gridline" x1="32" y1="98" x2="300" y2="98"/><text x="28" y="101" font-size="8" text-anchor="end">250</text>
+                  <line x1="32" y1="140" x2="300" y2="140" stroke="var(--ink-muted)" opacity=".5"/><text x="28" y="143" font-size="8" text-anchor="end">150</text>
+                  <line class="gridline" x1="32" y1="140" x2="32" y2="144"/><text x="32" y="154" font-size="8" text-anchor="middle">0:00</text>
+                  <line class="gridline" x1="98" y1="140" x2="98" y2="144"/><text x="98" y="154" font-size="8" text-anchor="middle">2:30</text>
+                  <line class="gridline" x1="164" y1="140" x2="164" y2="144"/><text x="164" y="154" font-size="8" text-anchor="middle">5:00</text>
+                  <line class="gridline" x1="230" y1="140" x2="230" y2="144"/><text x="230" y="154" font-size="8" text-anchor="middle">7:30</text>
+                  <line class="gridline" x1="296" y1="140" x2="296" y2="144"/><text x="296" y="154" font-size="8" text-anchor="middle">10:00</text>
+                  <text x="6" y="12" font-size="7.5" class="axttl">°F</text>
+                  <text x="166" y="172" font-size="7.5" class="axttl" text-anchor="middle">TIME (MM:SS)</text>
+                  <g class="cmp-el-c">
+                    <path d="M32 136 C56 114 82 100 104 92 C128 82 152 70 176 62 C198 54 218 42 236 36 C258 30 282 27 300 25" fill="none" stroke="var(--cmp-c)" stroke-width="2" stroke-linecap="round" opacity=".95"/>
+                    <circle cx="236" cy="36" r="3" fill="var(--cmp-c)"/>
+                  </g>
+                  <g class="cmp-el-b">
+                    <path d="M32 136 C52 106 72 88 90 80 C110 70 130 58 150 52 C172 45 192 42 212 39 C234 35 258 31 278 29" fill="none" stroke="var(--cmp-b)" stroke-width="2" stroke-linecap="round" opacity=".95"/>
+                    <circle cx="212" cy="39" r="3" fill="var(--cmp-b)"/>
+                  </g>
+                  <g class="cmp-el-a">
+                    <path d="M32 136 C54 108 76 92 98 84 C120 76 142 64 164 55 C186 46 202 41 221 37 C244 32 268 28 289 26" fill="none" stroke="var(--cmp-a)" stroke-width="2.5" stroke-linecap="round"/>
+                    <circle cx="221" cy="37" r="3" fill="var(--cmp-a)"/>
+                  </g>
+                </svg>
+              </div>
+
+              <div class="chart-card">
+                <div class="chart-cap"><span class="eyebrow">Fan</span><span class="chart-sub">Dial 1–9 · step</span></div>
+                <svg class="chart-svg" viewBox="0 0 330 96" role="img" aria-label="Fan dial levels over time for three roasts, as step lines">
+                  <line class="gridline" x1="32" y1="10" x2="300" y2="10"/><text x="28" y="13" font-size="8" text-anchor="end">9</text>
+                  <line class="gridline" x1="32" y1="26" x2="300" y2="26"/><text x="28" y="29" font-size="8" text-anchor="end">7</text>
+                  <line class="gridline" x1="32" y1="42" x2="300" y2="42"/><text x="28" y="45" font-size="8" text-anchor="end">5</text>
+                  <line class="gridline" x1="32" y1="58" x2="300" y2="58"/><text x="28" y="61" font-size="8" text-anchor="end">3</text>
+                  <line x1="32" y1="74" x2="300" y2="74" stroke="var(--ink-muted)" opacity=".5"/><text x="28" y="77" font-size="8" text-anchor="end">1</text>
+                  <line class="gridline" x1="32" y1="74" x2="32" y2="78"/><text x="32" y="88" font-size="8" text-anchor="middle">0:00</text>
+                  <line class="gridline" x1="98" y1="74" x2="98" y2="78"/><text x="98" y="88" font-size="8" text-anchor="middle">2:30</text>
+                  <line class="gridline" x1="164" y1="74" x2="164" y2="78"/><text x="164" y="88" font-size="8" text-anchor="middle">5:00</text>
+                  <line class="gridline" x1="230" y1="74" x2="230" y2="78"/><text x="230" y="88" font-size="8" text-anchor="middle">7:30</text>
+                  <line class="gridline" x1="296" y1="74" x2="296" y2="78"/><text x="296" y="88" font-size="8" text-anchor="middle">10:00</text>
+                  <g class="cmp-el-c"><path d="M32 11.5 H58 V19.5 H243 V35.5 H300" fill="none" stroke="var(--cmp-c)" stroke-width="2" opacity=".95"/></g>
+                  <g class="cmp-el-b"><path d="M32 8.5 H85 V16.5 H203 V24.5 H278" fill="none" stroke="var(--cmp-b)" stroke-width="2" opacity=".95"/></g>
+                  <g class="cmp-el-a"><path d="M32 10 H72 V18 H217 V26 H289" fill="none" stroke="var(--cmp-a)" stroke-width="2.4"/></g>
+                </svg>
+              </div>
+
+              <div class="chart-card">
+                <div class="chart-cap"><span class="eyebrow">Heat</span><span class="chart-sub">Dial 1–9 · step</span></div>
+                <svg class="chart-svg" viewBox="0 0 330 96" role="img" aria-label="Heat dial levels over time for three roasts, as step lines">
+                  <line class="gridline" x1="32" y1="10" x2="300" y2="10"/><text x="28" y="13" font-size="8" text-anchor="end">9</text>
+                  <line class="gridline" x1="32" y1="26" x2="300" y2="26"/><text x="28" y="29" font-size="8" text-anchor="end">7</text>
+                  <line class="gridline" x1="32" y1="42" x2="300" y2="42"/><text x="28" y="45" font-size="8" text-anchor="end">5</text>
+                  <line class="gridline" x1="32" y1="58" x2="300" y2="58"/><text x="28" y="61" font-size="8" text-anchor="end">3</text>
+                  <line x1="32" y1="74" x2="300" y2="74" stroke="var(--ink-muted)" opacity=".5"/><text x="28" y="77" font-size="8" text-anchor="end">1</text>
+                  <line class="gridline" x1="32" y1="74" x2="32" y2="78"/><text x="32" y="88" font-size="8" text-anchor="middle">0:00</text>
+                  <line class="gridline" x1="98" y1="74" x2="98" y2="78"/><text x="98" y="88" font-size="8" text-anchor="middle">2:30</text>
+                  <line class="gridline" x1="164" y1="74" x2="164" y2="78"/><text x="164" y="88" font-size="8" text-anchor="middle">5:00</text>
+                  <line class="gridline" x1="230" y1="74" x2="230" y2="78"/><text x="230" y="88" font-size="8" text-anchor="middle">7:30</text>
+                  <line class="gridline" x1="296" y1="74" x2="296" y2="78"/><text x="296" y="88" font-size="8" text-anchor="middle">10:00</text>
+                  <g class="cmp-el-c"><path d="M32 27.5 H58 V35.5 H177 V43.5 H256 V51.5 H300" fill="none" stroke="var(--cmp-c)" stroke-width="2" opacity=".95"/></g>
+                  <g class="cmp-el-b"><path d="M32 24.5 H85 V32.5 H164 V40.5 H212 V48.5 H278" fill="none" stroke="var(--cmp-b)" stroke-width="2" opacity=".95"/></g>
+                  <g class="cmp-el-a"><path d="M32 26 H72 V34 H142 V42 H223 V50 H289" fill="none" stroke="var(--cmp-a)" stroke-width="2.4"/></g>
+                </svg>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">Numbers side by side</div>
+                <div class="cmp-table">
+                  <div class="cmp-lab"></div>
+                  <div class="cmp-h"><span class="cmp-dot" style="background:var(--cmp-a)"></span>Jul 28</div>
+                  <div class="cmp-h"><span class="cmp-dot" style="background:var(--cmp-b)"></span>Jul 24</div>
+                  <div class="cmp-h"><span class="cmp-dot" style="background:var(--cmp-c)"></span>Jul 15</div>
+                  <div class="cmp-lab">Duration</div><div class="cmp-v">09:45</div><div class="cmp-v">09:20</div><div class="cmp-v">10:10</div>
+                  <div class="cmp-lab">Avg RoR</div><div class="cmp-v">7.4</div><div class="cmp-v">7.8</div><div class="cmp-v">7.1</div>
+                  <div class="cmp-lab">FC Temp</div><div class="cmp-v">396°</div><div class="cmp-v">390°</div><div class="cmp-v">398°</div>
+                  <div class="cmp-lab">Wt Loss</div><div class="cmp-v">15.5%</div><div class="cmp-v">14.8%</div><div class="cmp-v">16.1%</div>
+                  <div class="cmp-lab">DTR</div><div class="cmp-v">22%</div><div class="cmp-v">21%</div><div class="cmp-v">19%</div>
                 </div>
               </div>
             </div>
@@ -1015,6 +1135,11 @@
     var map = {0:'brew-0',2:'brew-2',3:'brew-3'};
     setSub('brew', map[n]);
     [0,1,2,3].forEach(function(i){ document.getElementById('bd'+i).classList.toggle('on', i<=n); });
+  }
+  function cmpToggle(k, btn){
+    btn.classList.toggle('off');
+    var off = btn.classList.contains('off');
+    document.querySelectorAll('.cmp-el-'+k).forEach(function(el){ el.style.display = off ? 'none' : ''; });
   }
   function openOv(id){ document.getElementById(id).classList.add('open'); }
   function closeOv(id){ document.getElementById(id).classList.remove('open'); }
