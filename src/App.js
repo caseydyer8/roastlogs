@@ -1788,7 +1788,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "2.0.0",
+        appVersion: "2.0.1",
         roastSessions,
         beans,
         roastProfiles,
@@ -4612,7 +4612,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v2.0.0</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v2.0.1</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
