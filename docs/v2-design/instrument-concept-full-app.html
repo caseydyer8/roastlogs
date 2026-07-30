@@ -69,6 +69,10 @@
 }
 
 *{box-sizing:border-box; margin:0; padding:0}
+/* buttons must inherit the app's ink + type — otherwise iOS Safari paints
+   them system-blue in the system font (invisible in desktop Chrome) */
+button{ font:inherit; color:inherit; -webkit-appearance:none; appearance:none;
+  -webkit-tap-highlight-color:transparent }
 .stage{
   font-family:"IBM Plex Sans",-apple-system,"Segoe UI",sans-serif;
   color:var(--ink); background:#0b0908;
@@ -392,8 +396,27 @@
 .tile{ background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px 6px;
   text-align:center; cursor:pointer }
 .tile.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--surface)) }
-.tile-emoji{ font-size:22px; display:block; margin-bottom:6px }
+.tile-icon{ display:flex; justify-content:center; margin-bottom:7px; color:var(--ink-muted) }
+.tile-icon svg{ width:22px; height:22px }
+.tile.on .tile-icon{ color:var(--accent) }
 .tile-label{ font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:11px }
+
+/* ---------- wheel picker (iOS drum, instrument materials) ---------- */
+.wheel{ position:relative; height:148px; overflow:hidden; border-radius:12px;
+  background:var(--surface); border:1px solid var(--line) }
+.wheel-list{ display:flex; flex-direction:column; align-items:center; justify-content:center;
+  height:100%; gap:1px }
+.wheel-item{ font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700;
+  letter-spacing:.05em; text-transform:uppercase; padding:4px 0; color:var(--ink-muted) }
+.wheel-item.d2{ font-size:11px; opacity:.32 }
+.wheel-item.d1{ font-size:13px; opacity:.58 }
+.wheel-item.sel{ font-size:16.5px; color:var(--ink); opacity:1 }
+.wheel-band{ position:absolute; left:10px; right:10px; top:50%; height:34px;
+  transform:translateY(-50%); border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--accent) 7%,transparent); border-radius:6px; pointer-events:none }
+.wheel-fade-t,.wheel-fade-b{ position:absolute; left:0; right:0; height:40px; pointer-events:none }
+.wheel-fade-t{ top:0; background:linear-gradient(var(--surface),transparent) }
+.wheel-fade-b{ bottom:0; background:linear-gradient(transparent,var(--surface)) }
 
 /* ---------- overlays ---------- */
 .overlay{ position:absolute; inset:0; background:rgba(8,6,5,.62); display:none;
@@ -752,10 +775,17 @@
               <div class="field-stack"><label class="input-label">Link to roast</label>
                 <div class="input" style="display:flex;justify-content:space-between;align-items:center">Ethiopia Guji Shakiso · Jul 28<span class="chev">▾</span></div></div>
               <div class="field-stack"><label class="input-label">Method</label>
-                <div class="tilegrid">
-                  <div class="tile on"><span class="tile-emoji">☕</span><span class="tile-label">V60</span></div>
-                  <div class="tile"><span class="tile-emoji">🫗</span><span class="tile-label">Aeropress</span></div>
-                  <div class="tile"><span class="tile-emoji">⚗️</span><span class="tile-label">Espresso</span></div>
+                <div class="wheel">
+                  <div class="wheel-list">
+                    <span class="wheel-item d2">Chemex</span>
+                    <span class="wheel-item d1">Espresso</span>
+                    <span class="wheel-item sel">V60</span>
+                    <span class="wheel-item d1">Aeropress</span>
+                    <span class="wheel-item d2">French press</span>
+                  </div>
+                  <div class="wheel-band"></div>
+                  <div class="wheel-fade-t"></div>
+                  <div class="wheel-fade-b"></div>
                 </div></div>
               <div class="field-stack"><label class="input-label">Ratio</label>
                 <div class="chip-row"><span class="chip">1:15</span><span class="chip on">1:16</span><span class="chip">1:17</span><span class="chip">1:18</span></div></div>
@@ -766,12 +796,12 @@
             <div class="subview" data-sub="brew-2">
               <div class="section-heading">Flavor families</div>
               <div class="tilegrid" style="margin-bottom:16px">
-                <div class="tile on"><span class="tile-emoji">🫐</span><span class="tile-label">Fruity</span></div>
-                <div class="tile on"><span class="tile-emoji">🌸</span><span class="tile-label">Floral</span></div>
-                <div class="tile"><span class="tile-emoji">🍫</span><span class="tile-label">Cocoa</span></div>
-                <div class="tile"><span class="tile-emoji">🥜</span><span class="tile-label">Nutty</span></div>
-                <div class="tile on"><span class="tile-emoji">🍯</span><span class="tile-label">Sweet</span></div>
-                <div class="tile"><span class="tile-emoji">🌶️</span><span class="tile-label">Spice</span></div>
+                <div class="tile on"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="14.5" r="4.2"/><circle cx="15.5" cy="12.5" r="4.2"/><path d="M13 6.5c1.2-2 3-2.8 5-2.4-.4 1.9-1.8 3.3-3.8 3.6"/></svg></span><span class="tile-label">Fruity</span></div>
+                <div class="tile on"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="2.4"/><path d="M12 4.5v3.6M12 15.9v3.6M4.5 12h3.6M15.9 12h3.6M6.9 6.9l2.4 2.4M14.7 14.7l2.4 2.4M17.1 6.9l-2.4 2.4M9.3 14.7l-2.4 2.4"/></svg></span><span class="tile-label">Floral</span></div>
+                <div class="tile"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><ellipse cx="12" cy="12" rx="6" ry="8.3" transform="rotate(16 12 12)"/><path d="M10 5c2.8 4 2.8 10 0 14" transform="rotate(16 12 12)"/></svg></span><span class="tile-label">Cocoa</span></div>
+                <div class="tile"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5c0-3.1 2.2-5.2 5-5.2s5 2.1 5 5.2"/><path d="M7 10.5h10c0 4-2.2 8-5 8s-5-4-5-8Z"/></svg></span><span class="tile-label">Nutty</span></div>
+                <div class="tile on"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 4.5c3 3.8 5.5 6.8 5.5 9.7a5.5 5.5 0 1 1-11 0c0-2.9 2.5-5.9 5.5-9.7Z"/></svg></span><span class="tile-label">Sweet</span></div>
+                <div class="tile"><span class="tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4c1 3-3.5 4.6-3.5 9a5.5 5.5 0 0 0 11 0c0-2-.9-3.6-2-4.6-.2 1.2-.9 2.1-1.9 2.4C15.9 8.6 14.4 6 12 4Z"/></svg></span><span class="tile-label">Spice</span></div>
               </div>
               <div class="btn-row">
                 <button class="btn" onclick="brewStep(0)">Back</button>
