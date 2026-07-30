@@ -301,7 +301,13 @@
 .leg{ display:inline-flex; align-items:center; gap:6px; font-family:"IBM Plex Mono",monospace;
   font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-muted) }
 .leg i{ width:14px; height:3px; border-radius:2px; display:inline-block }
-.chart-svg{ width:100%; height:150px; display:block }
+.chart-svg{ width:100%; height:auto; display:block }
+.chart-cap{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px }
+.chart-sub{ font-family:"IBM Plex Mono",monospace; font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-muted) }
+.chart-svg text{ font-family:"IBM Plex Mono",monospace; fill:var(--ink-muted); font-variant-numeric:tabular-nums }
+.chart-svg .gridline{ stroke:var(--line); stroke-width:1 }
+.chart-svg .axttl{ letter-spacing:.08em; fill:var(--ink-muted) }
 
 /* ---------- bag label ---------- */
 .bag-label{ border:1.5px dashed color-mix(in srgb,var(--accent) 55%,transparent); border-radius:14px;
@@ -584,33 +590,62 @@
               </div>
 
               <div class="chart-card">
-                <div class="eyebrow" style="margin-bottom:8px">Development curve</div>
-                <svg class="chart-svg" viewBox="0 0 320 150" preserveAspectRatio="none">
-                  <rect x="0" y="0" width="150" height="150" fill="var(--warn)" opacity="0.05"/>
-                  <rect x="150" y="0" width="80" height="150" fill="var(--accent)" opacity="0.07"/>
-                  <rect x="230" y="0" width="90" height="150" fill="var(--chart-heat)" opacity="0.06"/>
-                  <line x1="0" y1="112" x2="320" y2="112" stroke="var(--line)"/>
-                  <line x1="0" y1="74" x2="320" y2="74" stroke="var(--line)"/>
-                  <line x1="0" y1="37" x2="320" y2="37" stroke="var(--line)"/>
-                  <!-- temp (monotone) -->
-                  <path d="M4 132 C70 120 120 96 170 66 C220 38 270 24 316 18" fill="none" stroke="var(--chart-temp)" stroke-width="2.6" stroke-linecap="round"/>
-                  <!-- ror (monotone hump) -->
-                  <path d="M4 120 C60 70 110 54 160 60 C215 66 265 92 316 108" fill="none" stroke="var(--chart-ror)" stroke-width="1.8" stroke-linecap="round" opacity=".9"/>
+                <div class="chart-cap"><span class="eyebrow">Development curve</span><span class="chart-sub">Temp °F · RoR °/m</span></div>
+                <svg class="chart-svg" viewBox="0 0 330 178" role="img" aria-label="Roast development curve: bean temperature and rate of rise over time">
+                  <!-- phase bands: drying / maillard / development -->
+                  <rect x="32" y="14" width="119" height="126" fill="var(--warn)" opacity="0.06"/>
+                  <rect x="151" y="14" width="78" height="126" fill="var(--accent)" opacity="0.08"/>
+                  <rect x="229" y="14" width="71" height="126" fill="var(--chart-heat)" opacity="0.07"/>
+                  <!-- horizontal gridlines · left = Temp °F · right = RoR °/m -->
+                  <line class="gridline" x1="32" y1="14" x2="300" y2="14"/><text x="28" y="17" font-size="8" text-anchor="end">450</text><text x="304" y="17" font-size="8">15</text>
+                  <line class="gridline" x1="32" y1="56" x2="300" y2="56"/><text x="28" y="59" font-size="8" text-anchor="end">350</text><text x="304" y="59" font-size="8">10</text>
+                  <line class="gridline" x1="32" y1="98" x2="300" y2="98"/><text x="28" y="101" font-size="8" text-anchor="end">250</text><text x="304" y="101" font-size="8">5</text>
+                  <line x1="32" y1="140" x2="300" y2="140" stroke="var(--ink-muted)" opacity=".5"/><text x="28" y="143" font-size="8" text-anchor="end">150</text><text x="304" y="143" font-size="8">0</text>
+                  <!-- vertical time ticks -->
+                  <line class="gridline" x1="32" y1="140" x2="32" y2="144"/><text x="32" y="154" font-size="8" text-anchor="middle">0:00</text>
+                  <line class="gridline" x1="99" y1="140" x2="99" y2="144"/><text x="99" y="154" font-size="8" text-anchor="middle">2:30</text>
+                  <line class="gridline" x1="166" y1="140" x2="166" y2="144"/><text x="166" y="154" font-size="8" text-anchor="middle">5:00</text>
+                  <line class="gridline" x1="233" y1="140" x2="233" y2="144"/><text x="233" y="154" font-size="8" text-anchor="middle">7:30</text>
+                  <line class="gridline" x1="300" y1="140" x2="300" y2="144"/><text x="300" y="154" font-size="8" text-anchor="middle">9:45</text>
+                  <!-- axis titles -->
+                  <text x="6" y="12" font-size="7.5" class="axttl">°F</text>
+                  <text x="324" y="12" font-size="7.5" class="axttl" text-anchor="end">°/m</text>
+                  <text x="166" y="172" font-size="7.5" class="axttl" text-anchor="middle">TIME (MM:SS)</text>
+                  <!-- ror (monotone hump · right scale) -->
+                  <path d="M32 82 C70 46 118 34 150 36 C200 40 262 78 300 100" fill="none" stroke="var(--chart-ror)" stroke-width="1.8" stroke-linecap="round" opacity=".95"/>
+                  <!-- temp (monotone · left scale) -->
+                  <path d="M32 132 C80 126 132 104 166 86 C214 62 262 34 300 20" fill="none" stroke="var(--chart-temp)" stroke-width="2.6" stroke-linecap="round"/>
+                  <circle cx="300" cy="20" r="2.6" fill="var(--chart-temp)"/>
                 </svg>
                 <div class="chart-legend">
-                  <span class="leg"><i style="background:var(--chart-temp)"></i>Temp</span>
-                  <span class="leg"><i style="background:var(--chart-ror)"></i>RoR</span>
+                  <span class="leg"><i style="background:var(--chart-temp)"></i>Temp °F</span>
+                  <span class="leg"><i style="background:var(--chart-ror)"></i>RoR °/m</span>
+                  <span class="leg" style="color:var(--ink-muted)">FC 07:10</span>
                 </div>
               </div>
 
               <div class="chart-card">
-                <div class="eyebrow" style="margin-bottom:8px">Control map · Fan → Heat</div>
-                <svg class="chart-svg" viewBox="0 0 320 120" preserveAspectRatio="none">
-                  <line x1="0" y1="100" x2="320" y2="100" stroke="var(--line)"/>
-                  <!-- fan (stepAfter) -->
-                  <path d="M4 22 H90 V34 H180 V34 H260 V46 H316" fill="none" stroke="var(--chart-fan)" stroke-width="2.2"/>
-                  <!-- heat (stepAfter) -->
-                  <path d="M4 52 H70 V66 H150 V80 H240 V92 H316" fill="none" stroke="var(--chart-heat)" stroke-width="2.4"/>
+                <div class="chart-cap"><span class="eyebrow">Control map · Fan → Heat</span><span class="chart-sub">Dial 1–9</span></div>
+                <svg class="chart-svg" viewBox="0 0 330 150" role="img" aria-label="Control map: fan and heat dial levels over time, drawn as step lines">
+                  <!-- horizontal gridlines · dial level 1-9 -->
+                  <line class="gridline" x1="32" y1="12" x2="300" y2="12"/><text x="28" y="15" font-size="8" text-anchor="end">9</text>
+                  <line class="gridline" x1="32" y1="37" x2="300" y2="37"/><text x="28" y="40" font-size="8" text-anchor="end">7</text>
+                  <line class="gridline" x1="32" y1="62" x2="300" y2="62"/><text x="28" y="65" font-size="8" text-anchor="end">5</text>
+                  <line class="gridline" x1="32" y1="87" x2="300" y2="87"/><text x="28" y="90" font-size="8" text-anchor="end">3</text>
+                  <line x1="32" y1="112" x2="300" y2="112" stroke="var(--ink-muted)" opacity=".5"/><text x="28" y="115" font-size="8" text-anchor="end">1</text>
+                  <!-- vertical time ticks -->
+                  <line class="gridline" x1="32" y1="112" x2="32" y2="116"/><text x="32" y="126" font-size="8" text-anchor="middle">0:00</text>
+                  <line class="gridline" x1="99" y1="112" x2="99" y2="116"/><text x="99" y="126" font-size="8" text-anchor="middle">2:30</text>
+                  <line class="gridline" x1="166" y1="112" x2="166" y2="116"/><text x="166" y="126" font-size="8" text-anchor="middle">5:00</text>
+                  <line class="gridline" x1="233" y1="112" x2="233" y2="116"/><text x="233" y="126" font-size="8" text-anchor="middle">7:30</text>
+                  <line class="gridline" x1="300" y1="112" x2="300" y2="116"/><text x="300" y="126" font-size="8" text-anchor="middle">9:45</text>
+                  <!-- axis titles -->
+                  <text x="6" y="12" font-size="7.5" class="axttl">DIAL</text>
+                  <text x="166" y="144" font-size="7.5" class="axttl" text-anchor="middle">TIME (MM:SS)</text>
+                  <!-- fan step (9 → 8 → 7) -->
+                  <path d="M32 12 H73 V24.5 H224 V37 H300" fill="none" stroke="var(--chart-fan)" stroke-width="2.2"/>
+                  <!-- heat step (7 → 6 → 5 → 4) -->
+                  <path d="M32 37 H73 V49.5 H142 V62 H224 V74.5 H300" fill="none" stroke="var(--chart-heat)" stroke-width="2.4"/>
                 </svg>
                 <div class="chart-legend">
                   <span class="leg"><i style="background:var(--chart-fan)"></i>Fan</span>
