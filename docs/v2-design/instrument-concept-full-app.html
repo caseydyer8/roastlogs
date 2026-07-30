@@ -54,18 +54,18 @@
   --bg:#15120f; --surface:#1f1a16; --surface-2:#29221c;
   --ink:#f3ece3; --ink-muted:#a99c8e;
   --accent:#d97d3d; --accent-ink:#17110b;
-  --line:#352c24; --good:#7bb489; --warn:#d9b24c;
+  --line:#352c24; --good:#9db26b; --warn:#d9b24c;
   --chart-temp:#d97d3d; --chart-ror:#b8a0d6; --chart-heat:#d0654a; --chart-fan:#d9c9a3;
-  --cmp-a:#d97d3d; --cmp-b:#b8a0d6; --cmp-c:#9ec49a;
+  --cmp-a:#d97d3d; --cmp-b:#b8a0d6; --cmp-c:#a9bd82;
   --r:18px;
 }
 :root[data-theme="light"], .app[data-theme="light"]{
   --bg:#f1f0ee; --surface:#ffffff; --surface-2:#e7e4df;
   --ink:#1a1613; --ink-muted:#746a5f;
   --accent:#c2601f; --accent-ink:#fffdf9;
-  --line:#dcd8d1; --good:#3f7a52; --warn:#9c7a1e;
+  --line:#dcd8d1; --good:#55743a; --warn:#9c7a1e;
   --chart-temp:#c2601f; --chart-ror:#7a5aa8; --chart-heat:#b64a33; --chart-fan:#7d6a4a;
-  --cmp-a:#c2601f; --cmp-b:#7a5aa8; --cmp-c:#3f7a52;
+  --cmp-a:#c2601f; --cmp-b:#7a5aa8; --cmp-c:#55743a;
 }
 
 *{box-sizing:border-box; margin:0; padding:0}
@@ -218,6 +218,11 @@
 .tick.filled{ background:var(--accent) }
 .dial-trend{ display:inline-flex; align-items:center; gap:3px; margin-top:11px;
   font-family:"IBM Plex Mono",monospace; font-size:10px; color:var(--good) }
+.guide-strip{ display:inline-flex; align-items:center; gap:10px; margin-top:14px;
+  border:1px solid var(--line); border-radius:999px; padding:7px 14px;
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase }
+.guide-strip .lab{ color:var(--ink-muted) }
+.guide-strip .val{ color:var(--accent); font-weight:600 }
 .trend-caret{ width:9px; height:9px }
 .rail-wrap{ margin:26px 6px 4px }
 .rail-track{ position:relative; height:2px; background:var(--line); margin:0 6px }
@@ -483,6 +488,11 @@
                     <div class="dial-trend"><svg class="trend-caret" viewBox="0 0 10 10" fill="currentColor"><path d="M5 1l4 6H1z"/></svg>rising</div>
                   </div>
                 </div>
+                <div class="guide-strip">
+                  <span class="lab">Next step</span>
+                  <span class="val">08:00 · F 7 · H 4</span>
+                  <span class="lab">in 0:18</span>
+                </div>
                 <div class="rail-wrap">
                   <div class="rail-track"><div class="rail-fill"></div></div>
                   <ul class="rail-nodes">
@@ -528,7 +538,7 @@
                   <span class="chip on">00:00 · F9 H7</span>
                   <span class="chip">01:30 · F8 H6</span>
                   <span class="chip">04:00 · F8 H5</span>
-                  <span class="chip">07:00 · F7 H4</span>
+                  <span class="chip">08:00 · F7 H4</span>
                 </div>
               </div>
               <button class="btn btn-primary" onclick="setSub('roast','roast-live')">Start roast</button>
