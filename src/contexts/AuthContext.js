@@ -92,12 +92,22 @@ function enforceLocalDataOwner(userId) {
     }
 
     if (prevOwner !== userId) {
-      // Only record the new owner once the cache is verifiably clear. If any
-      // key survived (e.g. storage failure), leave the marker alone so the next
-      // sign-in retries the purge instead of assuming it succeeded.
-      const stillPresent = USER_DATA_KEYS.some(
-        (k) => window.localStorage.getItem(k) != null
-      );
+      // Only record the new owner once the cache is verifiably clear — including
+      // the in-progress-roast (live_*) keys, not just USER_DATA_KEYS. If any key
+      // survived (e.g. a storage failure during purge), leave the marker alone so
+      // the next sign-in retries the purge instead of assuming it succeeded and
+      // letting a prior account's live roast surface for this one.
+      let liveKeyPresent = false;
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("live_")) {
+          liveKeyPresent = true;
+          break;
+        }
+      }
+      const stillPresent =
+        liveKeyPresent ||
+        USER_DATA_KEYS.some((k) => window.localStorage.getItem(k) != null);
       if (!stillPresent) {
         window.localStorage.setItem(DATA_OWNER_KEY, userId);
       }
@@ -137,7 +147,13 @@ export function AuthProvider({ children }) {
           // means this session hasn't entered a code yet.
           needMfa = !!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2";
         } catch (e) {
-          needMfa = false;
+          // Fail CLOSED: a session that can't prove it reached aal2 is treated as
+          // still owing the second factor, so an AAL-read error routes to the code
+          // prompt (which has a sign-out escape) instead of into the app. The aal2
+          // RLS rule already blocks data for a non-aal2 session server-side; this
+          // just keeps the UI honest rather than showing an app shell that can't
+          // actually load anything.
+          needMfa = true;
         }
       }
       if (!mounted) return;
@@ -227,7 +243,11 @@ export function AuthProvider({ children }) {
       const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       setMfaRequired(!!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2");
     } catch (e) {
-      setMfaRequired(false);
+      // This is a re-sync helper (runs after enroll/unenroll), NOT the login
+      // gate. On a read error, leave the current requirement untouched rather
+      // than flipping it off (which would be fail-open). The authoritative gate
+      // is applySession, which fails closed; submitMfaChallenge sets the flag
+      // directly when a code is verified.
     }
   }, []);
 
@@ -275,9 +295,12 @@ export function AuthProvider({ children }) {
         code,
       });
       if (error) throw error;
-      await refreshMfaStatus();
+      // A verified code means this session is now aal2 — authoritative. Set the
+      // gate directly instead of re-reading the assurance level, so a transient
+      // read error can't bounce a user who just entered a correct code.
+      setMfaRequired(false);
     },
-    [refreshMfaStatus]
+    []
   );
 
   const listMfaFactors = React.useCallback(async () => {

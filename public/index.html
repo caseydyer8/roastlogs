@@ -3,6 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Content-Security-Policy. GitHub Pages cannot set HTTP response headers, so
+      this is delivered as a meta tag. It confines the app to loading code and
+      talking only to itself + the Supabase project:
+        script-src 'self'        — only our own hashed bundle; blocks injected/CDN JS.
+        style-src  'unsafe-inline'— React/recharts attach inline styles; required.
+        img/font   data:         — the MFA QR code and roast photos are data: URIs.
+        connect-src              — REST + realtime only to our Supabase project.
+        object-src 'none'        — no <object>/<embed> plugins.
+      NOTE: frame-ancestors and HSTS are header-only (a meta tag can't set them),
+      so clickjacking/HSTS protection is not available on GitHub Pages hosting.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://wkrldncwempanksmpnay.supabase.co wss://wkrldncwempanksmpnay.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
     <title>Roastlogs</title>
   </head>
   <body>
