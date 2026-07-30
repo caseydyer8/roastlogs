@@ -1011,7 +1011,14 @@ function App() {
 
       setSyncStatus((cloudRoasts.length > 0 || localRoasts.length > 0) ? 'success' : 'idle');
     };
-    performInitialSync();
+    performInitialSync().catch((e) => {
+      // A storage write mid-sync (e.g. QuotaExceededError from setItem) would
+      // otherwise become an unhandled rejection and leave syncStatus stuck on
+      // 'syncing' with no failure signal. Surface it as an error instead —
+      // unless the account already switched and this instance is tearing down.
+      console.warn("Initial sync failed", e);
+      if (!cancelled) setSyncStatus('error');
+    });
     // Abort the in-flight sync if the account changes mid-flight. Without this,
     // the previous user's async writes land AFTER the new user's cache purge —
     // re-seeding their data and even uploading it under the new account's id.
@@ -1522,8 +1529,11 @@ function App() {
     
     // Supabase Sync
     setSyncStatus('syncing');
-    deleteRoastFromSupabase(id).then(() => {
-      setSyncStatus('success');
+    deleteRoastFromSupabase(id).then((ok) => {
+      // The helper resolves false (it never rejects) on a failed cloud delete;
+      // surface that as 'error' so a silently-failed delete isn't shown as
+      // success and then resurrected by the add-only mount merge next launch.
+      setSyncStatus(ok ? 'success' : 'error');
     }).catch(() => {
       setSyncStatus('error');
     });
@@ -1546,8 +1556,8 @@ function App() {
 
     // Supabase Sync
     setSyncStatus('syncing');
-    deleteBrewFromSupabase(id).then(() => {
-      setSyncStatus('success');
+    deleteBrewFromSupabase(id).then((ok) => {
+      setSyncStatus(ok ? 'success' : 'error');
     }).catch(() => {
       setSyncStatus('error');
     });
@@ -1575,10 +1585,11 @@ function App() {
         ...matchedRoasts.map(r => deleteRoastFromSupabase(r.id)),
         ...matchedBrews.map(t => deleteBrewFromSupabase(t.id)),
         ...(bean.id ? [deleteBeanFromSupabase(bean.id)] : []),
-      ]).then(() => setSyncStatus('success')).catch(() => setSyncStatus('error'));
+      ]).then((results) => setSyncStatus(results.every(Boolean) ? 'success' : 'error'))
+        .catch(() => setSyncStatus('error'));
     } else if (bean.id) {
       setSyncStatus('syncing');
-      deleteBeanFromSupabase(bean.id).then(() => setSyncStatus('success')).catch(() => setSyncStatus('error'));
+      deleteBeanFromSupabase(bean.id).then((ok) => setSyncStatus(ok ? 'success' : 'error')).catch(() => setSyncStatus('error'));
     }
 
     if (bean.id) {

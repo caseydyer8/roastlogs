@@ -71,8 +71,13 @@ export async function deleteRoastFromSupabase(id) {
       .eq('id', Number(id));
 
     if (error) throw error;
+    return true;
   } catch (e) {
+    // Returns a boolean so the caller can surface a failed delete. A silently-
+    // failed cloud delete gets re-added by the add-only mount merge on the next
+    // launch, resurrecting a roast the user deleted. (Mirrors deleteProfile.)
     console.warn("Failed to delete roast from Supabase", e);
+    return false;
   }
 }
 
@@ -121,8 +126,12 @@ export async function deleteBrewFromSupabase(id) {
       .eq('id', Number(id));
 
     if (error) throw error;
+    return true;
   } catch (e) {
+    // Boolean return so a failed delete can be surfaced, not silently swallowed
+    // (see deleteRoastFromSupabase).
     console.warn("Failed to delete brew from Supabase", e);
+    return false;
   }
 }
 
@@ -252,8 +261,12 @@ export async function deleteBeanFromSupabase(id) {
       .eq('id', Number(id));
 
     if (error) throw error;
+    return true;
   } catch (e) {
+    // Boolean return so a failed delete can be surfaced, not silently swallowed
+    // (see deleteRoastFromSupabase).
     console.warn("Failed to delete bean from Supabase", e);
+    return false;
   }
 }
 
