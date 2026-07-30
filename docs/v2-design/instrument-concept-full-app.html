@@ -55,8 +55,8 @@
   --ink:#f3ece3; --ink-muted:#a99c8e;
   --accent:#d97d3d; --accent-ink:#17110b;
   --line:#352c24; --good:#7bb489; --warn:#d9b24c;
-  --chart-temp:#d97d3d; --chart-ror:#b8a0d6; --chart-heat:#d0654a; --chart-fan:#6f9bb3;
-  --cmp-a:#d97d3d; --cmp-b:#8fb4c9; --cmp-c:#9ec49a;
+  --chart-temp:#d97d3d; --chart-ror:#b8a0d6; --chart-heat:#d0654a; --chart-fan:#d9c9a3;
+  --cmp-a:#d97d3d; --cmp-b:#b8a0d6; --cmp-c:#9ec49a;
   --r:18px;
 }
 :root[data-theme="light"], .app[data-theme="light"]{
@@ -64,8 +64,8 @@
   --ink:#1a1613; --ink-muted:#746a5f;
   --accent:#c2601f; --accent-ink:#fffdf9;
   --line:#dcd8d1; --good:#3f7a52; --warn:#9c7a1e;
-  --chart-temp:#c2601f; --chart-ror:#7a5aa8; --chart-heat:#b64a33; --chart-fan:#3f7590;
-  --cmp-a:#c2601f; --cmp-b:#3f7590; --cmp-c:#3f7a52;
+  --chart-temp:#c2601f; --chart-ror:#7a5aa8; --chart-heat:#b64a33; --chart-fan:#7d6a4a;
+  --cmp-a:#c2601f; --cmp-b:#7a5aa8; --cmp-c:#3f7a52;
 }
 
 *{box-sizing:border-box; margin:0; padding:0}
@@ -205,8 +205,9 @@
 .dial-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:22px }
 .dial{
   background:var(--surface); border:1px solid var(--line); border-radius:14px;
-  padding:14px 8px 12px; text-align:center;
+  padding:14px 8px 12px; text-align:center; cursor:pointer;
 }
+.dial:active{ transform:scale(.97) }
 .dial-label{ font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.18em;
   text-transform:uppercase; color:var(--ink-muted); margin-bottom:8px }
 .dial-value{ font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:34px; line-height:1;
@@ -236,6 +237,7 @@
 .spark-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px }
 .spark-svg{ width:100%; height:64px; display:block }
 .hero-actions{ display:flex; justify-content:center; gap:18px; margin-top:14px }
+.hero-cta{ display:flex; flex-direction:column; gap:10px; margin:22px 2px 0 }
 
 /* ---------- roast — setup ---------- */
 .setup-grid{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line);
@@ -460,7 +462,7 @@
                   <span class="phase-pill">Development</span>
                 </div>
                 <div class="dial-row">
-                  <div class="dial">
+                  <div class="dial" onclick="openOv('numpadOv')">
                     <div class="dial-label">Fan</div><div class="dial-value">8</div>
                     <div class="dial-ticks">
                       <span class="tick filled"></span><span class="tick filled"></span><span class="tick filled"></span>
@@ -468,7 +470,7 @@
                       <span class="tick filled"></span><span class="tick filled"></span><span class="tick"></span>
                     </div>
                   </div>
-                  <div class="dial">
+                  <div class="dial" onclick="openOv('numpadOv')">
                     <div class="dial-label">Heat</div><div class="dial-value">5</div>
                     <div class="dial-ticks">
                       <span class="tick filled"></span><span class="tick filled"></span><span class="tick filled"></span>
@@ -476,7 +478,7 @@
                       <span class="tick"></span><span class="tick"></span><span class="tick"></span>
                     </div>
                   </div>
-                  <div class="dial">
+                  <div class="dial" onclick="openOv('numpadOv')">
                     <div class="dial-label">Temp</div><div class="dial-value">412<span class="dial-unit">°F</span></div>
                     <div class="dial-trend"><svg class="trend-caret" viewBox="0 0 10 10" fill="currentColor"><path d="M5 1l4 6H1z"/></svg>rising</div>
                   </div>
@@ -497,8 +499,11 @@
                     <circle cx="278" cy="5" r="3.5" fill="var(--chart-temp)"/>
                   </svg>
                 </div>
+                <div class="hero-cta">
+                  <button class="btn btn-primary">● Mark cooling start</button>
+                  <button class="btn" onclick="openOv('numpadOv')">Log adjustment</button>
+                </div>
                 <div class="hero-actions">
-                  <button class="text-action" onclick="openOv('numpadOv')">Log adjustment</button>
                   <button class="text-action warn" onclick="setSub('roast','roast-setup')">Discard roast</button>
                 </div>
               </div>
@@ -990,7 +995,7 @@
         <section class="screen" data-screen="settings">
           <div class="pad">
             <div class="detail-head">
-              <button class="back" onclick="go('roast')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Done</button>
+              <button class="back" onclick="goBack()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Done</button>
             </div>
             <div class="detail-title" style="margin-bottom:16px">Settings</div>
 
@@ -1105,8 +1110,12 @@
   var tabbar = document.getElementById('tabbar');
   var titleEl = document.getElementById('brandOrTitle');
   var TAB_TITLES = { roast:'Roast', history:'History', brew:'Brew', beans:'Beans', settings:'Settings' };
+  var lastTab = 'roast';
+  function goBack(){ go(lastTab); }
 
   function go(screen, sub){
+    var cur = document.querySelector('.screen.active');
+    if(screen==='settings' && cur && cur.dataset.screen!=='settings' && cur.dataset.screen!=='login'){ lastTab = cur.dataset.screen; }
     document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.dataset.screen===screen); });
     // tab highlight
     document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.tab===screen); });
