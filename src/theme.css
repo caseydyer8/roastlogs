@@ -3,55 +3,61 @@
    opacity modifier (bg-surface/30) automatically. Values are RGB triplets
    (space-separated, no commas) so Tailwind's rgb(var(--x) / <alpha-value>)
    color functions can apply opacity. Dark is the default (:root); light
-   overrides via [data-theme="light"] on <html>. */
+   overrides via [data-theme="light"] on <html>.
+
+   v3 "Instrument Concept" palette (2026-07): warm coffee-dark ground + ember
+   accent, warm-paper light theme. Warm-only rule — no cool hues: Fan chart line
+   is parchment (air), Heat is terracotta (fire); success is a warm moss, not a
+   cool mint. Token NAMES are unchanged from v2 so the swap re-skins the whole
+   app without any markup changes. */
 
 :root {
-  --bg-primary: 9 9 11;         /* #09090b zinc-950 */
-  --bg-surface: 24 24 27;       /* #18181b zinc-900 */
-  --bg-card: 39 39 42;          /* #27272a zinc-800 */
-  --text-primary: 244 244 245;  /* #f4f4f5 zinc-100 */
-  --text-muted: 113 113 122;    /* #71717a zinc-500 */
-  --border-color: 39 39 42;     /* #27272a zinc-800 */
+  --bg-primary: 21 18 15;       /* #15120f warm near-black */
+  --bg-surface: 31 26 22;       /* #1f1a16 raised surface */
+  --bg-card: 41 34 28;          /* #29221c card / inset */
+  --text-primary: 243 236 227;  /* #f3ece3 warm off-white */
+  --text-muted: 169 156 142;    /* #a99c8e warm grey */
+  --border-color: 53 44 36;     /* #352c24 hairline */
 
-  --accent-fill: 245 158 11;    /* #f59e0b amber-500 */
-  --accent-text: 251 191 36;    /* #fbbf24 amber-400 */
+  --accent-fill: 217 125 61;    /* #d97d3d ember */
+  --accent-text: 217 125 61;    /* #d97d3d ember (legible on all dark surfaces) */
 
-  --error-fill: 220 38 38;      /* #dc2626 red-600 */
+  --error-fill: 220 38 38;      /* #dc2626 red-600 (kept clearly "error", not accent) */
   --error-text: 248 113 113;    /* #f87171 red-400 */
-  --success-fill: 22 163 74;    /* #16a34a green-600 */
-  --success-text: 74 222 128;   /* #4ade80 green-400 */
+  --success-fill: 122 152 74;   /* #7a984a moss */
+  --success-text: 157 178 107;  /* #9db26b warm moss (Synced dot, stock grams) */
 
-  --chart-ror: 167 139 250;     /* #a78bfa violet-400 */
-  --chart-heat: 239 68 68;      /* #ef4444 red-500 */
-  --chart-fan: 56 189 248;      /* #38bdf8 sky-400 */
-  --chart-temp: 245 158 11;     /* #f59e0b amber-500 — matches original chart hex exactly */
-  --chart-grid: 39 39 42;       /* #27272a */
-  --chart-tick: 113 113 122;    /* #71717a */
+  --chart-ror: 184 160 214;     /* #b8a0d6 muted violet */
+  --chart-heat: 208 101 74;     /* #d0654a terracotta — fire */
+  --chart-fan: 217 201 163;     /* #d9c9a3 parchment — air */
+  --chart-temp: 217 125 61;     /* #d97d3d ember (the hero line) */
+  --chart-grid: 53 44 36;       /* #352c24 */
+  --chart-tick: 169 156 142;    /* #a99c8e */
 }
 
 [data-theme="light"] {
-  --bg-primary: 253 246 227;    /* #fdf6e3 warm cream */
-  --bg-surface: 245 230 200;    /* #f5e6c8 light kraft paper */
-  --bg-card: 237 224 196;       /* #ede0c4 card background */
-  --text-primary: 44 26 14;     /* #2c1a0e dark espresso */
-  --text-muted: 122 90 61;      /* #7a5a3d medium roast brown, AA on all light surfaces */
-  --border-color: 212 169 106;  /* #d4a96a warm tan */
+  --bg-primary: 241 240 238;    /* #f1f0ee warm paper */
+  --bg-surface: 255 255 255;    /* #ffffff */
+  --bg-card: 231 228 223;       /* #e7e4df card / inset */
+  --text-primary: 26 22 19;     /* #1a1613 near-black warm */
+  --text-muted: 116 106 95;     /* #746a5f warm grey, AA on light surfaces */
+  --border-color: 220 216 209;  /* #dcd8d1 hairline */
 
-  /* Amber-500 fails 3:1 as a foreground mark on cream (1.99:1) — accent-fill
-     stays amber-500 for solid buttons/fills only. accent-text (amber-800) is
-     for text and foreground marks (chips, stars, chart lines) on light bg. */
-  --accent-fill: 245 158 11;    /* #f59e0b amber-500 */
-  --accent-text: 146 64 14;     /* #92400e amber-800 */
+  /* Deeper ember for legibility on paper. Used for headings, pills, and marks;
+     large/bold accent text clears AA, small accent text sits just under — keep
+     accent text bold or large. Solid fills use the same ember. */
+  --accent-fill: 194 96 31;     /* #c2601f */
+  --accent-text: 194 96 31;     /* #c2601f */
 
   --error-fill: 220 38 38;      /* #dc2626 red-600 */
   --error-text: 185 28 28;      /* #b91c1c red-700 */
-  --success-fill: 22 163 74;    /* #16a34a green-600 */
-  --success-text: 21 128 61;    /* #15803d green-700 */
+  --success-fill: 85 116 58;    /* #55743a moss */
+  --success-text: 85 116 58;    /* #55743a moss, AA on paper */
 
-  --chart-ror: 109 40 217;      /* #6d28d9 violet-700 */
-  --chart-heat: 220 38 38;      /* #dc2626 red-600 */
-  --chart-fan: 3 105 161;       /* #0369a1 sky-700 */
-  --chart-temp: 146 64 14;      /* #92400e amber-800 — matches accent-text, foreground mark on light bg */
-  --chart-grid: 212 169 106;    /* #d4a96a */
-  --chart-tick: 122 90 61;      /* #7a5a3d */
+  --chart-ror: 122 90 168;      /* #7a5aa8 violet-700 */
+  --chart-heat: 182 74 51;      /* #b64a33 terracotta */
+  --chart-fan: 125 106 74;      /* #7d6a4a dark umber — parchment reads too light on white */
+  --chart-temp: 194 96 31;      /* #c2601f ember */
+  --chart-grid: 220 216 209;    /* #dcd8d1 */
+  --chart-tick: 116 106 95;     /* #746a5f */
 }
