@@ -265,7 +265,7 @@ function NumberPad({ value, onDigit, onDelete, onDone, label }) {
             <button
               type="button"
               onClick={onDone}
-              className="flex h-16 items-center justify-center rounded-2xl bg-accent text-lg font-bold text-zinc-950 transition active:bg-amber-400 active:scale-95"
+              className="flex h-16 items-center justify-center rounded-2xl bg-accent text-lg font-bold text-zinc-950 transition active:brightness-110 active:scale-95"
             >
               DONE
             </button>
@@ -291,7 +291,7 @@ function PrimaryButton({ children, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+      className="inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
     >
       {children}
     </button>
@@ -2224,7 +2224,7 @@ function App() {
                         setIsTimerRunning(false);
                         setIsDevTimerRunning(false);
                       }}
-                      className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                      className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition"
                     >
                       DISCARD
                     </button>
@@ -2371,7 +2371,7 @@ function App() {
                         setIsAdjPopupOpen(false);
                         setActiveNumpad(null);
                       }}
-                      className="w-full rounded-2xl bg-accent py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition active:scale-[0.98]"
+                      className="w-full rounded-2xl bg-accent py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-black/20 transition active:scale-[0.98]"
                     >
                       SAVE ENTRY
                     </button>
@@ -2552,7 +2552,7 @@ function App() {
 
                     <button
                       onClick={() => setBrewStep(1)}
-                      className="w-full rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                      className="w-full rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                     >
                       START TASTING
                     </button>
@@ -2628,7 +2628,7 @@ function App() {
 
                 <button
                   onClick={() => setBrewStep(2)}
-                  className="w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                  className="w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                 >
                   NEXT
                 </button>
@@ -2680,7 +2680,7 @@ function App() {
                   <button
                     disabled={selectedFamilies.length === 0}
                     onClick={() => setBrewStep(3)}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     NEXT
                   </button>
@@ -2800,7 +2800,7 @@ function App() {
                   </button>
                   <button
                     onClick={() => setBrewStep(4)}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     NEXT
                   </button>
@@ -2903,7 +2903,7 @@ function App() {
                   </button>
                   <button
                     onClick={handleSaveBrew}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     SAVE TASTING NOTE
                   </button>
@@ -2973,7 +2973,7 @@ function App() {
                           <button
                             type="button"
                             onClick={() => setActiveTab("Roast")}
-                            className="mt-4 rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 active:scale-95"
+                            className="mt-4 rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-zinc-950 transition hover:brightness-110 active:scale-95"
                           >
                             START YOUR FIRST ROAST
                           </button>
@@ -3066,7 +3066,7 @@ function App() {
                     {hasChanges && (
                       <button
                         onClick={handleSaveEdit}
-                        className="rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-600/20 animate-pulse hover:bg-green-500 transition"
+                        className="rounded-xl bg-success px-6 py-2 text-xs font-bold text-white shadow-lg shadow-black/20 animate-pulse hover:brightness-110 transition"
                       >
                         SAVE CHANGES
                       </button>
@@ -3553,7 +3553,7 @@ function App() {
                         setNewBean({ ...EMPTY_BEAN_FORM });
                         setBeansView("addBean");
                       }}
-                      className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
+                      className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-95"
                     >
                       ADD BEAN
                     </button>
@@ -3865,7 +3865,7 @@ function App() {
                         setBeansView("list");
                       }
                     }}
-                    className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                    className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     {isEditMode ? "SAVE CHANGES" : "SAVE BEAN"}
                   </button>
@@ -4020,7 +4020,7 @@ function App() {
                                     setProfiles(profiles.map(pr => pr.id === p.id ? { ...pr, notes: profileNotesDraft } : pr));
                                     setEditingProfileNotesId(null);
                                   }}
-                                  className="flex-1 py-2 rounded-xl bg-accent text-zinc-950 font-bold text-xs hover:bg-amber-400 transition"
+                                  className="flex-1 py-2 rounded-xl bg-accent text-zinc-950 font-bold text-xs hover:brightness-110 transition"
                                 >
                                   SAVE
                                 </button>
@@ -4144,7 +4144,7 @@ function App() {
                               persistBeanUpdate({ weightAdjustments: [...(selectedBean.weightAdjustments || []), entry] });
                               setIsAdjustingWeight(false);
                             }}
-                            className="flex-1 rounded-xl bg-accent py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                            className="flex-1 rounded-xl bg-accent py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                           >
                             SAVE
                           </button>
@@ -4192,7 +4192,7 @@ function App() {
                       setPrefillBean({ name: selectedBean.name, origin: selectedBean.origin });
                       setActiveTab("Roast");
                     }}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                     LOG A SESSION
@@ -4650,7 +4650,7 @@ function App() {
                   }
                   setDeleteConfirmModal({ show: false, profileName: '', isDeleteAll: false });
                 }}
-                className="flex-1 py-3 rounded-2xl bg-red-500 text-white font-bold"
+                className="flex-1 py-3 rounded-2xl bg-error text-white font-bold"
               >
                 {deleteConfirmModal.isDeleteAll ? 'DELETE ALL' : 'DELETE'}
               </button>
@@ -4676,7 +4676,7 @@ function App() {
               <div className="space-y-3">
                 <button
                   onClick={handleExportCSV}
-                  className="w-full rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
+                  className="w-full rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition hover:brightness-110"
                 >
                   Export Roast Log (CSV)
                 </button>
@@ -4753,7 +4753,7 @@ function App() {
                     <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
                     <div className="flex gap-3">
                       <button onClick={() => setConfirmDelete(null)} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
-                      <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE</button>
                     </div>
                   </>
                 );
@@ -4765,7 +4765,7 @@ function App() {
                     <p className="text-sm text-ink-muted mb-6">This will delete {historyLabel} for this bean. This cannot be undone.</p>
                     {duplicateWarning}
                     <div className="flex flex-col gap-2">
-                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE {historyLabel.toUpperCase()}</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE {historyLabel.toUpperCase()}</button>
                       <button onClick={() => setConfirmDelete(null)} className="w-full py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
                     </div>
                   </>
@@ -4777,7 +4777,7 @@ function App() {
                   <p className="text-sm text-ink-muted mb-6">This bean has {historyLabel}. Choose whether to keep or remove them too.</p>
                   {duplicateWarning}
                   <div className="flex flex-col gap-2">
-                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
+                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
                     <button onClick={() => handleDeleteBean(confirmDelete, false)} className="w-full py-3 rounded-2xl border border-border/60 text-ink font-bold hover:bg-card transition">KEEP HISTORY, DELETE BEAN ONLY</button>
                     <button onClick={() => setConfirmDelete(null)} className="w-full py-3 text-ink-muted font-bold hover:text-ink transition">CANCEL</button>
                   </div>
@@ -4802,7 +4802,7 @@ function App() {
                       }
                       setConfirmDelete(null);
                     }}
-                    className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                    className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition"
                   >
                     DELETE
                   </button>
@@ -4816,7 +4816,7 @@ function App() {
       {/* Global toast */}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4 pointer-events-none">
-          <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-2 ${toast.type === "error" ? "bg-red-600 text-white" : "bg-green-600 text-white"}`}>
+          <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-2 ${toast.type === "error" ? "bg-error text-white" : "bg-success text-white"}`}>
             {toast.message}
           </div>
         </div>
