@@ -784,6 +784,9 @@ function App() {
   const [nextProfileStep, setNextProfileStep] = React.useState(null);
   const [profileBuilder, setProfileBuilder] = React.useState({ name: "", steps: [], isDefault: false });
   const [isProfileBuilderOpen, setIsProfileBuilderOpen] = React.useState(false);
+  // Roast setup card collapses to a summary bar once the roast is live so the
+  // hero sits right under the header; tapping the bar re-expands it.
+  const [setupOpen, setSetupOpen] = React.useState(false);
   const [editingProfileNotesId, setEditingProfileNotesId] = React.useState(null);
   const [profileNotesDraft, setProfileNotesDraft] = React.useState("");
   const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
@@ -1326,6 +1329,7 @@ function App() {
   const startRoast = (profile) => {
     setShowRoastModeDialog(false);
     setIsTimerRunning(true);
+    setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
       if (profile) {
@@ -1847,10 +1851,21 @@ function App() {
       <main className="mx-auto max-w-md px-4 pb-28 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            {/* 1) SESSION HEADER */}
+            {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
+            {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
-              <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
-                Session
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Session</div>
+                {roastStarted && (
+                  <button
+                    type="button"
+                    onClick={() => setSetupOpen(false)}
+                    className="flex items-center gap-1 font-cond text-[11px] font-bold uppercase tracking-wide text-ink-muted transition hover:text-ink"
+                  >
+                    Collapse
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18 15l-6-6-6 6" /></svg>
+                  </button>
+                )}
               </div>
 
               {/* Starting Settings — editable cockpit tiles, hidden once the session has begun */}
@@ -1920,6 +1935,19 @@ function App() {
                 </div>
               </div>
             </section>
+            ) : (
+            <button
+              type="button"
+              onClick={() => setSetupOpen(true)}
+              className="flex w-full items-center justify-between rounded-2xl border border-border/60 bg-surface/30 px-4 py-3 text-left transition active:scale-[0.99]"
+            >
+              <span className="min-w-0 truncate font-cond text-sm font-bold text-ink">{beanName || "Roast setup"}</span>
+              <span className="ml-3 flex shrink-0 items-center gap-2 font-mono text-[11px] text-ink-muted">
+                {targetRoastLevel ? targetRoastLevel.split(" ")[0] : ""}{greenWeightGrams ? ` · ${greenWeightGrams}g` : ""}
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" /></svg>
+              </span>
+            </button>
+            )}
 
             {/* PROMINENT PROFILE BUILDER CARD */}
             {!roastStarted && !isTimerRunning && (
@@ -2121,54 +2149,44 @@ function App() {
                 </div>
               )}
 
-              {/* Roomy large-target layout (kept deliberately); logged milestones fill amber. */}
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={isTimerRunning ? handlePause : handleStart}
-                  className="col-span-2 rounded-3xl bg-accent px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
-                >
-                  {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
-                </button>
-                {[
-                  "YELLOWING",
-                  "FIRST CRACK",
-                ].map((label) => {
-                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === label);
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => logMilestone(label)}
-                      className={[
-                        "rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
-                        logged
-                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-black/20"
-                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
-                      ].join(" ")}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-                {(() => {
-                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === "COOLING START");
-                  return (
+              {/* Run control + ONE contextual milestone button that always advances
+                  to the next unlogged phase (Yellowing → First crack → Cooling start).
+                  While roasting the milestone is the lead action; the run control drops
+                  to a secondary Pause. */}
+              {(() => {
+                const has = (l) => (roastLog || []).some((e) => e.type === "phase" && e.label === l);
+                const next = !has("YELLOWING") ? { label: "YELLOWING", text: "Yellowing" }
+                  : !has("FIRST CRACK") ? { label: "FIRST CRACK", text: "First crack" }
+                  : !has("COOLING START") ? { label: "COOLING START", text: "Cooling start" }
+                  : null;
+                const runPrimary = !isTimerRunning; // Start/Resume leads when not running
+                return (
+                  <div className="mt-3 grid gap-3">
+                    {isTimerRunning && next && (
+                      <button
+                        type="button"
+                        onClick={() => logMilestone(next.label)}
+                        className="flex items-center justify-center gap-2 rounded-3xl bg-accent px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-zinc-950/70" />
+                        Mark {next.text}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => logMilestone("COOLING START")}
+                      onClick={isTimerRunning ? handlePause : handleStart}
                       className={[
-                        "col-span-2 rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
-                        logged
-                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-black/20"
-                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
+                        "rounded-3xl px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] transition active:scale-[0.99]",
+                        runPrimary
+                          ? "bg-accent text-zinc-950 shadow-sm hover:brightness-110"
+                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50",
                       ].join(" ")}
                     >
-                      COOLING START
+                      {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
                     </button>
-                  );
-                })()}
-              </div>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* Profile Builder & Dialogs */}
