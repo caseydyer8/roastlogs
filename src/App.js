@@ -1,4 +1,5 @@
 import RoastCurveChart from "./components/charts/RoastCurveChart";
+import RoastCompareChart from "./components/charts/RoastCompareChart";
 import React from "react";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase, syncProfileToSupabase, deleteProfileFromSupabase, fetchProfilesFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
@@ -787,6 +788,8 @@ function App() {
   // Roast setup card collapses to a summary bar once the roast is live so the
   // hero sits right under the header; tapping the bar re-expands it.
   const [setupOpen, setSetupOpen] = React.useState(false);
+  // Bean-detail: toggle the same-bean roast comparison overlay.
+  const [showCompare, setShowCompare] = React.useState(false);
   const [editingProfileNotesId, setEditingProfileNotesId] = React.useState(null);
   const [profileNotesDraft, setProfileNotesDraft] = React.useState("");
   const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
@@ -1792,7 +1795,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "2.0.1",
+        appVersion: "3.0.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -4186,6 +4189,30 @@ function App() {
                     })()}
                   </div>
 
+                  {/* Same-bean comparison — overlay up to 3 roasts of this bean */}
+                  {(() => {
+                    const beanRoasts = (() => { try { return JSON.parse(localStorage.getItem("roasts") || "[]"); } catch (e) { return []; } })().filter(r => r.beanName === selectedBean.name);
+                    if (beanRoasts.length < 2) return null;
+                    const top = [...beanRoasts].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 3);
+                    return (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCompare((v) => !v)}
+                          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-primary/30 py-3 font-cond text-sm font-bold uppercase tracking-[0.06em] text-ink transition hover:bg-surface/50"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+                          {showCompare ? "Hide comparison" : `Compare ${top.length} roasts`}
+                        </button>
+                        {showCompare && (
+                          <div className="mt-4">
+                            <RoastCompareChart roasts={top} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* IDEA-006: pre-fill the Roast tab Session Header with this bean and jump there */}
                   <button
                     onClick={() => {
@@ -4705,7 +4732,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v2.0.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.0.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
