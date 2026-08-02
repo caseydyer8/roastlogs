@@ -1,4 +1,5 @@
 import RoastCurveChart from "./components/charts/RoastCurveChart";
+import RoastCompareChart from "./components/charts/RoastCompareChart";
 import React from "react";
 import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, syncBrewToSupabase, deleteBrewFromSupabase, fetchBrewsFromSupabase, syncBeanToSupabase, deleteBeanFromSupabase, fetchBeansFromSupabase, syncProfileToSupabase, deleteProfileFromSupabase, fetchProfilesFromSupabase } from "./syncService";
 import { useAuth } from "./contexts/AuthContext";
@@ -265,7 +266,7 @@ function NumberPad({ value, onDigit, onDelete, onDone, label }) {
             <button
               type="button"
               onClick={onDone}
-              className="flex h-16 items-center justify-center rounded-2xl bg-accent text-lg font-bold text-zinc-950 transition active:bg-amber-400 active:scale-95"
+              className="flex h-16 items-center justify-center rounded-2xl bg-accent text-lg font-bold text-zinc-950 transition active:brightness-110 active:scale-95"
             >
               DONE
             </button>
@@ -291,7 +292,7 @@ function PrimaryButton({ children, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+      className="inline-flex items-center justify-center rounded-2xl bg-accent px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
     >
       {children}
     </button>
@@ -784,6 +785,11 @@ function App() {
   const [nextProfileStep, setNextProfileStep] = React.useState(null);
   const [profileBuilder, setProfileBuilder] = React.useState({ name: "", steps: [], isDefault: false });
   const [isProfileBuilderOpen, setIsProfileBuilderOpen] = React.useState(false);
+  // Roast setup card collapses to a summary bar once the roast is live so the
+  // hero sits right under the header; tapping the bar re-expands it.
+  const [setupOpen, setSetupOpen] = React.useState(false);
+  // Bean-detail: toggle the same-bean roast comparison overlay.
+  const [showCompare, setShowCompare] = React.useState(false);
   const [editingProfileNotesId, setEditingProfileNotesId] = React.useState(null);
   const [profileNotesDraft, setProfileNotesDraft] = React.useState("");
   const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
@@ -1326,6 +1332,7 @@ function App() {
   const startRoast = (profile) => {
     setShowRoastModeDialog(false);
     setIsTimerRunning(true);
+    setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
       if (profile) {
@@ -1788,7 +1795,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "2.0.1",
+        appVersion: "3.0.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -1822,9 +1829,9 @@ function App() {
             <div className="text-lg font-semibold tracking-tight">{activeTab}</div>
             <div 
               className={`h-2 w-2 rounded-full ml-1 ${
-                syncStatus === 'success' ? 'bg-green-500' :
-                syncStatus === 'syncing' ? 'bg-yellow-500' :
-                syncStatus === 'error' ? 'bg-red-500' : 'bg-ink-muted'
+                syncStatus === 'success' ? 'bg-success' :
+                syncStatus === 'syncing' ? 'bg-accent animate-pulse' :
+                syncStatus === 'error' ? 'bg-error' : 'bg-ink-muted'
               }`}
               title={`Sync status: ${syncStatus}`}
             />
@@ -1847,10 +1854,21 @@ function App() {
       <main className="mx-auto max-w-md px-4 pb-28 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            {/* 1) SESSION HEADER */}
+            {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
+            {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
-              <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
-                Session
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Session</div>
+                {roastStarted && (
+                  <button
+                    type="button"
+                    onClick={() => setSetupOpen(false)}
+                    className="flex items-center gap-1 font-cond text-[11px] font-bold uppercase tracking-wide text-ink-muted transition hover:text-ink"
+                  >
+                    Collapse
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18 15l-6-6-6 6" /></svg>
+                  </button>
+                )}
               </div>
 
               {/* Starting Settings — editable cockpit tiles, hidden once the session has begun */}
@@ -1920,6 +1938,19 @@ function App() {
                 </div>
               </div>
             </section>
+            ) : (
+            <button
+              type="button"
+              onClick={() => setSetupOpen(true)}
+              className="flex w-full items-center justify-between rounded-2xl border border-border/60 bg-surface/30 px-4 py-3 text-left transition active:scale-[0.99]"
+            >
+              <span className="min-w-0 truncate font-cond text-sm font-bold text-ink">{beanName || "Roast setup"}</span>
+              <span className="ml-3 flex shrink-0 items-center gap-2 font-mono text-[11px] text-ink-muted">
+                {targetRoastLevel ? targetRoastLevel.split(" ")[0] : ""}{greenWeightGrams ? ` · ${greenWeightGrams}g` : ""}
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" /></svg>
+              </span>
+            </button>
+            )}
 
             {/* PROMINENT PROFILE BUILDER CARD */}
             {!roastStarted && !isTimerRunning && (
@@ -1944,68 +1975,143 @@ function App() {
               </section>
             )}
 
-            {/* 2) HERO COCKPIT — amber-tinted hero card per the taste-skill mockup:
-                status pill, DEV in the corner, big left-aligned timer, and an inline
-                Fan·Heat·Temp readout row. Each readout value is a tap target that opens
-                the adjustment logger pre-filled (the FAB is the second entry point). */}
-            <section className="rounded-3xl border border-accent/30 bg-gradient-to-b from-amber-500/10 via-amber-500/[0.03] to-zinc-950/40 p-5">
-              <div className="flex items-start justify-between">
+            {/* 2) LIVE INSTRUMENT HERO — status cluster, split-flap chrono, bean +
+                derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
+            <section className="rounded-3xl border border-border/60 bg-surface/30 p-5">
+              <div className="flex flex-col items-center text-center">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      isTimerRunning ? "animate-pulse bg-accent ring-[3px] ring-accent/20" : "bg-ink-muted"
+                    className={`h-2 w-2 rounded-full ${
+                      isTimerRunning ? "animate-pulse bg-accent ring-4 ring-accent/20" : "bg-ink-muted"
                     }`}
                   />
                   <span
-                    className={`text-[10px] font-bold uppercase tracking-[0.12em] ${
+                    className={`font-mono text-[11px] uppercase tracking-[0.2em] ${
                       isTimerRunning ? "text-accent-text" : "text-ink-muted"
                     }`}
                   >
                     {isTimerRunning ? "Roasting" : roastStarted ? "Paused" : "Ready"}
                   </span>
+                  {firstCrackTime !== null && (
+                    <span className="ml-1 animate-in fade-in duration-300 font-mono text-[10px] font-bold tabular-nums text-error-text">
+                      DEV {devSeconds}s
+                    </span>
+                  )}
                 </div>
-                {firstCrackTime !== null && (
-                  <div className="animate-in fade-in duration-300 font-mono text-xs font-bold tabular-nums text-error-text">
-                    DEV {devSeconds}s
+
+                <div className="mt-2 font-mono text-[64px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink">
+                  {formatTime(elapsedSeconds)}
+                </div>
+
+                {(beanName || roastStarted) && (
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2.5">
+                    {beanName && <span className="font-cond text-[15px] font-bold text-ink">{beanName}</span>}
+                    {(() => {
+                      const phase = coolingStartTime !== null ? "Cooling"
+                        : firstCrackTime !== null ? "Development"
+                        : (roastLog || []).some((e) => e.type === "phase" && e.label === "YELLOWING") ? "Maillard"
+                        : roastStarted ? "Drying" : null;
+                      return phase ? (
+                        <span className="rounded-full border border-accent/40 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-text">
+                          {phase}
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                 )}
               </div>
 
-              <div className="mt-2 font-mono text-[68px] font-extrabold leading-none tracking-[-0.035em] tabular-nums text-accent-text">
-                {formatTime(elapsedSeconds)}
-              </div>
-
-              {/* Tappable readout — the ONLY F/H/T display on this screen */}
+              {/* Segmented Fan · Heat · Temp dials — tap any to log an adjustment */}
               {(roastStarted || isTimerRunning) && (
-                <div className="mt-4 flex border-t border-border/60 pt-3">
+                <div className="mt-5 grid grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => openAdjPopup("fan")}
-                    className="flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg py-1.5 transition active:scale-95 active:bg-surface/40"
+                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Fan</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-ink">{latestLogged.fan || "—"}</span>
+                    <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Fan</div>
+                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">{latestLogged.fan || "—"}</div>
+                    <div className="mt-2.5 flex justify-center gap-[3px]">
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.fan || 0) ? "bg-accent" : "bg-card"}`} />
+                      ))}
+                    </div>
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjPopup("heat")}
-                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-border/60 py-1.5 pl-3 transition active:scale-95 active:bg-surface/40"
+                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Heat</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-ink">{latestLogged.heat || "—"}</span>
+                    <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Heat</div>
+                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">{latestLogged.heat || "—"}</div>
+                    <div className="mt-2.5 flex justify-center gap-[3px]">
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.heat || 0) ? "bg-accent" : "bg-card"}`} />
+                      ))}
+                    </div>
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjPopup("temp")}
-                    className="ml-3 flex min-h-[44px] flex-1 flex-col items-start gap-0.5 rounded-lg border-l border-border/60 py-1.5 pl-3 transition active:scale-95 active:bg-surface/40"
+                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-ink-muted">Temp</span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-ink">
+                    <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Temp</div>
+                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">
                       {latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—"}
-                    </span>
+                    </div>
+                    <div className="mt-2.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-muted">reading</div>
                   </button>
                 </div>
               )}
+
+              {/* Profile guidance strip — the next planned step */}
+              {isTimerRunning && (() => {
+                const upcoming = profileFollowing?.steps?.[currentProfileStepIdx + 1];
+                if (!upcoming) return null;
+                return (
+                  <div className={`mt-4 flex items-center justify-center gap-2.5 rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${nextProfileStep ? "animate-pulse border-accent bg-accent/10" : "border-border/60"}`}>
+                    <span className="text-ink-muted">Next step</span>
+                    <span className="font-semibold text-accent-text">{upcoming.time} · F{upcoming.fan} · H{upcoming.heat}</span>
+                  </div>
+                );
+              })()}
+
+              {/* Phase rail — Start → Yellowing → First crack → Drop */}
+              {roastStarted && (() => {
+                const yellowing = (roastLog || []).find((e) => e.type === "phase" && e.label === "YELLOWING");
+                const nodes = [
+                  { label: "Start", t: 0, reached: true },
+                  { label: "Yellowing", t: yellowing ? yellowing.t : null, reached: !!yellowing },
+                  { label: "First crack", t: firstCrackTime, reached: firstCrackTime !== null },
+                  { label: "Drop", t: coolingStartTime, reached: coolingStartTime !== null },
+                ];
+                let currentIdx = 0;
+                nodes.forEach((n, i) => { if (n.reached) currentIdx = i; });
+                const fillPct = (currentIdx / (nodes.length - 1)) * 100;
+                return (
+                  <div className="mt-6">
+                    <div className="relative mx-1.5 h-0.5 bg-border">
+                      <div className="absolute left-0 top-0 h-0.5 bg-accent transition-all duration-500" style={{ width: `${fillPct}%` }} />
+                    </div>
+                    <ul className="-mt-1 flex justify-between">
+                      {nodes.map((n, i) => (
+                        <li key={n.label} className="flex flex-1 flex-col items-center gap-1.5">
+                          <span className={`h-2.5 w-2.5 rounded-full border-2 ${
+                            i === currentIdx ? "border-accent bg-primary ring-4 ring-accent/20"
+                            : n.reached ? "border-accent bg-accent"
+                            : "border-border bg-card"}`} />
+                          <span className={`text-center font-cond text-[10px] font-bold uppercase tracking-wide ${i === currentIdx ? "text-ink" : "text-ink-muted"}`}>
+                            {n.label}
+                          </span>
+                          <span className="font-mono text-[9.5px] tabular-nums text-ink-muted">
+                            {n.t !== null ? formatTime(n.t) : "—"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* 3) PHASE MILESTONES */}
@@ -2031,7 +2137,7 @@ function App() {
                         <div 
                           key={idx} 
                           className={`flex-shrink-0 px-3 py-2 rounded-xl border transition-all duration-500 ${
-                            isCurrent ? "bg-accent border-accent text-zinc-950 scale-105 shadow-lg shadow-amber-500/20" : 
+                            isCurrent ? "bg-accent border-accent text-zinc-950 scale-105 shadow-lg shadow-black/20" : 
                             isFlashing ? "bg-accent/40 border-accent animate-pulse text-accent-text" :
                             isPast ? "bg-surface/30 border-border/50 text-ink-muted" :
                             "bg-surface/50 border-border/50 text-ink-muted"
@@ -2046,54 +2152,44 @@ function App() {
                 </div>
               )}
 
-              {/* Roomy large-target layout (kept deliberately); logged milestones fill amber. */}
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={isTimerRunning ? handlePause : handleStart}
-                  className="col-span-2 rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 active:scale-[0.99]"
-                >
-                  {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
-                </button>
-                {[
-                  "YELLOWING",
-                  "FIRST CRACK",
-                ].map((label) => {
-                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === label);
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => logMilestone(label)}
-                      className={[
-                        "rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
-                        logged
-                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-amber-500/20"
-                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
-                      ].join(" ")}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-                {(() => {
-                  const logged = (roastLog || []).some((e) => e.type === "phase" && e.label === "COOLING START");
-                  return (
+              {/* Run control + ONE contextual milestone button that always advances
+                  to the next unlogged phase (Yellowing → First crack → Cooling start).
+                  While roasting the milestone is the lead action; the run control drops
+                  to a secondary Pause. */}
+              {(() => {
+                const has = (l) => (roastLog || []).some((e) => e.type === "phase" && e.label === l);
+                const next = !has("YELLOWING") ? { label: "YELLOWING", text: "Yellowing" }
+                  : !has("FIRST CRACK") ? { label: "FIRST CRACK", text: "First crack" }
+                  : !has("COOLING START") ? { label: "COOLING START", text: "Cooling start" }
+                  : null;
+                const runPrimary = !isTimerRunning; // Start/Resume leads when not running
+                return (
+                  <div className="mt-3 grid gap-3">
+                    {isTimerRunning && next && (
+                      <button
+                        type="button"
+                        onClick={() => logMilestone(next.label)}
+                        className="flex items-center justify-center gap-2 rounded-3xl bg-accent px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-zinc-950/70" />
+                        Mark {next.text}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => logMilestone("COOLING START")}
+                      onClick={isTimerRunning ? handlePause : handleStart}
                       className={[
-                        "col-span-2 rounded-3xl px-4 py-4 text-sm font-semibold transition active:scale-[0.98]",
-                        logged
-                          ? "border border-accent bg-accent text-zinc-950 shadow-sm shadow-amber-500/20"
-                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50 active:bg-surface/70",
+                        "rounded-3xl px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] transition active:scale-[0.99]",
+                        runPrimary
+                          ? "bg-accent text-zinc-950 shadow-sm hover:brightness-110"
+                          : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50",
                       ].join(" ")}
                     >
-                      COOLING START
+                      {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
                     </button>
-                  );
-                })()}
-              </div>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* Profile Builder & Dialogs */}
@@ -2131,7 +2227,7 @@ function App() {
                         setIsTimerRunning(false);
                         setIsDevTimerRunning(false);
                       }}
-                      className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                      className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition"
                     >
                       DISCARD
                     </button>
@@ -2206,7 +2302,7 @@ function App() {
               <button
                 type="button"
                 onClick={() => openAdjPopup(null)}
-                className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-accent text-zinc-950 shadow-xl shadow-amber-500/20 transition active:scale-95"
+                className="fixed bottom-24 right-6 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-accent text-zinc-950 shadow-xl shadow-black/20 transition active:scale-95"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
@@ -2278,7 +2374,7 @@ function App() {
                         setIsAdjPopupOpen(false);
                         setActiveNumpad(null);
                       }}
-                      className="w-full rounded-2xl bg-accent py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition active:scale-[0.98]"
+                      className="w-full rounded-2xl bg-accent py-4 text-lg font-bold text-zinc-950 shadow-lg shadow-black/20 transition active:scale-[0.98]"
                     >
                       SAVE ENTRY
                     </button>
@@ -2299,14 +2395,14 @@ function App() {
                   <button
                     type="button"
                     onClick={() => setShowDiscardModal(true)}
-                    className="w-full rounded-3xl bg-red-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-red-500 active:bg-red-700"
+                    className="w-full rounded-3xl bg-error px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-white shadow-sm transition hover:brightness-110 active:brightness-95"
                   >
                     DISCARD
                   </button>
                   <button
                     type="button"
                     onClick={handleStop}
-                    className="w-full rounded-3xl bg-green-600 px-4 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-green-500 active:bg-green-600/90"
+                    className="w-full rounded-3xl bg-success px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-white shadow-sm transition hover:brightness-110 active:brightness-95"
                   >
                     SAVE ROAST
                   </button>
@@ -2459,7 +2555,7 @@ function App() {
 
                     <button
                       onClick={() => setBrewStep(1)}
-                      className="w-full rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                      className="w-full rounded-3xl bg-accent px-4 py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                     >
                       START TASTING
                     </button>
@@ -2535,7 +2631,7 @@ function App() {
 
                 <button
                   onClick={() => setBrewStep(2)}
-                  className="w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                  className="w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                 >
                   NEXT
                 </button>
@@ -2587,7 +2683,7 @@ function App() {
                   <button
                     disabled={selectedFamilies.length === 0}
                     onClick={() => setBrewStep(3)}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     NEXT
                   </button>
@@ -2707,7 +2803,7 @@ function App() {
                   </button>
                   <button
                     onClick={() => setBrewStep(4)}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     NEXT
                   </button>
@@ -2810,7 +2906,7 @@ function App() {
                   </button>
                   <button
                     onClick={handleSaveBrew}
-                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     SAVE TASTING NOTE
                   </button>
@@ -2880,7 +2976,7 @@ function App() {
                           <button
                             type="button"
                             onClick={() => setActiveTab("Roast")}
-                            className="mt-4 rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 active:scale-95"
+                            className="mt-4 rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-zinc-950 transition hover:brightness-110 active:scale-95"
                           >
                             START YOUR FIRST ROAST
                           </button>
@@ -2973,7 +3069,7 @@ function App() {
                     {hasChanges && (
                       <button
                         onClick={handleSaveEdit}
-                        className="rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-600/20 animate-pulse hover:bg-green-500 transition"
+                        className="rounded-xl bg-success px-6 py-2 text-xs font-bold text-white shadow-lg shadow-black/20 animate-pulse hover:brightness-110 transition"
                       >
                         SAVE CHANGES
                       </button>
@@ -3460,7 +3556,7 @@ function App() {
                         setNewBean({ ...EMPTY_BEAN_FORM });
                         setBeansView("addBean");
                       }}
-                      className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:scale-95"
+                      className="rounded-2xl bg-accent px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-95"
                     >
                       ADD BEAN
                     </button>
@@ -3772,7 +3868,7 @@ function App() {
                         setBeansView("list");
                       }
                     }}
-                    className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                    className="mt-4 w-full rounded-3xl bg-accent py-4 text-base font-semibold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                   >
                     {isEditMode ? "SAVE CHANGES" : "SAVE BEAN"}
                   </button>
@@ -3927,7 +4023,7 @@ function App() {
                                     setProfiles(profiles.map(pr => pr.id === p.id ? { ...pr, notes: profileNotesDraft } : pr));
                                     setEditingProfileNotesId(null);
                                   }}
-                                  className="flex-1 py-2 rounded-xl bg-accent text-zinc-950 font-bold text-xs hover:bg-amber-400 transition"
+                                  className="flex-1 py-2 rounded-xl bg-accent text-zinc-950 font-bold text-xs hover:brightness-110 transition"
                                 >
                                   SAVE
                                 </button>
@@ -4051,7 +4147,7 @@ function App() {
                               persistBeanUpdate({ weightAdjustments: [...(selectedBean.weightAdjustments || []), entry] });
                               setIsAdjustingWeight(false);
                             }}
-                            className="flex-1 rounded-xl bg-accent py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
+                            className="flex-1 rounded-xl bg-accent py-2 text-xs font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90 disabled:opacity-50 disabled:grayscale"
                           >
                             SAVE
                           </button>
@@ -4093,13 +4189,37 @@ function App() {
                     })()}
                   </div>
 
+                  {/* Same-bean comparison — overlay up to 3 roasts of this bean */}
+                  {(() => {
+                    const beanRoasts = (() => { try { return JSON.parse(localStorage.getItem("roasts") || "[]"); } catch (e) { return []; } })().filter(r => r.beanName === selectedBean.name);
+                    if (beanRoasts.length < 2) return null;
+                    const top = [...beanRoasts].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 3);
+                    return (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCompare((v) => !v)}
+                          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-primary/30 py-3 font-cond text-sm font-bold uppercase tracking-[0.06em] text-ink transition hover:bg-surface/50"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+                          {showCompare ? "Hide comparison" : `Compare ${top.length} roasts`}
+                        </button>
+                        {showCompare && (
+                          <div className="mt-4">
+                            <RoastCompareChart roasts={top} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* IDEA-006: pre-fill the Roast tab Session Header with this bean and jump there */}
                   <button
                     onClick={() => {
                       setPrefillBean({ name: selectedBean.name, origin: selectedBean.origin });
                       setActiveTab("Roast");
                     }}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:bg-amber-400 active:bg-accent/90"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                     LOG A SESSION
@@ -4557,7 +4677,7 @@ function App() {
                   }
                   setDeleteConfirmModal({ show: false, profileName: '', isDeleteAll: false });
                 }}
-                className="flex-1 py-3 rounded-2xl bg-red-500 text-white font-bold"
+                className="flex-1 py-3 rounded-2xl bg-error text-white font-bold"
               >
                 {deleteConfirmModal.isDeleteAll ? 'DELETE ALL' : 'DELETE'}
               </button>
@@ -4583,7 +4703,7 @@ function App() {
               <div className="space-y-3">
                 <button
                   onClick={handleExportCSV}
-                  className="w-full rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
+                  className="w-full rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 transition hover:brightness-110"
                 >
                   Export Roast Log (CSV)
                 </button>
@@ -4612,7 +4732,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v2.0.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.0.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
@@ -4660,7 +4780,7 @@ function App() {
                     <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
                     <div className="flex gap-3">
                       <button onClick={() => setConfirmDelete(null)} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
-                      <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE</button>
                     </div>
                   </>
                 );
@@ -4672,7 +4792,7 @@ function App() {
                     <p className="text-sm text-ink-muted mb-6">This will delete {historyLabel} for this bean. This cannot be undone.</p>
                     {duplicateWarning}
                     <div className="flex flex-col gap-2">
-                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE {historyLabel.toUpperCase()}</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE {historyLabel.toUpperCase()}</button>
                       <button onClick={() => setConfirmDelete(null)} className="w-full py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
                     </div>
                   </>
@@ -4684,7 +4804,7 @@ function App() {
                   <p className="text-sm text-ink-muted mb-6">This bean has {historyLabel}. Choose whether to keep or remove them too.</p>
                   {duplicateWarning}
                   <div className="flex flex-col gap-2">
-                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
+                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
                     <button onClick={() => handleDeleteBean(confirmDelete, false)} className="w-full py-3 rounded-2xl border border-border/60 text-ink font-bold hover:bg-card transition">KEEP HISTORY, DELETE BEAN ONLY</button>
                     <button onClick={() => setConfirmDelete(null)} className="w-full py-3 text-ink-muted font-bold hover:text-ink transition">CANCEL</button>
                   </div>
@@ -4709,7 +4829,7 @@ function App() {
                       }
                       setConfirmDelete(null);
                     }}
-                    className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-bold hover:bg-red-500 transition"
+                    className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition"
                   >
                     DELETE
                   </button>
@@ -4723,7 +4843,7 @@ function App() {
       {/* Global toast */}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4 pointer-events-none">
-          <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-2 ${toast.type === "error" ? "bg-red-600 text-white" : "bg-green-600 text-white"}`}>
+          <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-2 ${toast.type === "error" ? "bg-error text-white" : "bg-success text-white"}`}>
             {toast.message}
           </div>
         </div>

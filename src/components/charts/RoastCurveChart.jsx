@@ -177,6 +177,11 @@ export default function RoastCurveChart({ roast }) {
     const dropT = coolingStart != null ? coolingStart : total;
     const dropTemp = hasTemp ? tempAt(Math.min(dropT, lastTempT)) : null;
     const dtr = firstCrack != null && total > 0 ? ((dropT - firstCrack) / total) * 100 : null;
+    // FC Temp = bean temp at first crack; Wt Loss = green→roasted mass lost.
+    const fcTemp = hasTemp && firstCrack != null ? tempAt(Math.min(firstCrack, lastTempT)) : null;
+    const gw = Number(roast.greenWeight);
+    const rw = Number(roast.roastedWeight);
+    const weightLoss = gw > 0 && rw > 0 && rw < gw ? ((gw - rw) / gw) * 100 : null;
 
     // Phase durations (Drying = start→yellowing, Maillard = yellowing→FC,
     // Development = FC→drop).
@@ -213,12 +218,12 @@ export default function RoastCurveChart({ roast }) {
       });
     });
 
-    return { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, phases, deviations, hasTemp };
+    return { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, phases, deviations, hasTemp };
   }, [roast]);
 
   if (!model) return null;
 
-  const { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, deviations, hasTemp } = model;
+  const { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, deviations, hasTemp } = model;
 
   // Which roast phase a given time (seconds) falls in, using the same
   // yellowing / firstCrack / coolingStart boundaries as the bands. Falls back
@@ -342,9 +347,9 @@ export default function RoastCurveChart({ roast }) {
       {/* Headline metric tiles */}
       <div className="grid grid-cols-4 gap-2">
         <StatTile label="Avg RoR" value={avgRor != null ? `${avgRor.toFixed(1)}°/m` : "—"} accent="text-chart-ror" />
-        <StatTile label="Avg Temp" value={avgTemp != null ? `${Math.round(avgTemp)}°` : "—"} accent="text-accent-text" />
-        <StatTile label="Drop Temp" value={dropTemp != null ? `${Math.round(dropTemp)}°` : "—"} accent="text-error-text" />
-        <StatTile label="DTR" value={dtr != null ? `${dtr.toFixed(1)}%` : "—"} accent="text-success-text" />
+        <StatTile label="FC Temp" value={fcTemp != null ? `${Math.round(fcTemp)}°` : "—"} accent="text-accent-text" />
+        <StatTile label="Wt Loss" value={weightLoss != null ? `${weightLoss.toFixed(1)}%` : "—"} accent="text-success-text" />
+        <StatTile label="DTR" value={dtr != null ? `${dtr.toFixed(1)}%` : "—"} accent="text-ink" />
       </div>
 
       {/* Top chart — Development curve: temp + RoR over phase bands */}

@@ -6,6 +6,14 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        // v3: setting `sans` and `mono` re-types the whole app through Tailwind's
+        // base + every existing `font-mono` (timer, stats) with no markup change.
+        // `font-cond` is added to headings/dials incrementally during tab rebuilds.
+        sans: ['"IBM Plex Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        cond: ['"IBM Plex Sans Condensed"', '"IBM Plex Sans"', 'sans-serif'],
+      },
       colors: {
         primary: 'rgb(var(--bg-primary) / <alpha-value>)',
         surface: 'rgb(var(--bg-surface) / <alpha-value>)',

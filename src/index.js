@@ -1,5 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+// IBM Plex — self-hosted via fontsource, latin subset only (English UI), the
+// weights the v3 instrument type system uses. Bundled, so it works offline (PWA)
+// with no external font request (CSP-friendly).
+import '@fontsource/ibm-plex-sans/latin-400.css';
+import '@fontsource/ibm-plex-sans/latin-500.css';
+import '@fontsource/ibm-plex-sans/latin-600.css';
+import '@fontsource/ibm-plex-sans-condensed/latin-600.css';
+import '@fontsource/ibm-plex-sans-condensed/latin-700.css';
+import '@fontsource/ibm-plex-mono/latin-400.css';
+import '@fontsource/ibm-plex-mono/latin-500.css';
+import '@fontsource/ibm-plex-mono/latin-600.css';
 import './index.css';
 import App from './App';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -21,10 +32,10 @@ function Root() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-50 flex flex-col items-center justify-center gap-4">
+      <div className="min-h-screen bg-primary text-ink flex flex-col items-center justify-center gap-4">
         <div className="text-4xl animate-pulse" aria-hidden="true">☕</div>
-        <div className="h-1.5 w-32 overflow-hidden rounded-full bg-zinc-800">
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-amber-500" />
+        <div className="h-1.5 w-32 overflow-hidden rounded-full bg-card">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-accent" />
         </div>
       </div>
     );
