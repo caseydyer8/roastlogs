@@ -33,7 +33,7 @@ function Root() {
   if (loading) {
     return (
       <div className="min-h-screen bg-primary text-ink flex flex-col items-center justify-center gap-4">
-        <div className="text-4xl animate-pulse" aria-hidden="true">☕</div>
+        <svg className="h-11 w-11 animate-pulse text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z" /><path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" /><path d="M8 2.5c-.6.8-.6 1.7 0 2.5M12 2.5c-.6.8-.6 1.7 0 2.5" /></svg>
         <div className="h-1.5 w-32 overflow-hidden rounded-full bg-card">
           <div className="h-full w-1/2 animate-pulse rounded-full bg-accent" />
         </div>
