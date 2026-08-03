@@ -6,6 +6,37 @@ import { useAuth } from "./contexts/AuthContext";
 import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 
+// Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
+function BrandMark({ className = "h-6 w-6" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z" />
+      <path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" />
+      <path d="M8 2.5c-.6.8-.6 1.7 0 2.5M12 2.5c-.6.8-.6 1.7 0 2.5" />
+    </svg>
+  );
+}
+
+// Thin-stroke line glyphs for the flavor families — replaces emoji, keyed to id.
+function FlavorGlyph({ id, className = "h-6 w-6" }) {
+  const glyphs = {
+    chocolatey: <><rect x="4.5" y="5" width="15" height="14" rx="2" /><path d="M12 5v14M4.5 12h15" /></>,
+    fruity: <><circle cx="9.5" cy="14.5" r="4.2" /><circle cx="15.5" cy="12.5" r="4.2" /><path d="M13 6.5c1.2-2 3-2.8 5-2.4-.4 1.9-1.8 3.3-3.8 3.6" /></>,
+    floral: <><circle cx="12" cy="12" r="2.4" /><path d="M12 4.6v3.4M12 16v3.4M4.6 12H8M16 12h3.4M7 7l2.4 2.4M14.6 14.6 17 17M17 7l-2.4 2.4M9.4 14.6 7 17" /></>,
+    sweet: <path d="M12 4.5c3 3.8 5.5 6.8 5.5 9.7a5.5 5.5 0 1 1-11 0c0-2.9 2.5-5.9 5.5-9.7Z" />,
+    nutty: <><path d="M7 10.5c0-3.1 2.2-5.2 5-5.2s5 2.1 5 5.2" /><path d="M7 10.5h10c0 4-2.2 8-5 8s-5-4-5-8Z" /></>,
+    spicy: <><path d="M6.5 15.5c-1-4 1.5-8 6-8.5 0 3 2 4.5 5 4.5-.5 4-4 7.5-8 6.5-2-.5-3-1.5-3-2.5Z" /><path d="M12.5 7c0-1.6 1.1-2.6 2.7-2.6" /></>,
+    roasted: <path d="M12 3c1 3-3 4.5-3 9a5.5 5.5 0 0 0 11 0c0-2-.9-3.6-2-4.6-.2 1.2-.9 2.1-1.9 2.4C15.9 7.6 14.4 5 12 3Z" />,
+    earthy: <><path d="M5 19c-.5-8 5-13 14-14 1 9-4 14-11 14a6 6 0 0 1-3 0Z" /><path d="M8 16c3-4 6-6 10-7" /></>,
+    fermented: <><path d="M7 4h10c0 4-2 7.5-5 7.5S7 8 7 4Z" /><path d="M12 11.5V18M8.5 18h7" /></>,
+  };
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {glyphs[id] || glyphs.chocolatey}
+    </svg>
+  );
+}
+
 // Settings is reached via the gear icon in the header (locked decision), not the bottom nav.
 const TABS = ["Roast", "History", "Brew", "Beans"];
 
@@ -2667,7 +2698,7 @@ function App() {
                         selectedFamilies.includes(family.id) ? "border-accent bg-accent/15 text-accent-text" : "border-border bg-primary/40 text-ink-muted"
                       }`}
                     >
-                      <span className="text-2xl mb-2">{family.emoji}</span>
+                      <FlavorGlyph id={family.id} className="mb-2 h-7 w-7" />
                       <span className="text-[11px] font-bold uppercase tracking-wider text-center leading-tight">{family.label}</span>
                     </button>
                   ))}
@@ -2715,7 +2746,7 @@ function App() {
                       return (
                         <div key={familyId} className="space-y-4">
                           <div className="flex items-center gap-2">
-                            <span className="text-lg">{family.emoji}</span>
+                            <FlavorGlyph id={family.id} className="h-5 w-5" />
                             <div className="text-xs font-bold uppercase tracking-wider text-ink">{family.label}</div>
                           </div>
                           <div className="flex flex-wrap gap-2 mb-4">
@@ -2768,7 +2799,7 @@ function App() {
                     return (
                       <div key={familyId} className="space-y-4">
                         <div className="flex items-center gap-2">
-                          <span className="text-lg">{family.emoji}</span>
+                          <FlavorGlyph id={family.id} className="h-5 w-5" />
                           <div className="text-xs font-bold uppercase tracking-wider text-ink">{family.label}</div>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -4731,7 +4762,7 @@ function App() {
               ×
             </button>
             <div className="text-center">
-              <div className="text-3xl font-bold text-accent-text">☕ RoastLogs</div>
+              <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
               <div className="mt-1 text-sm font-mono text-ink-muted">v3.0.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
@@ -4746,7 +4777,7 @@ function App() {
               </ul>
             </div>
             <div className="my-5 border-t border-border/60" />
-            <div className="text-center text-sm text-ink-muted">Built for home roasters, by a home roaster. ☕</div>
+            <div className="text-center text-sm text-ink-muted">Built for home roasters, by a home roaster.</div>
           </div>
         </div>
       )}
