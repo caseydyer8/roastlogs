@@ -71,9 +71,11 @@ export default function LoginScreen() {
     <div className="min-h-screen bg-primary text-ink flex items-center justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center text-center mb-8">
-          <div className="text-5xl mb-3" aria-hidden="true">
-            ☕
-          </div>
+          <svg className="h-14 w-14 mb-3 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z" />
+            <path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" />
+            <path d="M8 2.5c-.6.8-.6 1.7 0 2.5M12 2.5c-.6.8-.6 1.7 0 2.5" />
+          </svg>
           <h1 className="text-3xl font-black tracking-tight text-ink">
             RoastLogs
           </h1>
