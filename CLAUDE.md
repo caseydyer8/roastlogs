@@ -50,6 +50,10 @@ preferences otherwise trapped in agent config.
 
 ## Deployment / Release
 
+- **Preview on localhost BEFORE deploying** — always. Run `npm start` and review
+  at `localhost:3000` first; `npm run deploy` publishes straight to the live site
+  with no staging step, so localhost IS the review gate. Never deploy a change Case
+  hasn't seen running locally.
 - Build: `CI=false npm run build` (CI=false so warnings don't fail the build).
 - Deploy: `npm run deploy` (gh-pages publishes `build/` to the `gh-pages`
   branch). Pushing `main` does NOT update the live site — deploy is separate.
