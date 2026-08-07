@@ -632,22 +632,27 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
-        <h3 className="text-xl font-bold text-ink mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
-        <input
-          placeholder="Profile Name (e.g. Light Roast)"
-          value={profile.name}
-          onChange={e => setProfile({...profile, name: e.target.value})}
-          className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink"
-        />
-        <textarea
-          placeholder="Notes (optional) — tasting result, what you'd change next time..."
-          value={profile.notes}
-          onChange={e => setProfile({...profile, notes: e.target.value})}
-          rows={3}
-          className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink resize-none"
-        />
-        <div className="space-y-3 mb-6">
+      <div className="flex w-full max-w-md flex-col overflow-hidden animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface shadow-2xl max-h-[90vh]">
+        {/* Header — stays put while the step list scrolls */}
+        <div className="shrink-0 px-6 pt-6">
+          <h3 className="text-xl font-bold text-ink mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
+          <input
+            placeholder="Profile Name (e.g. Light Roast)"
+            value={profile.name}
+            onChange={e => setProfile({...profile, name: e.target.value})}
+            className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 mb-4 text-sm text-ink"
+          />
+          <textarea
+            placeholder="Notes (optional) — tasting result, what you'd change next time..."
+            value={profile.notes}
+            onChange={e => setProfile({...profile, notes: e.target.value})}
+            rows={3}
+            className="w-full rounded-xl bg-primary/40 border border-border px-4 py-3 text-sm text-ink resize-none"
+          />
+        </div>
+        {/* Body — the only scroll region, so Save never gets pushed off-screen */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3">
           {profile.steps.length > 0 && (
             <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted ml-1">
               Steps are sorted by time when saved
@@ -676,8 +681,10 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
             </div>
           ))}
           <button onClick={addStep} className="w-full py-3 rounded-2xl border-2 border-dashed border-border text-ink-muted text-xs font-bold hover:border-border hover:text-ink-muted">+ ADD STEP</button>
+          </div>
         </div>
-        <div className="flex gap-3">
+        {/* Footer — pinned; always reachable no matter how many steps */}
+        <div className="shrink-0 flex gap-3 border-t border-border/60 px-6 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           <button onClick={onCancel} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold">CANCEL</button>
           <button onClick={handleSave} className="flex-1 py-3 rounded-2xl bg-accent text-zinc-950 font-bold">SAVE PROFILE</button>
         </div>
@@ -687,8 +694,11 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
 }
 
 function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCancel }) {
-  // Filter profiles from the already-filtered props
-  const beanSpecificProfiles = (profiles || []).filter(p => p.beanName && p.beanName !== "");
+  // Filter profiles from the already-filtered props; float the default to the top
+  // so the bean's go-to profile is the first tap.
+  const beanSpecificProfiles = (profiles || [])
+    .filter(p => p.beanName && p.beanName !== "")
+    .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
   const genericProfiles = (profiles || []).filter(p => !p.beanName || p.beanName === "");
   
   return (
@@ -700,8 +710,11 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
             <div className="space-y-2">
               <div className="text-[10px] font-bold uppercase tracking-widest text-accent-text ml-1">FOR THIS BEAN</div>
               {beanSpecificProfiles.map(p => (
-                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-surface/50 border border-border/50 text-left hover:bg-surface transition">
-                  <div className="font-bold text-ink">{p.name}</div>
+                <button key={p.id} onClick={() => onSelectProfile(p)} className={`w-full p-4 rounded-2xl border text-left transition ${p.isDefault ? "bg-accent/10 border-accent/40 hover:bg-accent/20" : "bg-surface/50 border-border/50 hover:bg-surface"}`}>
+                  <div className="font-bold text-ink flex items-center gap-2">
+                    {p.name}
+                    {p.isDefault && <span className="text-[8px] bg-accent text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
+                  </div>
                   <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
                 </button>
               ))}
@@ -1852,8 +1865,8 @@ function App() {
   else if (activeTab === "Settings") ActiveIcon = GearIcon;
 
   return (
-    <div className="min-h-screen bg-primary text-ink">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-primary/80 backdrop-blur">
+    <div className="app-shell flex flex-col overflow-hidden bg-primary text-ink">
+      <header className="shrink-0 z-20 border-b border-border/60 bg-primary/80 backdrop-blur">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 pb-4 pt-5">
           <div className="flex items-center gap-2">
             {ActiveIcon && <ActiveIcon active sizeClass="h-7 w-7" />}
@@ -1882,7 +1895,7 @@ function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 pb-28 pt-6">
+      <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
             {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
@@ -2120,14 +2133,17 @@ function App() {
                 nodes.forEach((n, i) => { if (n.reached) currentIdx = i; });
                 const fillPct = (currentIdx / (nodes.length - 1)) * 100;
                 return (
-                  <div className="mt-6">
-                    <div className="relative mx-1.5 h-0.5 bg-border">
-                      <div className="absolute left-0 top-0 h-0.5 bg-accent transition-all duration-500" style={{ width: `${fillPct}%` }} />
+                  <div className="relative mt-6">
+                    {/* Connector line, anchored on the vertical center of the 10px
+                        marker circles (top-1 + h-0.5 → line center at y=5px) and
+                        inset to the first/last circle centers (12.5% for 4 nodes). */}
+                    <div className="pointer-events-none absolute left-[12.5%] right-[12.5%] top-1 h-0.5 bg-border">
+                      <div className="absolute left-0 top-0 h-full bg-accent transition-all duration-500" style={{ width: `${fillPct}%` }} />
                     </div>
-                    <ul className="-mt-1 flex justify-between">
+                    <ul className="relative flex justify-between">
                       {nodes.map((n, i) => (
                         <li key={n.label} className="flex flex-1 flex-col items-center gap-1.5">
-                          <span className={`h-2.5 w-2.5 rounded-full border-2 ${
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full border-2 ${
                             i === currentIdx ? "border-accent bg-primary ring-4 ring-accent/20"
                             : n.reached ? "border-accent bg-accent"
                             : "border-border bg-card"}`} />
@@ -2153,40 +2169,10 @@ function App() {
                 </div>
               </div>
               
-              {profileFollowing && (
-                <div className="mt-3 p-3 rounded-2xl bg-accent/5 border border-accent/10">
-                  <div className="text-[10px] font-bold text-accent-text/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
-                  <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                    {(profileFollowing?.steps || []).map((step, idx) => {
-                      const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
-                      const isPast = elapsedSeconds > stepSeconds;
-                      const isCurrent = currentProfileStepIdx === idx || (elapsedSeconds === stepSeconds);
-                      const isNext = idx === currentProfileStepIdx + 1;
-                      const isFlashing = isNext && nextProfileStep;
-                      
-                      return (
-                        <div 
-                          key={idx} 
-                          className={`flex-shrink-0 px-3 py-2 rounded-xl border transition-all duration-500 ${
-                            isCurrent ? "bg-accent border-accent text-zinc-950 scale-105 shadow-lg shadow-black/20" : 
-                            isFlashing ? "bg-accent/40 border-accent animate-pulse text-accent-text" :
-                            isPast ? "bg-surface/30 border-border/50 text-ink-muted" :
-                            "bg-surface/50 border-border/50 text-ink-muted"
-                          }`}
-                        >
-                          <div className="text-[10px] font-mono font-bold">{step.time}</div>
-                          <div className="text-xs font-black">H{step.heat} F{step.fan}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               {/* Run control + ONE contextual milestone button that always advances
                   to the next unlogged phase (Yellowing → First crack → Cooling start).
-                  While roasting the milestone is the lead action; the run control drops
-                  to a secondary Pause. */}
+                  This leads the section so the phase-marking action is always
+                  reachable — the planned-profile step strip is reference below it. */}
               {(() => {
                 const has = (l) => (roastLog || []).some((e) => e.type === "phase" && e.label === l);
                 const next = !has("YELLOWING") ? { label: "YELLOWING", text: "Yellowing" }
@@ -2221,6 +2207,36 @@ function App() {
                   </div>
                 );
               })()}
+
+              {profileFollowing && (
+                <div className="mt-3 p-3 rounded-2xl bg-accent/5 border border-accent/10">
+                  <div className="text-[10px] font-bold text-accent-text/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
+                  <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    {(profileFollowing?.steps || []).map((step, idx) => {
+                      const stepSeconds = step.totalSeconds !== undefined ? step.totalSeconds : parseMMSS(step.time);
+                      const isPast = elapsedSeconds > stepSeconds;
+                      const isCurrent = currentProfileStepIdx === idx || (elapsedSeconds === stepSeconds);
+                      const isNext = idx === currentProfileStepIdx + 1;
+                      const isFlashing = isNext && nextProfileStep;
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex-shrink-0 px-3 py-2 rounded-xl border transition-all duration-500 ${
+                            isCurrent ? "bg-accent border-accent text-zinc-950 scale-105 shadow-lg shadow-black/20" :
+                            isFlashing ? "bg-accent/40 border-accent animate-pulse text-accent-text" :
+                            isPast ? "bg-surface/30 border-border/50 text-ink-muted" :
+                            "bg-surface/50 border-border/50 text-ink-muted"
+                          }`}
+                        >
+                          <div className="text-[10px] font-mono font-bold">{step.time}</div>
+                          <div className="text-xs font-black">F{step.fan} H{step.heat}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </section>
 
             {/* Profile Builder & Dialogs */}
@@ -3988,7 +4004,7 @@ function App() {
                     {(profiles || []).filter(p => p.beanName === selectedBean.name).length === 0 ? (
                       <p className="text-sm text-ink-muted italic py-2">No profiles saved for this bean.</p>
                     ) : (
-                      (profiles || []).filter(p => p.beanName === selectedBean.name).map(p => (
+                      (profiles || []).filter(p => p.beanName === selectedBean.name).sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0)).map(p => (
                         <div key={p.id} className="p-4 rounded-2xl bg-surface/30 border border-border/60">
                           <div className="flex items-center justify-between">
                             <div>
@@ -4030,6 +4046,20 @@ function App() {
                               </button>
                             </div>
                           </div>
+                          {/* Primary action: arm this profile and jump to the Roast
+                              tab, queued and ready for START (no auto-start). */}
+                          <button
+                            onClick={() => {
+                              setBeanName(selectedBean.name);
+                              setProfileFollowing(p);
+                              setCurrentProfileStepIdx(-1);
+                              setActiveTab("Roast");
+                              showToast(`Profile "${p.name}" loaded — press START when the beans go in.`);
+                            }}
+                            className="mt-3 w-full rounded-xl bg-accent py-2.5 text-xs font-black uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+                          >
+                            Use in Roast
+                          </button>
                           {p.notes && editingProfileNotesId !== p.id && (
                             <div className="mt-2 text-[11px] text-ink-muted italic truncate">{p.notes}</div>
                           )}
@@ -4656,7 +4686,7 @@ function App() {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-primary">
+      <nav className="shrink-0 z-50 border-t border-border/60 bg-primary">
         <div className="mx-auto max-w-md px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="grid grid-cols-4 gap-1">
             {TABS.map((tab) => (

@@ -8,6 +8,15 @@ html {
   overscroll-behavior: none;
 }
 
+/* App shell: fixed-height flex column so the bottom nav sits in normal flow and
+   the content scrolls in <main>. Avoids iOS Safari's intermittent fixed-bar
+   "float mid-page" bug. 100vh is the fallback; 100dvh (dynamic viewport) wins
+   where supported so the shell tracks the collapsing Safari toolbar. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
 body {
   margin: 0;
   background-color: rgb(var(--bg-primary));
