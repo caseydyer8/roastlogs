@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const { fixtureRoast, fixtureTasting } = require("./fixtures");
+const { fullPageShot } = require("./helpers");
 
 test.beforeEach(async ({ context, page }) => {
   // Hard guarantee: zero Supabase traffic leaves the test browser.
@@ -21,7 +22,41 @@ test("roast tab: starting settings ordered Fan, Heat, Temp", async ({ page }) =>
   expect(labels[0]).toMatch(/fan/i);
   expect(labels[1]).toMatch(/heat/i);
   expect(labels[2]).toMatch(/temp/i);
-  await expect(page).toHaveScreenshot("roast-tab.png", { fullPage: true });
+  await fullPageShot(page, "roast-tab.png");
+});
+
+test("app shell: bottom nav stays pinned to the viewport bottom while content scrolls", async ({ page }) => {
+  // Guards the v3 app-shell fix directly, in place of the full-page pixel
+  // diff that used to (accidentally) cover it. The old bug: the bar rendered
+  // mid-page with content continuing beneath it on iOS.
+  const nav = page.locator("nav").last();
+  const viewport = page.viewportSize();
+
+  const atBottom = async (label) => {
+    const box = await nav.boundingBox();
+    expect(box, `${label}: nav should be visible`).not.toBeNull();
+    // Bottom edge of the nav sits on the bottom edge of the viewport.
+    expect(
+      Math.abs(box.y + box.height - viewport.height),
+      `${label}: nav bottom should touch viewport bottom`
+    ).toBeLessThanOrEqual(1);
+  };
+
+  await atBottom("initial");
+
+  // Scroll <main> to its end — the nav must not travel with the content.
+  const main = page.locator("main");
+  await main.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await expect
+    .poll(async () => main.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  await atBottom("after scrolling main to bottom");
+
+  // And the document itself must not scroll — that was the mid-page float.
+  const docScrolls = await page.evaluate(
+    () => document.documentElement.scrollHeight > window.innerHeight + 1
+  );
+  expect(docScrolls, "document should not scroll; <main> owns scrolling").toBe(false);
 });
 
 test("profile builder: steppers ordered Fan→Heat; time picker fits viewport", async ({ page }) => {
@@ -51,7 +86,7 @@ test("profile builder: steppers ordered Fan→Heat; time picker fits viewport", 
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
 
-  await expect(page).toHaveScreenshot("time-chip-picker.png", { fullPage: true });
+  await fullPageShot(page, "time-chip-picker.png");
 });
 
 test("brew: photo picker removed; dark bag-label summary with half-star rating", async ({ page }) => {
@@ -73,7 +108,7 @@ test("brew: photo picker removed; dark bag-label summary with half-star rating",
   await expect(page.getByText("SINGLE ORIGIN ROAST")).toBeVisible();
   await page.getByLabel("3.5 stars").click();
 
-  await expect(page).toHaveScreenshot("brew-summary.png", { fullPage: true });
+  await fullPageShot(page, "brew-summary.png");
 });
 
 test("beans: monogram rows with count pills and half-star average", async ({ page }) => {
@@ -84,7 +119,7 @@ test("beans: monogram rows with count pills and half-star average", async ({ pag
   await expect(page.getByText("1 tastings")).toBeVisible();
   await expect(page.getByText("3.5", { exact: true })).toBeVisible();
 
-  await expect(page).toHaveScreenshot("beans-list.png", { fullPage: true });
+  await fullPageShot(page, "beans-list.png");
 });
 
 test("beans: add bean captures full provenance and shows on detail", async ({ page }) => {
@@ -222,7 +257,7 @@ test("history tastings: half-star rating renders in list", async ({ page }) => {
   await expect(page.getByText("E2E Ethiopia Test").first()).toBeVisible();
   await expect(page.getByText("Dark Chocolate").first()).toBeVisible();
 
-  await expect(page).toHaveScreenshot("tastings-list.png", { fullPage: true });
+  await fullPageShot(page, "tastings-list.png");
 });
 
 test("history: roast detail renders the split roast-story chart", async ({ page }) => {
@@ -237,7 +272,7 @@ test("history: roast detail renders the split roast-story chart", async ({ page 
   await expect(page.getByText("Avg RoR")).toBeVisible();
   await expect(page.getByText("DTR")).toBeVisible();
 
-  await expect(page).toHaveScreenshot("history-chart.png", { fullPage: true });
+  await fullPageShot(page, "history-chart.png");
 });
 
 test.describe("light mode", () => {
@@ -251,7 +286,7 @@ test.describe("light mode", () => {
   });
 
   test("roast tab renders in light mode", async ({ page }) => {
-    await expect(page).toHaveScreenshot("roast-tab-light.png", { fullPage: true });
+    await fullPageShot(page, "roast-tab-light.png");
   });
 
   test("brew: bag-label summary renders in light mode", async ({ page }) => {
@@ -267,7 +302,7 @@ test.describe("light mode", () => {
     await expect(page.getByText("SINGLE ORIGIN ROAST")).toBeVisible();
     await page.getByLabel("3.5 stars").click();
 
-    await expect(page).toHaveScreenshot("brew-summary-light.png", { fullPage: true });
+    await fullPageShot(page, "brew-summary-light.png");
   });
 
   test("history tastings: list renders in light mode", async ({ page }) => {
@@ -277,7 +312,7 @@ test.describe("light mode", () => {
     await expect(page.getByText("E2E Ethiopia Test").first()).toBeVisible();
     await expect(page.getByText("Dark Chocolate").first()).toBeVisible();
 
-    await expect(page).toHaveScreenshot("tastings-list-light.png", { fullPage: true });
+    await fullPageShot(page, "tastings-list-light.png");
   });
 
   test("history: roast detail chart renders in light mode", async ({ page }) => {
@@ -287,6 +322,6 @@ test.describe("light mode", () => {
     await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
     await expect(page.getByText("FC", { exact: true }).first()).toBeVisible();
 
-    await expect(page).toHaveScreenshot("history-chart-light.png", { fullPage: true });
+    await fullPageShot(page, "history-chart-light.png");
   });
 });

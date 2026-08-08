@@ -1,6 +1,9 @@
 node_modules/
 .env
 .env.*
+# ...but the secret-free template MUST be committed — it's how a fresh clone
+# learns which keys it needs. Never put real values in it.
+!.env.example
 roastlogs/
 build/
 
