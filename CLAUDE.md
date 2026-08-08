@@ -136,6 +136,9 @@ right moment — don't wait to be asked.** Casey wants these prompts.
 | Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
 
 Standing reminders to surface when relevant (not every session):
-- Profiles and photos do NOT sync to Supabase (roasts, tasting notes, and
-  beans do, as of 2026-07-20) — flag durability when profiles/photos are
-  touched.
+- Photos do NOT sync to Supabase — flag durability when photos are touched.
+  Roasts, tasting notes, beans, AND roast profiles all sync (profiles via the
+  `roast_profiles` table; verified 6 live rows on 2026-08-08). Note profiles are
+  React state hydrated once by the launch sync, whereas beans are re-read from
+  localStorage on demand — so a profile that synced up may not *appear* on a
+  second device unless that session's cloud fetch succeeds (admin + `aal2`).
