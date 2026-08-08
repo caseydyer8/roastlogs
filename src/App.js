@@ -631,8 +631,8 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
-      <div className="flex w-full max-w-md flex-col overflow-hidden animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface shadow-2xl max-h-[90vh]">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col overflow-hidden animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface shadow-2xl max-h-[85dvh]">
         {/* Header — stays put while the step list scrolls */}
         <div className="shrink-0 px-6 pt-6">
           <h3 className="text-xl font-bold text-ink mb-4">Profile Builder {bean ? `for ${bean.name}` : ""}</h3>
@@ -702,7 +702,7 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
   const genericProfiles = (profiles || []).filter(p => !p.beanName || p.beanName === "");
   
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
       <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl">
         <h3 className="text-xl font-bold text-ink mb-6 text-center">Start Roast</h3>
         <div className="space-y-3">
