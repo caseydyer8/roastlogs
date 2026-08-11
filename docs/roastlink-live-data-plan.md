@@ -53,6 +53,21 @@ to get that reading onto both screens during the roast, and into the roast recor
 | WiFi at the roaster | Garage, strong signal, extender already in place. Low risk. |
 | Two-way event sync | **Not wanted.** RoastLogs never commands the device. |
 | Recording window | **Gated by RoastLogs, phase 1.** Recording starts at `START`, stops at `COOLING START`. |
+| Fan/Heat logging | **Stays manual — permanently.** Not a fallback; the only possible source. |
+| Dev time / DTR | **Always anchored to First Crack**, every roast level. |
+| Post-second-crack time | **Separate metric**, never folded into DTR. |
+| Milestone sequence | **Derived from the target roast level** chosen at setup. |
+| Dark roast levels | **Add French and Italian** beyond the existing Vienna ceiling. |
+| Artisan / Modbus TCP | **Stays enabled.** Used as a separate session, never during a RoastLogs roast. |
+
+### Why Fan/Heat can never be automatic
+
+The TWO+ is a logger — it reads thermocouples and nothing else. The SR540's fan and
+heat are set physically on the roaster, with no electrical path for the TWO+ to observe
+them. (Only the CORE family drives fan/heater, and even then it is *issuing* commands,
+not reading a human's dial positions.) So the manual Fan → Heat entries are not a
+stopgap awaiting automation — they are the irreplaceable human half of the record, and
+the existing flow stays untouched.
 
 ### Recording window (Case's explicit requirement)
 
@@ -361,6 +376,155 @@ A roast is time-critical and unrepeatable. The live feed is never a dependency.
 
 ---
 
+## Roast phases — reworked for dark roasts
+
+The app was originally built to stop at medium; the five roast levels already exist
+(`City` → `Vienna (Dark)`) but the **phase logic** stops at first crack. This is the
+larger of the two UI efforts in this plan — bigger than the live-data wiring itself.
+
+### Level list gains two entries
+
+Case roasts dark for friends and family, so **French** and **Italian** are added beyond
+Vienna. These are also what trigger the second-crack step below.
+
+### Milestone sequence derives from the target roast level
+
+The existing single contextual milestone button keeps its shape; its **sequence** is
+computed from the roast level chosen at setup, so only relevant milestones ever appear.
+No mode toggle, no settings panel — picking the target roast already tells the app what
+to ask for.
+
+| Target level | Button sequence |
+|---|---|
+| City · City+ · Full City | Yellowing → First Crack → **Drop** |
+| Full City+ · Vienna | Yellowing → First Crack → **Drop** (SC available on demand) |
+| French · Italian | Yellowing → First Crack → **Second Crack** → **Drop** |
+
+### Naming and omissions
+
+- **Dry End == Yellowing.** Same physical moment, different vocabulary (Pavel's vs.
+  ours). Keep the existing `YELLOWING` label; no new phase.
+- **First Crack End and Second Crack End are omitted.** In practice cracks trail off
+  ambiguously and marking them precisely is guesswork. Deliberately not in the flow.
+
+### Metrics stay honest
+
+**Development time / DTR is measured from First Crack — on every roast, at every
+level.** This was an explicit redirection: keying "dev" to second crack on dark roasts
+would make DTR mean different things on different roasts, silently breaking
+cross-roast comparison *and* orphaning the 21 existing roasts.
+
+**Post-second-crack time is a separate, separately-named readout** for dark roasts,
+where the window between Vienna and ruined is under a minute. Same information Case
+wanted, without corrupting a standard metric.
+
+## Preheat alert
+
+Between back-to-back batches the Razzo chamber must be brought back to **≥315°F at the
+bean probe** before charging. Live BT makes this an instrument reading rather than a
+guess — and it is the clearest example of why recording is gated separately from
+display (the stream must flow *before* the roast starts).
+
+**Presented as a full-bleed state, not a modal.** With Razzo selected and no roast
+running, the Roast tab *becomes* the preheat screen — giant mono numerals in the
+established split-flap style, edge to edge, readable from across the garage. It clears
+itself when Start is pressed; there is nothing to dismiss.
+
+| State | Screen |
+|---|---|
+| **PREHEAT NEEDED** | Target called out large; chamber cold |
+| **PREHEATING** | Live BT climbing, huge, against the 315°F target |
+| **READY TO CHARGE** | Flash on crossing, then steady |
+
+**Flash on the transition, then hold steady.** A permanently strobing screen is hard to
+read and quickly irritating. The flash grabs attention at the moment of crossing; the
+steady state is what gets read afterwards.
+
+**Audible + haptic on crossing.** With the phone pocketed or face-down on a bench, no
+visual alert reaches anyone. Sound/vibration is the alert that actually works; the
+flash is the confirmation once he looks.
+
+**Target lives on the equipment config** — Razzo defaults to 315°F, editable. Bare
+SR540 and OEM tube have no probe, so no preheat state exists for them at all (the same
+capability gate as the rest of live mode). Tying it to equipment rather than a global
+setting means the target travels with the hardware instead of going stale.
+
+This is a deliberate exception to the calm-and-generous aesthetic, and a justified one:
+an instrument that cannot be read from six feet away has failed at being an instrument.
+
+## Daylight-saving reminder
+
+The device's timezone is a manual setting that **drifts silently** — CSV filenames and
+roast timestamps go an hour off and nothing fails loudly.
+
+Alaska runs AKDT (`-8.0`) in summer and AKST (`-9.0`) in winter. Next boundary:
+**1 November 2026 → `-9.0`**.
+
+**Computed, not hardcoded.** Derive US DST boundaries programmatically (second Sunday
+in March, first Sunday in November) so it keeps working every year with no maintenance.
+On crossing an unacknowledged boundary, show a dismissible banner on the Roast tab
+naming the exact value to enter. Dismissal records *that* boundary as handled so it
+does not nag.
+
+Because the logic is computed rather than a scattered list of dates, removing it later
+— if permanent DST ever arrives — is deleting one function.
+
+*(Later refinement: if the device ever exposes its wall clock over the WebSocket, the
+app could detect the drift itself instead of relying on the calendar. Not worth
+chasing now.)*
+
+## Device configuration (settled 2026-08-11)
+
+Reviewed against the full Advanced Settings console. Board confirmed **TWO+ V3**,
+firmware **v1.1.3** — V3 emits `sensorHealth`, closing the last open item.
+
+| Setting | Value | Reason |
+|---|---|---|
+| **Probe mirroring** | **OFF** | Critical. Enabled, a disconnected ET shows a copy of BT — a fabricated curve that looks plausible. `0` is honest. |
+| RDP (RoastMaster) | OFF | Unused; constant UDP broadcast on 5050. |
+| Serial TC4 | OFF | USB ruled out (chaff near the laptop). |
+| BLE (HiBean) | OFF | Unused; also saves battery. |
+| **Modbus TCP (Artisan)** | **ON** | Kept for Artisan experimentation, as a separate session only. |
+| Workflow | Roast | 1Hz is fixed in Roast mode. |
+| Slew rate | 20 °F/s (default) | Spike filter. *Symptom to watch:* if charge looks over-smoothed or turning point is wrong, raise it. |
+| Calibration | 1-point boiling, before logging roasts | Altitude 0 m → 212.0°F is valid for Anchorage. |
+| SendGrid key | **Leave empty** | Would store a live credential on an unauthenticated device. |
+| Machine Behavior | Untouched | CORE-only control settings; inert on a TWO+. |
+
+Disabling unused outputs is not just hygiene — it returns RAM and sockets to a
+constrained ESP32, which directly serves the single-connection stability constraint.
+
+**Calibrate before accumulating roasts.** Recalibrating later shifts every reading and
+makes roasts before and after non-comparable — the same hazard as changing equipment.
+
+### Network
+
+Static `192.168.1.120` was set on the device, but **the risk is the router's DHCP pool**
+— if `.120` sits inside it, the router can lease the same address to another client.
+
+**Resolution: a DHCP reservation on the Linksys router, device set back to Dynamic.**
+One source of truth; the router owns the assignment and will never hand it out twice.
+The bridge still targets `roastlink.local` (mDNS) with the IP as fallback.
+
+### Security posture (device)
+
+The RoastLink has **no authentication of any kind**. Anyone on the LAN can open its web
+UI, change settings, start/stop roasts, and flash firmware via the Danger Zone. That is
+the honest threat model for hobbyist ESP32 hardware.
+
+A subnet mask is **not** a security control — it defines local addressing, not access.
+What actually protects this setup, in order:
+
+1. **Never port-forward it; never DMZ it.** LAN-only does most of the defending.
+2. Reduce running services (the disabled outputs above).
+3. Strong WPA2/WPA3 — the WiFi boundary *is* the security boundary here.
+4. Optional: an IoT VLAN/guest network, with a rule permitting the Mac through.
+5. No SendGrid credential on the device.
+
+**None of this weakens RoastLogs.** The bridge holds no database credential, so a fully
+compromised RoastLink can only broadcast false temperatures. Admin-only + `aal2` RLS is
+untouched. The architecture already assumes the device is the weak link.
+
 ## Phasing
 
 **Phase 1 — prove the pipe (the deliverable)**
@@ -371,11 +535,35 @@ A roast is time-critical and unrepeatable. The live feed is never a dependency.
 5. Manual entry and all existing behavior untouched.
 
 **Phase 2 — make it an instrument**
-- Live RoR with smoothing; explicit preheat "READY TO CHARGE" target.
-- Two-way event sync (milestone button drives the device's log too).
+- Live RoR with smoothing.
+- The full preheat screen (states, flash-on-transition, audible/haptic).
 - Turning-point auto-detection (first local minimum after charge).
 - Ambient temp/humidity captured per roast.
 - Comparison tool flags cross-equipment comparisons.
+
+**Phase 3 — roast-phase rework** *(independent of live data; can run in parallel)*
+- Add French and Italian roast levels.
+- Milestone sequence derived from target roast level.
+- Second-crack milestone + post-SC readout, DTR left anchored to first crack.
+- DST reminder banner.
+
+## Where this stands
+
+Planning is complete and the contract is verified. **No implementation has begun** —
+nothing in `src/` has changed, and the live site is untouched.
+
+Built so far: `tools/roastlink-sniff.js` (read-only diagnostic, tested against a mock
+implementing the documented contract).
+
+**Next session starts here:**
+1. Run `node tools/roastlink-sniff.js` against the device once it is in STA mode with a
+   probe connected — confirms the field inventory, real sample rate, and `sensorHealth`.
+2. Apply the device configuration table above.
+3. DHCP reservation on the router; set the device back to Dynamic.
+4. Then phase 1: the bridge.
+
+This is a multi-session build. The phase-3 roast rework is independent of the hardware
+and could be done at any point, including while waiting on anything device-related.
 
 **Later**
 - Second thermocouple (ET) if the roaster is modified.
