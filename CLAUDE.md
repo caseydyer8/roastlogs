@@ -70,8 +70,10 @@ preferences otherwise trapped in agent config.
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
 - **PRIVATE 2-ACCOUNT APP as of 2026-07-25** (briefly multi-user 07-21→07-25;
   reverted after Casey + Becca decided NOT to open it to others — a home-network
-  concern). The app is locked to Casey's two accounts ONLY: `primary@redacted.invalid`
-  and `secondary@redacted.invalid`. Every synced table (`roasts`, `tasting_notes`,
+  concern). The app is locked to Casey's **two accounts ONLY** — the addresses are
+  deliberately not committed (this repo is public; publishing them would hand out the
+  full list of valid usernames for an app with signup disabled). Source of truth:
+  Supabase Dashboard → Authentication → Users. Every synced table (`roasts`, `tasting_notes`,
   `beans`, `roast_profiles`) still carries `user_id` (`NOT NULL`, `DEFAULT
   auth.uid()`, FK to `auth.users` ON DELETE CASCADE), but the RLS is now
   **admin-only** — no per-user/owner branch remains, **no `USING (true)` remains**.
@@ -101,11 +103,12 @@ preferences otherwise trapped in agent config.
   blocked; `anon` cannot EXECUTE `rls_auto_enable()`.
 - **Public signups: DISABLED** — Casey provisions the two accounts in the Supabase
   dashboard. There is no signup UI by design.
-- **Leaked-password protection is PLAN-GATED, not enabled** — it's a Pro-plan
-  feature and the org is on FREE (staying free for now; not paying to host other
-  people's data). The security advisor will keep flagging it — annotate as
-  plan-gated, not an open finding. Compensating control: Email-provider password
-  policy (min length ≥8 + require digit/lower/upper/symbol).
+- **Leaked-password protection is PLAN-GATED** — a Pro-plan feature; the org is on
+  FREE (staying free for now; not paying to host other people's data). The security
+  advisor will keep flagging it — annotate as plan-gated, not an open finding.
+  Compensating controls: server-side MFA (`aal2`) required by all 16 policies, so a
+  password alone is worth nothing, plus the Email-provider password policy
+  (min length ≥8 + require digit/lower/upper/symbol).
 - **No PITR/managed snapshots on free.** Backups are logical JSON exports (see
   the `docs/` migrations for schema). **Gate any destructive/PK migration —
   e.g. the deferred Phase 3 composite-key work — on having a backup story.**

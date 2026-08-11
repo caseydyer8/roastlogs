@@ -50,7 +50,7 @@ to get that reading onto both screens during the roast, and into the roast recor
 | Curve during Pause | **Keeps recording continuously.** The probe is physical truth; the timer is human bookkeeping. Pause is marked, not gapped. |
 | Equipment tracking | **Yes** — three configurations, and it gates live mode. |
 | Back-to-back batches | **Yes**, with a preheat step between. Roast boundaries handled from day one. |
-| WiFi at the roaster | Garage, strong signal, extender already in place. Low risk. |
+| WiFi at the roaster | Strong signal, extender already in place. Low risk. |
 | Two-way event sync | **Not wanted.** RoastLogs never commands the device. |
 | Recording window | **Gated by RoastLogs, phase 1.** Recording starts at `START`, stops at `COOLING START`. |
 | Fan/Heat logging | **Stays manual — permanently.** Not a fallback; the only possible source. |
@@ -499,8 +499,8 @@ makes roasts before and after non-comparable — the same hazard as changing equ
 
 ### Network
 
-Static `192.168.1.120` was set on the device, but **the risk is the router's DHCP pool**
-— if `.120` sits inside it, the router can lease the same address to another client.
+A static LAN address was set on the device, but **the risk is the router's DHCP pool**
+— if the chosen address sits inside it, the router can lease it to another client.
 
 **Resolution: a DHCP reservation on the Linksys router, device set back to Dynamic.**
 One source of truth; the router owns the assignment and will never hand it out twice.
@@ -589,7 +589,7 @@ Node 22+. Verified end-to-end against a mock implementing the documented contrac
 
 ```
 node tools/roastlink-sniff.js                # roastlink.local
-node tools/roastlink-sniff.js 192.168.1.42   # explicit IP
+node tools/roastlink-sniff.js <device-ip>    # explicit IP
 ```
 
 ---
