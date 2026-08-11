@@ -51,7 +51,25 @@ to get that reading onto both screens during the roast, and into the roast recor
 | Equipment tracking | **Yes** — three configurations, and it gates live mode. |
 | Back-to-back batches | **Yes**, with a preheat step between. Roast boundaries handled from day one. |
 | WiFi at the roaster | Garage, strong signal, extender already in place. Low risk. |
-| Two-way event sync | **Phase 2.** Phase 1 listens only. |
+| Two-way event sync | **Not wanted.** RoastLogs never commands the device. |
+| Recording window | **Gated by RoastLogs, phase 1.** Recording starts at `START`, stops at `COOLING START`. |
+
+### Recording window (Case's explicit requirement)
+
+**Displaying and recording are separate concerns**, and this distinction is what
+makes the requirement work:
+
+- The telemetry stream flows **continuously** whenever the bridge is connected, so a
+  live bean temp is on screen **before** the roast — which is what makes the
+  between-batch preheat to ≥315°F an instrument reading instead of a guess.
+- **Nothing is written to the database** until `START` is pressed in RoastLogs.
+- Recording **stops** at `COOLING START` (drop).
+- `curve` therefore contains exactly `[START → COOLING START]`, nothing before or after.
+
+The device has its own roast state machine (Begin Roast / Drop on the OLED and web
+UI) and its own onboard CSV. **That state is ignored for our purposes** — RoastLogs is
+the sole authority on the recording window. This is phase-1 scope, wired in from the
+start, not retrofitted.
 
 ### Equipment configurations
 
@@ -68,6 +86,30 @@ equipment. Comparing across configs without flagging it would read as a techniqu
 change when it was a hardware change.
 
 ---
+
+## Prerequisite: the device must be in STA mode
+
+**This is a hard prerequisite, not a setup detail.** The RoastLink can run two ways:
+
+| Mode | Address | Works for this build? |
+|---|---|---|
+| **AP** (device serves its own hotspot `RoastLink_TWO+`) | `192.168.4.1` | **No** |
+| **STA** (device joins the home WiFi) | DHCP address + `roastlink.local` | **Yes** |
+
+In AP mode, any machine talking to the device is joined to *the device's* network and
+therefore **has no internet** — so the bridge cannot reach Supabase and nothing can
+reach the phone. The entire two-screen design depends on STA mode.
+
+Setup (manual pp. 4–7): join `RoastLink_TWO+` → captive portal → **Set up WiFi** →
+select the home network → Save → device reboots, its hotspot disappears, and it becomes
+reachable at **`http://roastlink.local`**.
+
+**Verifying mode at a glance:**
+- **Status LED** — amber *breathing* = AP; amber *single blink* = connected (STA).
+- **OLED Screen C** (double-click to reach) — shows `STA`/`AP` and the live IP.
+
+The bridge should target **`roastlink.local`** rather than a hard-coded IP, since a DHCP
+lease can change; a manual IP entry stays as the fallback.
 
 ## Architecture
 
@@ -144,6 +186,26 @@ a TCP connection can die silently, so missed pongs are how we *know* the device 
 | `dryend` | `YELLOWING` |
 | `fcstart` | `FIRST CRACK` |
 | `drop` | `COOLING START` |
+
+### Confirmed from the shipped manual + device in hand
+
+| Fact | Value | Why it matters |
+|---|---|---|
+| Firmware | **v1.1.3** | Matches the latest in the maker's OTA repo. |
+| Sample rate | **1 per second** | Exactly what the data model assumes. |
+| Log units | **Always °F**, regardless of display setting | The device's °F/°C toggle is **display-only** — do not let it mislead. |
+| Discovery | **`roastlink.local`** (mDNS) | Bridge connects by name, not a DHCP-dependent IP. |
+| Device events | Charge → Dry End → First Crack Start → First Crack End → Second Crack → Drop | Maps cleanly onto RoastLogs phases if ever needed. |
+| Log storage | ~100 files, oldest auto-deleted | Onboard CSV is a **short-lived** backup, not an archive. |
+
+### Concurrency limit (operational rule)
+
+The manual warns: *"Keep only one browser tab open at a time for best performance."*
+That is an ESP32 signalling limited concurrent connections. Our bridge holds one
+WebSocket, so **during a roast the bridge should be the only client** — device web UI
+tabs on the phone and Mac should be closed. The bridge should surface this plainly if
+the connection is refused or unstable, since the failure mode otherwise looks like a
+flaky network.
 
 ### Two contract hazards
 
@@ -325,10 +387,22 @@ A roast is time-critical and unrepeatable. The live feed is never a dependency.
 
 | Item | Resolution |
 |---|---|
-| Firmware variant (TWO+ / V2 / V3) | Read from device on arrival. Determines whether `sensorHealth` frames exist. Conditional, not a redesign. |
-| Actual sample rate | Confirm from the live stream; plan assumes ~1Hz. |
-| `roastlink.local` resolves? | Confirm on arrival; manual IP entry is the fallback. |
+| Board variant (TWO+ / V2 / V3) | Firmware is v1.1.3, but the *hardware* variant is still unconfirmed. Determines whether `sensorHealth` frames exist. Conditional, not a redesign — `tools/roastlink-sniff.js` answers it. |
+| Device in STA mode | **Blocking.** Currently observed at `192.168.4.1` (AP mode). Must complete WiFi setup. |
+| `roastlink.local` resolves on the Mac | Confirm via the sniffer; manual IP is the fallback. |
 | Real CSV from a roast | Sharpens curve shape and RoR window tuning. |
+
+## Tooling
+
+`tools/roastlink-sniff.js` — a read-only diagnostic that connects to the device,
+disables probe mirroring, sends `hello_ui`, and reports the field inventory, measured
+sample rate, `sensorHealth` availability, and ping/pong health. Zero dependencies on
+Node 22+. Verified end-to-end against a mock implementing the documented contract.
+
+```
+node tools/roastlink-sniff.js                # roastlink.local
+node tools/roastlink-sniff.js 192.168.1.42   # explicit IP
+```
 
 ---
 
