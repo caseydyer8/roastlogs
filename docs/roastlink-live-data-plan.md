@@ -547,23 +547,65 @@ untouched. The architecture already assumes the device is the weak link.
 - Second-crack milestone + post-SC readout, DTR left anchored to first crack.
 - DST reminder banner.
 
-## Where this stands
+## Where this stands (updated 2026-08-20)
 
-Planning is complete and the contract is verified. **No implementation has begun** —
-nothing in `src/` has changed, and the live site is untouched.
+**Phase 1 is essentially working end to end.** Live bean temp flows from the real
+device into RoastLogs, and the recording gate persists a curve on save. Verified
+against both a mock and the real TWO+.
 
-Built so far: `tools/roastlink-sniff.js` (read-only diagnostic, tested against a mock
-implementing the documented contract).
+### Confirmed on the real device
+- In **STA mode**, reachable at **`roastlink.local`** (mDNS resolves on the Mac).
+- Board is **TWO+ V3**, firmware **v1.1.3** — emits `sensorHealth`.
+- **Live `hello_ui` stream runs at ~5 Hz** (the manual's "1 Hz" is the CSV rate).
+  Curve storage downsamples 5 Hz → ~1 Hz on save.
+- **mirror_enabled:0 verified on hardware**: empty ET socket reads `0.0`, not a
+  fake copy of BT. The data-integrity hazard is neutralized on the actual unit.
+- Bean probe healthy (`btValid:true`, reads room temp with the roaster cold).
 
-**Next session starts here:**
-1. Run `node tools/roastlink-sniff.js` against the device once it is in STA mode with a
-   probe connected — confirms the field inventory, real sample rate, and `sensorHealth`.
-2. Apply the device configuration table above.
-3. DHCP reservation on the router; set the device back to Dynamic.
-4. Then phase 1: the bridge.
+### Done and pushed (branch `claude/ui-redesign-gn7tf4`)
+- **Bridge core** — `bridge/lib/{roastlink,publisher,bridge}.js` + `bridge/run.js`
+  (headless runner). Device client (mirror-off, hello_ui, ping/pong, reconnect) →
+  Supabase Realtime broadcast → viewer presence. Full pipe verified
+  (mock → bridge → real Supabase → subscriber); lamps reach device:live,
+  cloud:joined, viewers:1. `bridge/test/` has the mock + harness/roundtrip/e2e.
+- **App live readout** — `src/hooks/useLiveRoast.js` (subscriber, presence),
+  `src/lib/ror.js` (least-squares RoR, verified on a noisy ramp),
+  `src/components/LiveRoastReadout.jsx` (status dot, live BT, RoR, REC badge).
+  Wired at the top of the Roast tab, additive.
+- **Recording gate** — captures the curve ONLY between START and COOLING START,
+  downsampled ~1 Hz, saved on the roast; nothing persists before Save. Bridge only
+  broadcasts, never writes.
+- **DB** — `roasts.curve jsonb` added (additive/nullable; 21 existing rows
+  untouched). Migration recorded in `docs/2026-08-20_add_curve_to_roasts.sql`.
+  `syncService` reads/writes `curve` both directions.
 
-This is a multi-session build. The phase-3 roast rework is independent of the hardware
-and could be done at any point, including while waiting on anything device-related.
+### Next session starts here (in order)
+1. **Verify the save path**: save one test roast with the bridge running, then
+   confirm the stored `curve` in Supabase is exactly START..COOLING START.
+2. **Feed BT into the Temp dial** in the hero (currently the dial shows "—"; live
+   data only lands in the separate readout strip).
+3. **Draw the saved curve** on `RoastCurveChart` (BT as `monotone`).
+4. **Deploy** so the phone becomes the second screen. Preview on localhost first
+   (house rule); the deploy machine needs a real `.env` (URL + publishable key).
+5. Then: **Electron GUI shell** (double-click app + lamps — deferred, app-first),
+   **preheat screen**, and **Phase-2 channel hardening** (private Realtime channel
+   + RLS on `realtime.messages`, so only admins can read/publish the live channel —
+   flagged because broadcast currently works with the public key + no auth).
+
+Phase 3 (roast-phase rework: French/Italian, milestone sequence from roast level,
+post-SC metric, DST reminder) is independent of hardware and can slot in anytime.
+
+### Running it (Mac)
+- Device on WiFi; `cd bridge && npm install --omit=dev` (skips Electron).
+- `SUPABASE_URL=... SUPABASE_KEY=... node bridge/run.js roastlink.local`
+- App on localhost needs a root `.env` with the real Supabase URL + publishable key.
+
+### Fragile / don't forget
+- The publishable key is intentionally public (powerless vs. the aal2 tables), but
+  the live broadcast channel is not yet access-controlled — that's the Phase-2
+  hardening above.
+- `~/Desktop/roastlogs-old` still holds pre-rewrite history with the old emails —
+  delete it once comfortable.
 
 **Later**
 - Second thermocouple (ET) if the roaster is modified.
