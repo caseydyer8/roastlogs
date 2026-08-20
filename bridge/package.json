@@ -1,0 +1,19 @@
+{
+  "name": "roastlogs-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RoastLink TWO+ -> Supabase Realtime bridge for RoastLogs",
+  "main": "main.js",
+  "scripts": {
+    "mock": "node test/mock-roastlink.js",
+    "harness": "node test/harness.js",
+    "roundtrip": "node test/roundtrip.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.100.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}
