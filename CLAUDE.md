@@ -3,24 +3,19 @@
 React CRA PWA for logging Fresh Roast SR540 coffee roasts. Deployed to GitHub
 Pages at https://caseydyer8.github.io/roastlogs/.
 
-## Working With Case (developer profile — read first)
+## Working With Case (read first)
 
-Case maintains a developer profile in `.claude/case-profile/` — how he thinks,
-how he builds, his design taste, his tiered definition of "done," how he runs
-his agent bundle, and where the work is headed. **Load it at the start of every
-session and work from it — do not start cold.** `00-working-with-case.md` is the
-entry point; the numbered files specialize it. Address him as **"Case"** in
-every response. The files below are imported so they're always in context:
+Case's working standards live in `.claude/working-agreement.md` — his build loop,
+session rituals, design standards, tiered definition of "done," and how he runs
+his agent bundle. **Load it at the start of every session and work from it — do
+not start cold.** Address him as **"Case"** in every response. It is imported
+below so it is always in context:
 
-@.claude/case-profile/00-working-with-case.md
-@.claude/case-profile/01-workflow-and-sessions.md
-@.claude/case-profile/02-design-and-done.md
-@.claude/case-profile/03-agents-and-process.md
-@.claude/case-profile/04-growth-and-direction.md
+@.claude/working-agreement.md
 
-Keep this folder current: when working standards or agent definitions change
-materially, update the matching file here — it's the human-readable backup of
-preferences otherwise trapped in agent config.
+Keep it current: when working standards or agent definitions change materially,
+update that file — it is the human-readable backup of preferences otherwise
+trapped in agent config.
 
 ## Project Conventions
 
