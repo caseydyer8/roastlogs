@@ -5,6 +5,8 @@ import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, 
 import { useAuth } from "./contexts/AuthContext";
 import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
+import { useLiveRoast } from "./hooks/useLiveRoast";
+import LiveRoastReadout from "./components/LiveRoastReadout";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -748,6 +750,9 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
 }
 
 function App() {
+  // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
+  // renders nothing until a bridge is publishing; manual entry is untouched.
+  const liveRoast = useLiveRoast();
   const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
   // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
@@ -1898,6 +1903,7 @@ function App() {
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
+            <LiveRoastReadout status={liveRoast.status} bt={liveRoast.bt} ror={liveRoast.ror} viewers={liveRoast.viewers} />
             {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
             {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
