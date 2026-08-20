@@ -753,6 +753,8 @@ function App() {
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
   const liveRoast = useLiveRoast();
+  const curveRef = React.useRef([]); // live bean-temp curve for the roast in progress
+  const [curvePointCount, setCurvePointCount] = React.useState(0);
   const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
   // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
@@ -1384,6 +1386,8 @@ function App() {
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
+      curveRef.current = [];
+      setCurvePointCount(0);
       if (profile) {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
@@ -1422,8 +1426,11 @@ function App() {
         heat: startingHeat,
         fan: startingFan,
         temp: startingTemp
-      }
+      },
+      curve: curveRef.current.slice(),
     };
+    curveRef.current = [];
+    setCurvePointCount(0);
 
     const existingRoasts = [];
     try {
@@ -1487,6 +1494,25 @@ function App() {
   // ticked. Pausing within the first second (elapsedSeconds still 0) must not look like
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
+
+  // Recording gate: capture live bean temp into the curve ONLY between START
+  // and COOLING START. RoastLogs owns the window; the bridge merely streams,
+  // and nothing is persisted until the roast is saved. Bucketing by whole
+  // second downsamples the ~5Hz live feed to ~1Hz (latest reading wins).
+  React.useEffect(() => {
+    if (!roastStarted || coolingStartTime) return;
+    const bt = liveRoast.bt;
+    if (typeof bt !== "number") return;
+    const sec = elapsedSeconds;
+    const buf = curveRef.current;
+    const last = buf.length ? buf[buf.length - 1] : null;
+    if (last && last.t === sec) {
+      last.bt = bt;
+    } else {
+      buf.push({ t: sec, bt });
+      setCurvePointCount(buf.length);
+    }
+  }, [liveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
 
   // Open the adjustment logger. Fan/Heat prefill from the last logged values (they are
   // dial STATES — carry-forward is truth), but Temp always opens BLANK: it is a fresh
@@ -1903,7 +1929,7 @@ function App() {
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            <LiveRoastReadout status={liveRoast.status} bt={liveRoast.bt} ror={liveRoast.ror} viewers={liveRoast.viewers} />
+            <LiveRoastReadout status={liveRoast.status} bt={liveRoast.bt} ror={liveRoast.ror} viewers={liveRoast.viewers} recording={roastStarted && !coolingStartTime} points={curvePointCount} />
             {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
             {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">

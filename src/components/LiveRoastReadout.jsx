@@ -19,7 +19,7 @@ const LABEL = {
   idle: "OFFLINE",
 };
 
-export default function LiveRoastReadout({ status, bt, ror, viewers }) {
+export default function LiveRoastReadout({ status, bt, ror, viewers, recording, points }) {
   // Stay out of the way entirely until there is a bridge to talk to.
   if (status === "idle" || status === "connecting") return null;
 
@@ -35,6 +35,12 @@ export default function LiveRoastReadout({ status, bt, ror, viewers }) {
         </span>
         {viewers > 1 && (
           <span className="text-[11px] font-medium text-ink-muted">· {viewers} screens</span>
+        )}
+        {recording && (
+          <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-error/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-error-text">
+            <span className="h-1.5 w-1.5 rounded-full bg-error animate-pulse" />
+            REC {points}
+          </span>
         )}
       </div>
       <div className="flex items-baseline gap-4">
