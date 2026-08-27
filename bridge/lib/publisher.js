@@ -16,6 +16,7 @@
 
 const EventEmitter = require("events");
 const { createClient } = require("@supabase/supabase-js");
+const WebSocketImpl = require("ws");
 
 const DEFAULTS = { channel: "roastlink-live", event: "sample" };
 
@@ -27,7 +28,13 @@ class Publisher extends EventEmitter {
     this.viewers = 0;
     this.supabase = createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
-      realtime: { params: { eventsPerSecond: 5 } },
+      // Supabase's Realtime client only auto-detects a WebSocket on Node 22+.
+      // Electron 32 bundles an older Node internally, so without an explicit
+      // transport it throws "Node.js detected but native WebSocket not
+      // found" the moment it tries to open the socket -- exactly the failure
+      // Case hit in the Electron shell (plain `node run.js` on real Node 22
+      // never showed it, since native WebSocket covered it there).
+      realtime: { transport: WebSocketImpl, params: { eventsPerSecond: 5 } },
     });
     this.channel = null;
   }
