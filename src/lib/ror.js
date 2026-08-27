@@ -9,8 +9,12 @@
 // fine; only differences matter). Newest-last or newest-first both work.
 
 export function computeRoR(samples, opts = {}) {
-  const windowMs = opts.windowMs ?? 30000; // ~30s fit window
-  const minSpanMs = opts.minSpanMs ?? 8000; // need a real spread before trusting a slope
+  // Shorter than the original 30s/8s tuning: that lagged 3-5s behind live BT
+  // changes and, on a short test roast, took a quarter of the roast to appear
+  // at all. 12s/4s keeps the least-squares fit stable against 5Hz thermocouple
+  // noise while responding fast enough to feel live.
+  const windowMs = opts.windowMs ?? 12000; // ~12s fit window
+  const minSpanMs = opts.minSpanMs ?? 4000; // need a real spread before trusting a slope
   const minPoints = opts.minPoints ?? 4;
 
   if (!Array.isArray(samples) || samples.length < minPoints) return null;

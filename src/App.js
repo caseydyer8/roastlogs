@@ -1465,8 +1465,13 @@ function App() {
   };
 
   const handleLogAdjustment = () => {
+    // When the bridge is live, the Temp dial shows the probe reading rather
+    // than a typed value, so `temp` (the manual-entry state) stays blank.
+    // Stamp the live BT in automatically so the timeline still records a
+    // temp for this adjustment, matching what was actually on screen.
+    const loggedTemp = temp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : temp);
     setRoastLog((prev) => [
-      { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp },
+      { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp: loggedTemp },
       ...(prev || []),
     ]);
     setHeat("");
