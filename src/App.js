@@ -7,6 +7,7 @@ import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 import { useLiveRoast } from "./hooks/useLiveRoast";
 import LiveRoastReadout from "./components/LiveRoastReadout";
+import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -4592,6 +4593,10 @@ function App() {
 
         {activeTab === "Settings" && (
           <div className="space-y-4">
+            <ScreenCard title="RoastLink Bridge" subtitle="Live Data">
+              <RoastLinkStatusCard status={liveRoast.status} bt={liveRoast.bt} viewers={liveRoast.viewers} />
+            </ScreenCard>
+
             <ScreenCard title="Preferences" subtitle="Settings">
               {/* IDEA-009: Units of Measure */}
               <div className="space-y-4">
