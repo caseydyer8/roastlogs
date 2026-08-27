@@ -90,12 +90,21 @@ connectBtn.addEventListener("click", async () => {
   }
 
   connectBtn.disabled = true;
+  setLamp("dotDevice", "txtDevice", "connecting");
+  setLamp("dotCloud", "txtCloud", "connecting");
   logLine(`connecting to ${host}...`);
-  const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey });
-  connectBtn.disabled = false;
-  if (res && res.ok) {
-    connected = true;
-    connectBtn.textContent = "Disconnect";
-    connectBtn.classList.add("stop");
+  try {
+    const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey });
+    if (res && res.ok) {
+      connected = true;
+      connectBtn.textContent = "Disconnect";
+      connectBtn.classList.add("stop");
+    } else {
+      logLine(`connect failed: ${res && res.error ? res.error : "unknown error"}`, true);
+    }
+  } catch (err) {
+    logLine(`connect failed: ${err && err.message ? err.message : err}`, true);
+  } finally {
+    connectBtn.disabled = false;
   }
 });

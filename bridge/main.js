@@ -70,20 +70,29 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("connect", async (_evt, { host, supabaseUrl, supabaseKey }) => {
-  if (bridge) {
-    await bridge.stop().catch(() => {});
-    bridge = null;
-  }
-  saveSettings({ host, supabaseUrl, supabaseKey });
+  try {
+    if (bridge) {
+      await bridge.stop().catch(() => {});
+      bridge = null;
+    }
+    saveSettings({ host, supabaseUrl, supabaseKey });
 
-  bridge = new Bridge({ host, supabaseUrl, supabaseKey });
-  bridge.on("lamps", (l) => send("lamps", l));
-  bridge.on("sample", (s) => send("sample", s));
-  bridge.on("health", (h) => send("health", h));
-  bridge.on("event", (e) => send("event", e));
-  bridge.on("error", (e) => send("bridge-error", { source: e.source, message: e.error.message }));
-  bridge.start();
-  return { ok: true };
+    bridge = new Bridge({ host, supabaseUrl, supabaseKey });
+    bridge.on("lamps", (l) => send("lamps", l));
+    bridge.on("sample", (s) => send("sample", s));
+    bridge.on("health", (h) => send("health", h));
+    bridge.on("event", (e) => send("event", e));
+    bridge.on("error", (e) => send("bridge-error", { source: e.source, message: e.error.message }));
+    bridge.start();
+    return { ok: true };
+  } catch (err) {
+    // Constructing the Supabase client can throw synchronously on a malformed
+    // URL/key. Without this catch the IPC promise rejects, the renderer's
+    // await throws unhandled, and the UI silently stays on "idle" forever --
+    // exactly the failure mode this is guarding against.
+    console.error("connect failed:", err);
+    return { ok: false, error: err.message || String(err) };
+  }
 });
 
 ipcMain.handle("disconnect", async () => {
