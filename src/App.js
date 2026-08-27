@@ -1392,13 +1392,16 @@ function App() {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
       }
-      // Log starting settings
+      // Log starting settings. Same live-BT stamp as handleLogAdjustment: when
+      // the bridge is live, startingTemp (the manual-entry field) is blank
+      // because the dial shows the probe reading instead of a typed value.
+      const startTemp = startingTemp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : startingTemp);
       setRoastLog([{ 
         type: 'start_settings', 
         t: 0, 
         heat: startingHeat, 
         fan: startingFan, 
-        temp: startingTemp,
+        temp: startTemp,
         label: "Start"
       }]);
     } else {
