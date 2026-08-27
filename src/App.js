@@ -2132,10 +2132,14 @@ function App() {
                     className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
                   >
                     <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Temp</div>
-                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">
-                      {latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—"}
+                    <div className={`mt-1.5 font-mono text-3xl font-semibold tabular-nums ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-accent-text" : "text-ink"}`}>
+                      {liveRoast.isLive && typeof liveRoast.bt === "number"
+                        ? Math.round(liveRoast.bt)
+                        : (latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—")}
                     </div>
-                    <div className="mt-2.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-muted">reading</div>
+                    <div className={`mt-2.5 font-mono text-[9.5px] uppercase tracking-[0.14em] ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-success-text" : "text-ink-muted"}`}>
+                      {liveRoast.isLive && typeof liveRoast.bt === "number" ? "live" : "reading"}
+                    </div>
                   </button>
                 </div>
               )}
