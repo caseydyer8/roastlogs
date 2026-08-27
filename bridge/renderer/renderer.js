@@ -88,6 +88,15 @@ connectBtn.addEventListener("click", async () => {
     logLine("Supabase URL and key are required", true);
     return;
   }
+  // This field is for the PUBLISHABLE key only -- it's meant to be public and
+  // is powerless against real data under the admin-only + aal2 RLS policies.
+  // A service_role/secret key pasted here by mistake would be genuinely
+  // sensitive and get written to ~/.roastlogs-bridge.json in plaintext, so
+  // refuse anything that looks like one before it's ever saved.
+  if (/^sb_secret_|service_role/i.test(supabaseKey)) {
+    logLine("That looks like a service_role/secret key -- use the publishable key instead.", true);
+    return;
+  }
 
   connectBtn.disabled = true;
   setLamp("dotDevice", "txtDevice", "connecting");

@@ -27,11 +27,7 @@
       "main.js",
       "preload.js",
       "lib/**/*",
-      "renderer/**/*",
-      "node_modules/**/*",
-      "!node_modules/electron/**",
-      "!node_modules/electron-builder/**",
-      "!node_modules/.bin/**"
+      "renderer/**/*"
     ],
     "mac": {
       "category": "public.app-category.utilities",
