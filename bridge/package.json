@@ -5,15 +5,34 @@
   "description": "RoastLink TWO+ -> Supabase Realtime bridge for RoastLogs",
   "main": "main.js",
   "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac",
     "mock": "node test/mock-roastlink.js",
     "harness": "node test/harness.js",
-    "roundtrip": "node test/roundtrip.js"
+    "roundtrip": "node test/roundtrip.js",
+    "e2e": "node test/e2e.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.roastlogs.bridge",
+    "productName": "RoastLogs Bridge",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": "dmg"
+    }
   }
 }

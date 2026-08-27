@@ -1,0 +1,101 @@
+"use strict";
+
+// Renderer script — talks only through window.roastlogs (see preload.js).
+// No Node/network access here by design; this is plain DOM + IPC.
+
+const el = (id) => document.getElementById(id);
+const hostInput = el("host");
+const urlInput = el("url");
+const keyInput = el("key");
+const connectBtn = el("connectBtn");
+const btValue = el("btValue");
+const btAge = el("btAge");
+const logEl = el("log");
+
+let connected = false;
+let lastSampleAt = 0;
+
+const DOT_CLASS = { live: "dot live", joined: "dot live", connecting: "dot pulse", reconnecting: "dot pulse", joining: "dot pulse", stale: "dot bad", error: "dot bad", closed: "dot", idle: "dot" };
+
+function setLamp(dotId, txtId, state) {
+  el(dotId).className = DOT_CLASS[state] || "dot";
+  el(txtId).textContent = state;
+}
+
+function logLine(text, isErr) {
+  const row = document.createElement("div");
+  if (isErr) row.className = "err";
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  row.textContent = `${t}  ${text}`;
+  logEl.appendChild(row);
+  while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+window.roastlogs.getSettings().then((s) => {
+  if (s.host) hostInput.value = s.host;
+  if (s.supabaseUrl) urlInput.value = s.supabaseUrl;
+  if (s.supabaseKey) keyInput.value = s.supabaseKey;
+});
+window.roastlogs.onSettings((s) => {
+  if (s.host && !hostInput.value) hostInput.value = s.host;
+  if (s.supabaseUrl && !urlInput.value) urlInput.value = s.supabaseUrl;
+  if (s.supabaseKey && !keyInput.value) keyInput.value = s.supabaseKey;
+});
+
+window.roastlogs.onLamps((l) => {
+  setLamp("dotDevice", "txtDevice", l.device);
+  setLamp("dotCloud", "txtCloud", l.cloud);
+  el("dotViewers").className = l.viewers > 0 ? "dot live" : "dot";
+  el("txtViewers").textContent = String(l.viewers);
+});
+
+window.roastlogs.onSample((s) => {
+  lastSampleAt = Date.now();
+  btValue.innerHTML = `<span class="bt">${Math.round(s.bt)}</span><span class="unit">&deg;F BT</span>`;
+});
+
+window.roastlogs.onHealth((h) => {
+  if (h.btValid === false) logLine(`bean probe fault (state: ${h.btState})`, true);
+});
+
+window.roastlogs.onEvent((e) => logLine(`device event: ${e.label}`));
+
+window.roastlogs.onError((e) => logLine(`${e.source} error: ${e.message}`, true));
+
+setInterval(() => {
+  if (!lastSampleAt) return;
+  const secs = Math.round((Date.now() - lastSampleAt) / 1000);
+  btAge.textContent = secs < 3 ? "" : `${secs}s ago`;
+}, 1000);
+
+connectBtn.addEventListener("click", async () => {
+  if (connected) {
+    connectBtn.disabled = true;
+    await window.roastlogs.disconnect();
+    connected = false;
+    connectBtn.textContent = "Connect";
+    connectBtn.classList.remove("stop");
+    connectBtn.disabled = false;
+    logLine("disconnected");
+    return;
+  }
+
+  const host = hostInput.value.trim() || "roastlink.local";
+  const supabaseUrl = urlInput.value.trim();
+  const supabaseKey = keyInput.value.trim();
+  if (!supabaseUrl || !supabaseKey) {
+    logLine("Supabase URL and key are required", true);
+    return;
+  }
+
+  connectBtn.disabled = true;
+  logLine(`connecting to ${host}...`);
+  const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey });
+  connectBtn.disabled = false;
+  if (res && res.ok) {
+    connected = true;
+    connectBtn.textContent = "Disconnect";
+    connectBtn.classList.add("stop");
+  }
+});
