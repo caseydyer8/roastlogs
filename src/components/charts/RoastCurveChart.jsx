@@ -120,9 +120,20 @@ export default function RoastCurveChart({ roast }) {
       .filter((e) => e.type === "adjustment" || e.type === "start_settings")
       .slice()
       .sort((a, b) => Number(a.t) - Number(b.t));
-    const tempReadings = events
+    // Prefer the live RoastLink curve (dense ~1Hz bean temp) when the roast has
+    // one — the probe is the source of truth. Everything downstream (the temp
+    // line, RoR, avg/FC/drop temps, DTR) reads from tempReadings, so this single
+    // swap makes the whole chart probe-driven. Manual typed temps are the fallback
+    // for roasts logged without the bridge.
+    const curvePts = Array.isArray(roast.curve)
+      ? roast.curve
+          .filter((p) => p && Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.bt)))
+          .map((p) => [Number(p.t), Number(p.bt)])
+      : [];
+    const manualTemps = events
       .filter((e) => e.temp !== "" && e.temp !== null && e.temp !== undefined && Number(e.temp) > 0)
       .map((e) => [Number(e.t), Number(e.temp)]);
+    const tempReadings = curvePts.length >= 2 ? curvePts : manualTemps;
 
     const tempAt = buildMonotoneInterpolator(tempReadings);
     const hasTemp = tempReadings.length >= 2;
