@@ -613,7 +613,29 @@ post-SC metric, DST reminder) is independent of hardware and can slot in anytime
 
 ---
 
-## Live graph — plan (added 2026-08-28, status: awaiting Case's read-through)
+## Live graph — HOLD GATE (built + pushed, awaiting localhost review)
+
+> **STATUS: built, tested, pushed — NOT deployed. Waiting on Case's localhost
+> review before anything ships.** Commit `24d126e4` on
+> `claude/ui-redesign-gn7tf4`. Do not deploy this without his sign-off; house
+> rule is localhost review first, and he has not seen it running yet.
+>
+> **To review (needs the Mac — the chart only renders when a bridge is live):**
+> ```
+> cd ~/Desktop/roastlogs && git pull && npm start
+> ```
+> then start the bridge and open the Roast tab. No roaster required: run
+> `cd bridge && npm run mock` and point the bridge host at `127.0.0.1` to watch
+> the graph animate on fake climbing temps.
+>
+> **Open decision for Case to make from real use:** which windowing mode
+> becomes the default — the trailing "3 min" pannable window, or "Full"
+> auto-expand. Both are built; the in-chart toggle switches them.
+>
+> **Still deferred (unchanged):** first/second-crack time estimates, staged as
+> a later phase per the reasoning at the end of this section.
+
+### Original plan (as approved)
 
 **Status: v3.3.0 (channel lockdown) is live and verified end to end on real
 hardware — live BT, RoR, the desktop bridge app with lamps, phone-visible
