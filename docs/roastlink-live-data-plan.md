@@ -613,6 +613,117 @@ post-SC metric, DST reminder) is independent of hardware and can slot in anytime
 
 ---
 
+## Live graph — plan (added 2026-08-28, status: awaiting Case's read-through)
+
+**Status: v3.3.0 (channel lockdown) is live and verified end to end on real
+hardware — live BT, RoR, the desktop bridge app with lamps, phone-visible
+connection status, and the curve saving correctly.** This section plans the
+next visible piece: a real-time chart on the Roast tab, in the style of
+Artisan, rather than just the compact BT/RoR readout strip that exists today.
+
+### Blast radius
+
+**What changes:** a new component on the Roast tab (expand-in-place from the
+existing live readout strip); no changes to `RoastCurveChart.jsx` (the
+finished-roast History chart) or any data table.
+
+**What does NOT change:** the recording gate, `curve` storage, the bridge, the
+channel lockdown, and every existing screen. This is purely a new rendering
+surface over data that already exists and already saves correctly.
+
+**Nothing here is destructive.** Worst case if a design choice is wrong: it's
+a chart, not saved data — nothing to roll back beyond the code itself.
+
+### Where it lives
+
+**Expand-in-place, not a modal.** The existing compact readout (status dot,
+live BT, RoR) becomes tappable. Tapping it expands a full chart panel inline,
+directly below the readout and above the Fan/Heat/Temp dials — so **the dials,
+the milestone button, and the chart are all on screen and usable at the same
+time.** This was explicit: Case wants to adjust Heat/Fan and watch the graph
+respond without navigating away. Collapsing back to the compact strip is the
+same tap.
+
+### What's on it
+
+**Top panel — Temp + RoR**, matching `RoastCurveChart`'s existing visual
+language (Temp `monotone`, smoothed RoR line) but fed by the live curve buffer
+instead of a finished roast's saved array. Reuses the existing
+`src/lib/ror.js` smoothing, already proven live.
+
+**Bottom panel — Control map, with the profile overlaid.** Heat/Fan as
+`stepAfter` (never smoothed — discrete dials, per project convention), same as
+today. When a profile is being followed, its planned steps
+(`{time, heat, fan}` — confirmed this is all a profile step actually contains;
+no temperature target exists) are drawn as a **target/reference line
+alongside the actual logged steps** — the graph version of the existing "Next
+step" guidance strip, made continuous and comparable at a glance. No new data
+model needed; this uses `profileFollowing.steps` as-is.
+
+**Milestone bands — live, not just markers.** Matches the finished chart's
+phase-shaded regions, but animated: **the current phase's band is
+highlighted/shaded live as the roast moves through it** (Case's explicit
+answer), with the boundary appearing the instant a milestone is tapped — same
+underlying data (`roastLog` phase entries), just rendered while still growing
+instead of after the fact.
+
+### Time axis — build both, decide after testing
+
+Case wants **both** windowing styles tried before committing:
+- **Fixed 3-minute scrolling window**, with left/right scroll/pan to review
+  any earlier point in the roast so far (a real "live instrument" feel).
+- **Auto-expanding axis** (what `RoastCurveChart` already does for a finished
+  roast) — always shows the whole roast so far, compresses as it grows.
+
+Both are built as a switchable mode in the same component (not two separate
+components) so comparing them is a single toggle, tested live against the mock
+bridge before either ships as the default.
+
+### Architecture
+
+**New component**, not a modification of `RoastCurveChart.jsx` — keeps the
+finished-roast History chart at zero risk. The live component reads:
+- `curveRef`'s growing buffer (already exists — the same data the recording
+  gate captures) for Temp/RoR,
+- `roastLog` for phase bands and Heat/Fan actuals (already exists),
+- `profileFollowing.steps` for the overlay (already exists).
+
+No new data is required anywhere in this phase — this is a rendering surface
+over state the app already has live, in memory, right now.
+
+### Phase 2 (explicitly deferred): First/Second Crack time estimates
+
+Case asked about Artisan-style projected time-to-milestone. This is real work,
+not a quick add — an honest estimate means extrapolating the *current* RoR
+trend forward toward a BT threshold, and:
+- it will be unreliable in the first 1-2 minutes before RoR stabilizes, and
+  should be **suppressed rather than shown wrong** during that window (same
+  instinct as the recording gate — don't display a number that can mislead);
+- the right threshold likely needs tuning against Case's own roast history
+  rather than a generic industry constant, once enough real curves exist to
+  learn from.
+
+Deliberately staged *after* the core chart ships and has been used on a few
+real roasts — same "prove the pipe, then build on it" order as the rest of
+this project.
+
+### Verification
+
+**Intent:** open the Roast tab, tap the readout, the panel expands with the
+dials still visible and adjustable; start a mock/real roast and watch Temp/RoR
+draw live; log a milestone and see the phase band shade in real time; follow a
+profile and see its steps overlaid against actual.
+
+**Non-breakage:** `RoastCurveChart.jsx` and the History detail view are
+untouched and re-verified unchanged; existing e2e baselines still pass;
+Fan → Heat → Temp order and `stepAfter` convention hold in the new component
+too.
+
+**Build order:** against `bridge/test/mock-roastlink.js` on localhost first —
+same test-before-hardware discipline as every other piece of this build.
+
+---
+
 ## Open items
 
 | Item | Resolution |
