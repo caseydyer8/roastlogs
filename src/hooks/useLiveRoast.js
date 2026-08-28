@@ -39,6 +39,10 @@ export function useLiveRoast() {
     setStatus("connecting");
     const channel = supabase.channel(CHANNEL, {
       config: {
+        // private routes this channel through RLS on realtime.messages: only
+        // an admin session that has completed MFA can receive live temps, and
+        // only the bridge identity can publish them.
+        private: true,
         broadcast: { self: false },
         presence: { key: `viewer-${Math.random().toString(36).slice(2, 8)}` },
       },

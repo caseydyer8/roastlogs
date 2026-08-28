@@ -12,10 +12,12 @@ const { RoastLinkClient } = require("./roastlink");
 const { Publisher } = require("./publisher");
 
 class Bridge extends EventEmitter {
-  constructor({ host, supabaseUrl, supabaseKey, channel } = {}) {
+  constructor({ host, supabaseUrl, supabaseKey, email, password, channel } = {}) {
     super();
     this.client = new RoastLinkClient(host);
-    this.publisher = new Publisher(supabaseUrl, supabaseKey, channel ? { channel } : {});
+    const pubOpts = { email, password };
+    if (channel) pubOpts.channel = channel;
+    this.publisher = new Publisher(supabaseUrl, supabaseKey, pubOpts);
     this.lamps = { device: "idle", cloud: "idle", viewers: 0 };
     this._wire();
   }
@@ -37,7 +39,12 @@ class Bridge extends EventEmitter {
   }
 
   start() {
-    this.publisher.connect();
+    // connect() authenticates before joining, so it is async now. Surface any
+    // failure through the normal error channel instead of an unhandled
+    // rejection that would leave the cloud lamp stuck with no explanation.
+    Promise.resolve(this.publisher.connect()).catch((e) =>
+      this.emit("error", { source: "cloud", error: e })
+    );
     this.client.start();
     return this;
   }

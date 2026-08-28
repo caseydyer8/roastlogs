@@ -13,9 +13,18 @@ const { Bridge } = require("./lib/bridge");
 const host = process.argv[2] || process.env.ROASTLINK_HOST || "roastlink.local";
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_KEY;
+const email = process.env.BRIDGE_EMAIL;
+const password = process.env.BRIDGE_PASSWORD;
 
 if (!url || !key) {
   console.error("Set SUPABASE_URL and SUPABASE_KEY environment variables.");
+  process.exit(2);
+}
+if (!email || !password) {
+  console.error(
+    "Set BRIDGE_EMAIL and BRIDGE_PASSWORD (the dedicated bridge account).\n" +
+      "The live channel is private: publishing requires that identity."
+  );
   process.exit(2);
 }
 
@@ -24,7 +33,7 @@ console.log(`  device : ${host}`);
 console.log(`  cloud  : ${url}`);
 console.log(`  (Ctrl-C to stop)\n`);
 
-const bridge = new Bridge({ host, supabaseUrl: url, supabaseKey: key });
+const bridge = new Bridge({ host, supabaseUrl: url, supabaseKey: key, email, password });
 let count = 0;
 
 bridge.on("lamps", (l) =>

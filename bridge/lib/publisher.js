@@ -2,11 +2,15 @@
 
 // Publishes live RoastLink samples to a Supabase Realtime *broadcast* channel.
 //
-// Security model (see docs/roastlink-live-data-plan.md): broadcast is ephemeral
-// and touches no table, so RLS is not bypassed — it is simply not in the path.
-// The bridge authenticates with the already-public publishable key, which the
-// admin-only + aal2 policies render powerless against real data. A fully
-// compromised bridge could broadcast fake temperatures and nothing more.
+// Security model (see docs/roastlink-live-data-plan.md): the channel is PRIVATE,
+// so Realtime enforces RLS on realtime.messages. The bridge signs in as a
+// dedicated machine identity that is deliberately NOT in public.admins -- so
+// every data policy still returns it zero rows on every table. Its only
+// capability in this entire project is publishing to this one topic. Reading
+// the channel requires admin + aal2, same bar as the real data.
+//
+// This is what closes the spoofing hole: holding the (public) publishable key
+// is no longer enough to inject fake temperatures into a live roast.
 //
 // Presence is used for a genuine viewer count: the bridge tracks itself as
 // role "bridge"; every RoastLogs screen tracks itself as a viewer, so the
@@ -24,10 +28,16 @@ class Publisher extends EventEmitter {
   constructor(url, key, opts = {}) {
     super();
     this.opts = { ...DEFAULTS, ...opts };
-    this.status = "idle"; // idle|joining|joined|error|closed
+    this.status = "idle"; // idle|authenticating|joining|joined|error|closed
     this.viewers = 0;
+    this.email = opts.email || null;
+    this.password = opts.password || null;
     this.supabase = createClient(url, key, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      // autoRefreshToken matters here: a roast can outlive the default token
+      // lifetime, and an expired token would silently drop the publish
+      // permission mid-roast. persistSession stays off -- credentials live in
+      // the bridge's own settings file, not in a Supabase-managed store.
+      auth: { persistSession: false, autoRefreshToken: true },
       // Supabase's Realtime client only auto-detects a WebSocket on Node 22+.
       // Electron 32 bundles an older Node internally, so without an explicit
       // transport it throws "Node.js detected but native WebSocket not
@@ -39,10 +49,31 @@ class Publisher extends EventEmitter {
     this.channel = null;
   }
 
-  connect() {
+  async connect() {
+    // Sign in as the bridge identity. Without this the channel join is refused
+    // by the realtime.messages policies (anon has no INSERT on this topic).
+    if (this.email && this.password) {
+      this._setStatus("authenticating");
+      const { data, error } = await this.supabase.auth.signInWithPassword({
+        email: this.email,
+        password: this.password,
+      });
+      if (error) {
+        this._setStatus("error");
+        this.emit("error", new Error("bridge sign-in failed: " + error.message));
+        return this;
+      }
+      // Hand the fresh access token to the Realtime socket so the policies see
+      // the bridge's uid rather than the anonymous role.
+      const token = data?.session?.access_token;
+      if (token && this.supabase.realtime?.setAuth) {
+        await this.supabase.realtime.setAuth(token);
+      }
+    }
+
     this._setStatus("joining");
     this.channel = this.supabase.channel(this.opts.channel, {
-      config: { broadcast: { ack: false }, presence: { key: "bridge" } },
+      config: { private: true, broadcast: { ack: false }, presence: { key: "bridge" } },
     });
 
     this.channel.on("presence", { event: "sync" }, () => {
@@ -80,6 +111,9 @@ class Publisher extends EventEmitter {
   async disconnect() {
     try {
       if (this.channel) await this.supabase.removeChannel(this.channel);
+    } catch (_) {}
+    try {
+      await this.supabase.auth.signOut();
     } catch (_) {}
     this.channel = null;
     this._setStatus("closed");

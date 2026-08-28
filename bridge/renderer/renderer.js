@@ -7,6 +7,8 @@ const el = (id) => document.getElementById(id);
 const hostInput = el("host");
 const urlInput = el("url");
 const keyInput = el("key");
+const emailInput = el("email");
+const passwordInput = el("password");
 const connectBtn = el("connectBtn");
 const btValue = el("btValue");
 const btAge = el("btAge");
@@ -15,7 +17,7 @@ const logEl = el("log");
 let connected = false;
 let lastSampleAt = 0;
 
-const DOT_CLASS = { live: "dot live", joined: "dot live", connecting: "dot pulse", reconnecting: "dot pulse", joining: "dot pulse", stale: "dot bad", error: "dot bad", closed: "dot", idle: "dot" };
+const DOT_CLASS = { live: "dot live", joined: "dot live", connecting: "dot pulse", reconnecting: "dot pulse", joining: "dot pulse", authenticating: "dot pulse", stale: "dot bad", error: "dot bad", closed: "dot", idle: "dot" };
 
 function setLamp(dotId, txtId, state) {
   el(dotId).className = DOT_CLASS[state] || "dot";
@@ -36,6 +38,8 @@ window.roastlogs.getSettings().then((s) => {
   if (s.host) hostInput.value = s.host;
   if (s.supabaseUrl) urlInput.value = s.supabaseUrl;
   if (s.supabaseKey) keyInput.value = s.supabaseKey;
+  if (s.email) emailInput.value = s.email;
+  if (s.password) passwordInput.value = s.password;
 });
 window.roastlogs.onSettings((s) => {
   if (s.host && !hostInput.value) hostInput.value = s.host;
@@ -84,8 +88,14 @@ connectBtn.addEventListener("click", async () => {
   const host = hostInput.value.trim() || "roastlink.local";
   const supabaseUrl = urlInput.value.trim();
   const supabaseKey = keyInput.value.trim();
+  const email = emailInput.value.trim();
+  const password = passwordInput.value;
   if (!supabaseUrl || !supabaseKey) {
     logLine("Supabase URL and key are required", true);
+    return;
+  }
+  if (!email || !password) {
+    logLine("Bridge account email and password are required -- the live channel is private.", true);
     return;
   }
   // This field is for the PUBLISHABLE key only -- it's meant to be public and
@@ -103,7 +113,7 @@ connectBtn.addEventListener("click", async () => {
   setLamp("dotCloud", "txtCloud", "connecting");
   logLine(`connecting to ${host}...`);
   try {
-    const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey });
+    const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey, email, password });
     if (res && res.ok) {
       connected = true;
       connectBtn.textContent = "Disconnect";

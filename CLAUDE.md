@@ -107,6 +107,21 @@ trapped in agent config.
 - **No PITR/managed snapshots on free.** Backups are logical JSON exports (see
   the `docs/` migrations for schema). **Gate any destructive/PK migration —
   e.g. the deferred Phase 3 composite-key work — on having a backup story.**
+- **Live-channel lockdown (2026-08-28, `docs/2026-08-28_lock_roastlink_live_channel.sql`):**
+  the RoastLink `roastlink-live` Realtime channel is **private**, enforced by three
+  policies on `realtime.messages`. Read (live temps) requires **admin + `aal2`**, same
+  bar as the data. Publishing samples is restricted to a **dedicated bridge identity**.
+  - **The bridge identity is a machine credential, NOT a third person.** The app is
+    still a 2-ACCOUNT app. That identity is deliberately **not** in `public.admins`,
+    so all 16 data policies return it **zero rows on every table**; its only capability
+    anywhere is publishing to that one topic. Its password lives solely in the
+    operator's local `~/.roastlogs-bridge.json` — never in this repo.
+  - **Both sides must set `private: true`** (`bridge/lib/publisher.js`,
+    `src/hooks/useLiveRoast.js`). Private and public channels are separate delivery
+    paths — verified live — so a mismatch silently yields no data.
+  - Verified live: bridge publishes and a legitimate subscriber receives; an anonymous
+    client is refused on subscribe (`CHANNEL_ERROR`) and its REST publish returns
+    HTTP 202 but is **dropped by RLS and never delivered**.
 - Device-cache isolation lives in `AuthContext.enforceLocalDataOwner()`: purges
   cached localStorage data when a *different* account signs in (RLS can't do this).
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).

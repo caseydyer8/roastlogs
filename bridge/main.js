@@ -69,15 +69,17 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-ipcMain.handle("connect", async (_evt, { host, supabaseUrl, supabaseKey }) => {
+ipcMain.handle("connect", async (_evt, { host, supabaseUrl, supabaseKey, email, password }) => {
   try {
     if (bridge) {
       await bridge.stop().catch(() => {});
       bridge = null;
     }
-    saveSettings({ host, supabaseUrl, supabaseKey });
+    // Settings (including the bridge account password) live in
+    // ~/.roastlogs-bridge.json -- outside the repo, never committed.
+    saveSettings({ host, supabaseUrl, supabaseKey, email, password });
 
-    bridge = new Bridge({ host, supabaseUrl, supabaseKey });
+    bridge = new Bridge({ host, supabaseUrl, supabaseKey, email, password });
     bridge.on("lamps", (l) => send("lamps", l));
     bridge.on("sample", (s) => send("sample", s));
     bridge.on("health", (h) => send("health", h));
