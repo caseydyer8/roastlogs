@@ -17,14 +17,18 @@ const LABEL = {
   "bridge-only": "NO SIGNAL",
 };
 
-export default function LiveRoastReadout({ status, bt, ror, viewers }) {
+export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, onToggle }) {
   if (status !== "live" && status !== "bridge-only") return null;
 
   const rorText =
     typeof ror === "number" ? `${ror >= 0 ? "+" : ""}${ror.toFixed(1)}` : "--";
 
   return (
-    <div className="mb-4 flex items-center justify-between rounded-2xl border border-border/60 bg-card px-4 py-3">
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!!expanded}
+      className="mb-4 flex w-full items-center justify-between rounded-2xl border border-border/60 bg-card px-4 py-3 text-left transition active:scale-[0.99]">
       <div className="flex items-center gap-2">
         <span className={`h-2.5 w-2.5 rounded-full ${DOT[status]} ${status === "live" ? "animate-pulse" : ""}`} />
         <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-muted">
@@ -50,7 +54,13 @@ export default function LiveRoastReadout({ status, bt, ror, viewers }) {
           </span>
           <span className="text-xs font-medium text-ink-muted">°/min</span>
         </div>
+        <svg
+          className={`h-4 w-4 shrink-0 text-ink-muted transition-transform ${expanded ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+        </svg>
       </div>
-    </div>
+    </button>
   );
 }

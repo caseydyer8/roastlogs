@@ -8,6 +8,7 @@ import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 import { useLiveRoast } from "./hooks/useLiveRoast";
 import LiveRoastReadout from "./components/LiveRoastReadout";
 import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
+import LiveRoastChart from "./components/charts/LiveRoastChart";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -756,6 +757,10 @@ function App() {
   const liveRoast = useLiveRoast();
   const curveRef = React.useRef([]); // live bean-temp curve for the roast in progress
   const [curvePointCount, setCurvePointCount] = React.useState(0);
+  const [liveChartOpen, setLiveChartOpen] = React.useState(false);
+  // "scroll" = trailing 3-minute window (pannable); "expand" = whole roast so
+  // far. Both are built so the better one can be chosen from real use.
+  const [liveChartWindow, setLiveChartWindow] = React.useState("scroll");
   const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
   // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
@@ -1938,7 +1943,28 @@ function App() {
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            <LiveRoastReadout status={liveRoast.status} bt={liveRoast.bt} ror={liveRoast.ror} viewers={liveRoast.viewers} recording={roastStarted && !coolingStartTime} points={curvePointCount} />
+            <LiveRoastReadout
+              status={liveRoast.status}
+              bt={liveRoast.bt}
+              ror={liveRoast.ror}
+              viewers={liveRoast.viewers}
+              recording={roastStarted && !coolingStartTime}
+              points={curvePointCount}
+              expanded={liveChartOpen}
+              onToggle={() => setLiveChartOpen((v) => !v)}
+            />
+            {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
+              <div className="-mt-2 mb-4">
+                <LiveRoastChart
+                  curve={curveRef.current}
+                  roastLog={roastLog}
+                  profile={profileFollowing}
+                  elapsedSeconds={elapsedSeconds}
+                  windowMode={liveChartWindow}
+                  onWindowModeChange={setLiveChartWindow}
+                />
+              </div>
+            )}
             {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
             {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
