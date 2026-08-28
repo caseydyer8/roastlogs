@@ -32,7 +32,7 @@
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
-      "icon": "build/icon.icns"
+      "icon": "assets/icon.icns"
     }
   }
 }
