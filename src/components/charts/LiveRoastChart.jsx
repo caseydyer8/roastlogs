@@ -182,7 +182,7 @@ export default function LiveRoastChart({
 
   return (
     <div className={attached
-      ? "mt-4 border-t border-border/50 pt-3"
+      ? "px-2 pb-2 pt-3"
       : "mt-3 rounded-2xl border border-border/60 bg-card p-3"}>
       {/* Window controls */}
       <div className="mb-2 flex items-center justify-between">

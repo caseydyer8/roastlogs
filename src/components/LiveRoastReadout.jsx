@@ -17,11 +17,45 @@ const LABEL = {
   "bridge-only": "NO SIGNAL",
 };
 
-export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, onToggle , inset = false }) {
+export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, onToggle, inset = false, cluster = false }) {
   if (status !== "live" && status !== "bridge-only") return null;
 
   const rorText =
     typeof ror === "number" ? `${ror >= 0 ? "+" : ""}${ror.toFixed(1)}` : "--";
+
+  // Cluster variant: the right half of the instrument's top row, so the elapsed
+  // time and the bean temp read as one instrument panel instead of two widgets.
+  if (cluster) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!!expanded}
+        className="flex shrink-0 items-start gap-1 text-right transition active:scale-[0.98]"
+      >
+        <span className="block">
+          <span className="flex items-center justify-end gap-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-ink-muted">
+            <span className={`h-1.5 w-1.5 rounded-full ${DOT[status]} ${status === "live" ? "animate-pulse" : ""}`} />
+            {status === "live" ? "Bean temp" : "No signal"}
+          </span>
+          <span className="mt-1 block font-mono text-[34px] font-semibold leading-none tabular-nums text-chart-temp">
+            {typeof bt === "number" ? Math.round(bt) : "--"}
+            <span className="ml-0.5 text-[13px] font-medium text-ink-muted">&deg;F</span>
+          </span>
+          <span className="mt-1.5 block font-mono text-[12px] tabular-nums text-chart-ror">
+            {rorText}
+            <span className="ml-1 text-[9px] uppercase tracking-[0.08em] text-ink-muted">&deg;/min</span>
+          </span>
+        </span>
+        <svg
+          className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform ${expanded ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+    );
+  }
 
   return (
     <button
