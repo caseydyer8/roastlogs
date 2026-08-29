@@ -2225,28 +2225,6 @@ function App() {
                 );
               })()}
 
-              {/* Live curve, attached to the hero rather than floating in its own card. */}
-              {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
-                <LiveRoastChart
-                  attached
-                  curve={curveRef.current}
-                  roastLog={roastLog}
-                  profile={profileFollowing}
-                  elapsedSeconds={elapsedSeconds}
-                  windowMode={liveChartWindow}
-                  onWindowModeChange={setLiveChartWindow}
-                />
-              )}
-            </section>
-
-            {/* 3) PHASE MILESTONES */}
-            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
-                  Phase Milestones
-                </div>
-              </div>
-              
               {/* Run control + ONE contextual milestone button that always advances
                   to the next unlogged phase (Yellowing → First crack → Cooling start).
                   This leads the section so the phase-marking action is always
@@ -2286,6 +2264,28 @@ function App() {
                 );
               })()}
 
+              {/* Live curve, attached to the hero rather than floating in its own card. */}
+              {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
+                <LiveRoastChart
+                  attached
+                  curve={curveRef.current}
+                  roastLog={roastLog}
+                  profile={profileFollowing}
+                  elapsedSeconds={elapsedSeconds}
+                  windowMode={liveChartWindow}
+                  onWindowModeChange={setLiveChartWindow}
+                />
+              )}
+            </section>
+
+            {/* 3) PHASE MILESTONES */}
+            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
+                  Phase Milestones
+                </div>
+              </div>
+              
               {profileFollowing && (
                 <div className="mt-3 p-3 rounded-2xl bg-accent/5 border border-accent/10">
                   <div className="text-[10px] font-bold text-accent-text/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>

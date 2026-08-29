@@ -255,7 +255,6 @@ export default function LiveRoastChart({
             stroke="rgb(var(--border-color))"
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
-            label={{ value: "\u00B0F", position: "insideTopLeft", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-temp))" }}
           />
           <YAxis
             yAxisId="ror"
@@ -265,7 +264,6 @@ export default function LiveRoastChart({
             stroke="rgb(var(--border-color))"
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
-            label={{ value: "\u00B0/min", position: "insideTopRight", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-ror))" }}
           />
           {band(0, yellowing ?? now, "b-dry", currentPhase === "drying")}
           {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard")}
@@ -283,8 +281,8 @@ export default function LiveRoastChart({
       </ResponsiveContainer>
 
       {/* Control map: actual vs planned */}
-      <ResponsiveContainer width="100%" height={attached ? 78 : 92}>
-        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+      <ResponsiveContainer width="100%" height={attached ? 94 : 108}>
+        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 14, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.3} vertical={false} />
           <XAxis dataKey="t" type="number" domain={domain} allowDataOverflow tickFormatter={fmt} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
           <YAxis
@@ -295,7 +293,6 @@ export default function LiveRoastChart({
             stroke="rgb(var(--border-color))"
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
-            label={{ value: "dial", position: "insideTopLeft", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-tick))" }}
           />
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
@@ -316,10 +313,10 @@ export default function LiveRoastChart({
 
       {/* Legend */}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] uppercase tracking-wider text-ink-muted">
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-temp))" }} />Temp</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-ror))" }} />RoR</span>
+        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-temp))" }} />Temp &deg;F</span>
+        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-ror))" }} />RoR &deg;/min</span>
         <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-fan))" }} />Fan</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-heat))" }} />Heat</span>
+        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-heat))" }} />Heat <span className="opacity-60">dial 1-9</span></span>
         {hasProfile && <span className="opacity-70">dashed = plan</span>}
       </div>
     </div>
