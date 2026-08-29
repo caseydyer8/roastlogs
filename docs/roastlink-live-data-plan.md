@@ -845,6 +845,30 @@ Three things to settle before building:
   and rail nodes, approaches become transient alerts that flash and clear, and
   turnaround becomes a marker on the curve.
 
+## OPEN DESIGN NOTE — the instrument is still too tight
+
+Verified working on real hardware 2026-08-29. Case's read: it works well, but
+the UI is "still a little smooshed and could use some work". Deferred, not
+dismissed.
+
+Nothing here is diagnosed yet, so start the next pass by pinning down WHICH
+zone feels tight rather than uniformly adding padding. Best current guesses,
+in order:
+
+- **The curve is carrying the squeeze.** Its two panels are 132px and 94px in
+  `LiveRoastChart.jsx` under `attached`, chosen to make five zones fit a 390px
+  phone. That is the number most likely to feel cramped, and the one hardest to
+  give back without reintroducing a scroll.
+- **Five zones may be one too many.** Dials and the milestone buttons both want
+  vertical room. Worth testing whether the dials can share a row with something
+  or shrink to values plus tick bars without the label line.
+- **Zone padding is uniform** (roughly 13px) where it probably should not be.
+  The chrono row can afford less, the buttons more.
+
+The honest option to keep on the table: if it cannot be made to breathe at five
+zones, the answer is fewer zones, not smaller type. Removing the option beats
+shrinking the polish.
+
 ## KNOWN GAPS (found during the dry run, not yet fixed)
 
 - **The live curve does not survive a page reload.** `curveRef` is a React ref,
