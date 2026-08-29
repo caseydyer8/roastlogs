@@ -3,24 +3,19 @@
 React CRA PWA for logging Fresh Roast SR540 coffee roasts. Deployed to GitHub
 Pages at https://caseydyer8.github.io/roastlogs/.
 
-## Working With Case (developer profile — read first)
+## Working With Case (read first)
 
-Case maintains a developer profile in `.claude/case-profile/` — how he thinks,
-how he builds, his design taste, his tiered definition of "done," how he runs
-his agent bundle, and where the work is headed. **Load it at the start of every
-session and work from it — do not start cold.** `00-working-with-case.md` is the
-entry point; the numbered files specialize it. Address him as **"Case"** in
-every response. The files below are imported so they're always in context:
+Case's working standards live in `.claude/working-agreement.md` — his build loop,
+session rituals, design standards, tiered definition of "done," and how he runs
+his agent bundle. **Load it at the start of every session and work from it — do
+not start cold.** Address him as **"Case"** in every response. It is imported
+below so it is always in context:
 
-@.claude/case-profile/00-working-with-case.md
-@.claude/case-profile/01-workflow-and-sessions.md
-@.claude/case-profile/02-design-and-done.md
-@.claude/case-profile/03-agents-and-process.md
-@.claude/case-profile/04-growth-and-direction.md
+@.claude/working-agreement.md
 
-Keep this folder current: when working standards or agent definitions change
-materially, update the matching file here — it's the human-readable backup of
-preferences otherwise trapped in agent config.
+Keep it current: when working standards or agent definitions change materially,
+update that file — it is the human-readable backup of preferences otherwise
+trapped in agent config.
 
 ## Project Conventions
 
@@ -70,8 +65,10 @@ preferences otherwise trapped in agent config.
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
 - **PRIVATE 2-ACCOUNT APP as of 2026-07-25** (briefly multi-user 07-21→07-25;
   reverted after Casey + Becca decided NOT to open it to others — a home-network
-  concern). The app is locked to Casey's two accounts ONLY: `primary@redacted.invalid`
-  and `secondary@redacted.invalid`. Every synced table (`roasts`, `tasting_notes`,
+  concern). The app is locked to Casey's **two accounts ONLY** — the addresses are
+  deliberately not committed (this repo is public; publishing them would hand out the
+  full list of valid usernames for an app with signup disabled). Source of truth:
+  Supabase Dashboard → Authentication → Users. Every synced table (`roasts`, `tasting_notes`,
   `beans`, `roast_profiles`) still carries `user_id` (`NOT NULL`, `DEFAULT
   auth.uid()`, FK to `auth.users` ON DELETE CASCADE), but the RLS is now
   **admin-only** — no per-user/owner branch remains, **no `USING (true)` remains**.
@@ -101,14 +98,30 @@ preferences otherwise trapped in agent config.
   blocked; `anon` cannot EXECUTE `rls_auto_enable()`.
 - **Public signups: DISABLED** — Casey provisions the two accounts in the Supabase
   dashboard. There is no signup UI by design.
-- **Leaked-password protection is PLAN-GATED, not enabled** — it's a Pro-plan
-  feature and the org is on FREE (staying free for now; not paying to host other
-  people's data). The security advisor will keep flagging it — annotate as
-  plan-gated, not an open finding. Compensating control: Email-provider password
-  policy (min length ≥8 + require digit/lower/upper/symbol).
+- **Leaked-password protection is PLAN-GATED** — a Pro-plan feature; the org is on
+  FREE (staying free for now; not paying to host other people's data). The security
+  advisor will keep flagging it — annotate as plan-gated, not an open finding.
+  Compensating controls: server-side MFA (`aal2`) required by all 16 policies, so a
+  password alone is worth nothing, plus the Email-provider password policy
+  (min length ≥8 + require digit/lower/upper/symbol).
 - **No PITR/managed snapshots on free.** Backups are logical JSON exports (see
   the `docs/` migrations for schema). **Gate any destructive/PK migration —
   e.g. the deferred Phase 3 composite-key work — on having a backup story.**
+- **Live-channel lockdown (2026-08-28, `docs/2026-08-28_lock_roastlink_live_channel.sql`):**
+  the RoastLink `roastlink-live` Realtime channel is **private**, enforced by three
+  policies on `realtime.messages`. Read (live temps) requires **admin + `aal2`**, same
+  bar as the data. Publishing samples is restricted to a **dedicated bridge identity**.
+  - **The bridge identity is a machine credential, NOT a third person.** The app is
+    still a 2-ACCOUNT app. That identity is deliberately **not** in `public.admins`,
+    so all 16 data policies return it **zero rows on every table**; its only capability
+    anywhere is publishing to that one topic. Its password lives solely in the
+    operator's local `~/.roastlogs-bridge.json` — never in this repo.
+  - **Both sides must set `private: true`** (`bridge/lib/publisher.js`,
+    `src/hooks/useLiveRoast.js`). Private and public channels are separate delivery
+    paths — verified live — so a mismatch silently yields no data.
+  - Verified live: bridge publishes and a legitimate subscriber receives; an anonymous
+    client is refused on subscribe (`CHANNEL_ERROR`) and its REST publish returns
+    HTTP 202 but is **dropped by RLS and never delivered**.
 - Device-cache isolation lives in `AuthContext.enforceLocalDataOwner()`: purges
   cached localStorage data when a *different* account signs in (RLS can't do this).
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).

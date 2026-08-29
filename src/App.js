@@ -5,6 +5,10 @@ import { syncRoastToSupabase, deleteRoastFromSupabase, fetchRoastsFromSupabase, 
 import { useAuth } from "./contexts/AuthContext";
 import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
+import { useLiveRoast } from "./hooks/useLiveRoast";
+import LiveRoastReadout from "./components/LiveRoastReadout";
+import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
+import LiveRoastChart from "./components/charts/LiveRoastChart";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -748,6 +752,15 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
 }
 
 function App() {
+  // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
+  // renders nothing until a bridge is publishing; manual entry is untouched.
+  const liveRoast = useLiveRoast();
+  const curveRef = React.useRef([]); // live bean-temp curve for the roast in progress
+  const [curvePointCount, setCurvePointCount] = React.useState(0);
+  const [liveChartOpen, setLiveChartOpen] = React.useState(false);
+  // "scroll" = trailing 3-minute window (pannable); "expand" = whole roast so
+  // far. Both are built so the better one can be chosen from real use.
+  const [liveChartWindow, setLiveChartWindow] = React.useState("scroll");
   const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = React.useState("Roast");
   // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
@@ -1379,17 +1392,22 @@ function App() {
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
+      curveRef.current = [];
+      setCurvePointCount(0);
       if (profile) {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
       }
-      // Log starting settings
+      // Log starting settings. Same live-BT stamp as handleLogAdjustment: when
+      // the bridge is live, startingTemp (the manual-entry field) is blank
+      // because the dial shows the probe reading instead of a typed value.
+      const startTemp = startingTemp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : startingTemp);
       setRoastLog([{ 
         type: 'start_settings', 
         t: 0, 
         heat: startingHeat, 
         fan: startingFan, 
-        temp: startingTemp,
+        temp: startTemp,
         label: "Start"
       }]);
     } else {
@@ -1417,8 +1435,11 @@ function App() {
         heat: startingHeat,
         fan: startingFan,
         temp: startingTemp
-      }
+      },
+      curve: curveRef.current.slice(),
     };
+    curveRef.current = [];
+    setCurvePointCount(0);
 
     const existingRoasts = [];
     try {
@@ -1453,8 +1474,13 @@ function App() {
   };
 
   const handleLogAdjustment = () => {
+    // When the bridge is live, the Temp dial shows the probe reading rather
+    // than a typed value, so `temp` (the manual-entry state) stays blank.
+    // Stamp the live BT in automatically so the timeline still records a
+    // temp for this adjustment, matching what was actually on screen.
+    const loggedTemp = temp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : temp);
     setRoastLog((prev) => [
-      { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp },
+      { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp: loggedTemp },
       ...(prev || []),
     ]);
     setHeat("");
@@ -1482,6 +1508,32 @@ function App() {
   // ticked. Pausing within the first second (elapsedSeconds still 0) must not look like
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
+
+  // The curve now carries the phase names and their times in its own bands, so
+  // the separate phase rail is redundant whenever the curve is on screen. It is
+  // still the only place those milestones appear on a probe-less manual roast,
+  // where no chart renders at all, so it falls back rather than disappearing.
+  const curveVisible =
+    liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only");
+
+  // Recording gate: capture live bean temp into the curve ONLY between START
+  // and COOLING START. RoastLogs owns the window; the bridge merely streams,
+  // and nothing is persisted until the roast is saved. Bucketing by whole
+  // second downsamples the ~5Hz live feed to ~1Hz (latest reading wins).
+  React.useEffect(() => {
+    if (!roastStarted || coolingStartTime) return;
+    const bt = liveRoast.bt;
+    if (typeof bt !== "number") return;
+    const sec = elapsedSeconds;
+    const buf = curveRef.current;
+    const last = buf.length ? buf[buf.length - 1] : null;
+    if (last && last.t === sec) {
+      last.bt = bt;
+    } else {
+      buf.push({ t: sec, bt });
+      setCurvePointCount(buf.length);
+    }
+  }, [liveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
 
   // Open the adjustment logger. Fan/Heat prefill from the last logged values (they are
   // dial STATES — carry-forward is truth), but Temp always opens BLANK: it is a fresh
@@ -1839,7 +1891,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.0.1",
+        appVersion: "3.4.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -2021,8 +2073,11 @@ function App() {
 
             {/* 2) LIVE INSTRUMENT HERO — status cluster, split-flap chrono, bean +
                 derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
-            <section className="rounded-3xl border border-border/60 bg-surface/30 p-5">
-              <div className="flex flex-col items-center text-center">
+            <section className="overflow-hidden rounded-3xl border border-border/60 bg-surface/30 divide-y divide-border/50">
+
+              <div className="p-4">
+                <div className="flex items-end justify-between gap-3">
+              <div className="flex min-w-0 flex-col items-start gap-1 text-left">
                 <div className="flex items-center gap-2">
                   <span
                     className={`h-2 w-2 rounded-full ${
@@ -2043,12 +2098,15 @@ function App() {
                   )}
                 </div>
 
-                <div className="mt-2 font-mono text-[64px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink">
+                <div className={`font-mono font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink ${
+                  liveRoast.status === "live" || liveRoast.status === "bridge-only"
+                    ? "text-[46px]" : "text-[60px]"
+                }`}>
                   {formatTime(elapsedSeconds)}
                 </div>
 
                 {(beanName || roastStarted) && (
-                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
                     {beanName && <span className="font-cond text-[15px] font-bold text-ink">{beanName}</span>}
                     {(() => {
                       const phase = coolingStartTime !== null ? "Cooling"
@@ -2065,17 +2123,46 @@ function App() {
                 )}
               </div>
 
+              {/* Live bean temp sits with the chrono, not in a separate card: one instrument. */}
+              <LiveRoastReadout
+                cluster
+                status={liveRoast.status}
+                bt={liveRoast.bt}
+                ror={liveRoast.ror}
+                viewers={liveRoast.viewers}
+                recording={roastStarted && !coolingStartTime}
+                points={curvePointCount}
+                expanded={liveChartOpen}
+                onToggle={() => setLiveChartOpen((v) => !v)}
+              />
+                </div>
+              </div>
+
+              {/* Live curve, attached to the hero rather than floating in its own card. */}
+              {curveVisible && (
+                <LiveRoastChart
+                  attached
+                  curve={curveRef.current}
+                  roastLog={roastLog}
+                  profile={profileFollowing}
+                  elapsedSeconds={elapsedSeconds}
+                  windowMode={liveChartWindow}
+                  onWindowModeChange={setLiveChartWindow}
+                />
+              )}
+
               {/* Segmented Fan · Heat · Temp dials — tap any to log an adjustment */}
               {(roastStarted || isTimerRunning) && (
-                <div className="mt-5 grid grid-cols-3 gap-2.5">
+                <div className="px-1 py-2">
+                  <div className="grid grid-cols-3 divide-x divide-border/50">
                   <button
                     type="button"
                     onClick={() => openAdjPopup("fan")}
-                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
+                    className="px-2 py-1.5 text-center transition active:scale-95"
                   >
                     <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Fan</div>
-                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">{latestLogged.fan || "—"}</div>
-                    <div className="mt-2.5 flex justify-center gap-[3px]">
+                    <div className="mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums text-ink">{latestLogged.fan || "—"}</div>
+                    <div className="mt-1.5 flex justify-center gap-[3px]">
                       {Array.from({ length: 9 }).map((_, i) => (
                         <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.fan || 0) ? "bg-accent" : "bg-card"}`} />
                       ))}
@@ -2084,11 +2171,11 @@ function App() {
                   <button
                     type="button"
                     onClick={() => openAdjPopup("heat")}
-                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
+                    className="px-2 py-1.5 text-center transition active:scale-95"
                   >
                     <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Heat</div>
-                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">{latestLogged.heat || "—"}</div>
-                    <div className="mt-2.5 flex justify-center gap-[3px]">
+                    <div className="mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums text-ink">{latestLogged.heat || "—"}</div>
+                    <div className="mt-1.5 flex justify-center gap-[3px]">
                       {Array.from({ length: 9 }).map((_, i) => (
                         <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.heat || 0) ? "bg-accent" : "bg-card"}`} />
                       ))}
@@ -2097,14 +2184,19 @@ function App() {
                   <button
                     type="button"
                     onClick={() => openAdjPopup("temp")}
-                    className="rounded-2xl border border-border/60 bg-primary/20 px-2 py-3.5 text-center transition active:scale-95"
+                    className="px-2 py-1.5 text-center transition active:scale-95"
                   >
                     <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Temp</div>
-                    <div className="mt-1.5 font-mono text-3xl font-semibold tabular-nums text-ink">
-                      {latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—"}
+                    <div className={`mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-accent-text" : "text-ink"}`}>
+                      {liveRoast.isLive && typeof liveRoast.bt === "number"
+                        ? Math.round(liveRoast.bt)
+                        : (latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—")}
                     </div>
-                    <div className="mt-2.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-muted">reading</div>
+                    <div className={`mt-2 font-mono text-[9.5px] uppercase tracking-[0.14em] ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-success-text" : "text-ink-muted"}`}>
+                      {liveRoast.isLive && typeof liveRoast.bt === "number" ? "live" : "reading"}
+                    </div>
                   </button>
+                  </div>
                 </div>
               )}
 
@@ -2113,15 +2205,15 @@ function App() {
                 const upcoming = profileFollowing?.steps?.[currentProfileStepIdx + 1];
                 if (!upcoming) return null;
                 return (
-                  <div className={`mt-4 flex items-center justify-center gap-2.5 rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${nextProfileStep ? "animate-pulse border-accent bg-accent/10" : "border-border/60"}`}>
+                  <div className={`mx-4 my-3 flex items-center justify-center gap-2.5 rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${nextProfileStep ? "animate-pulse border-accent bg-accent/10" : "border-border/60"}`}>
                     <span className="text-ink-muted">Next step</span>
                     <span className="font-semibold text-accent-text">{upcoming.time} · F{upcoming.fan} · H{upcoming.heat}</span>
                   </div>
                 );
               })()}
 
-              {/* Phase rail — Start → Yellowing → First crack → Drop */}
-              {roastStarted && (() => {
+              {/* Phase rail — only when the curve is not up to carry the phases itself. */}
+              {roastStarted && !curveVisible && (() => {
                 const yellowing = (roastLog || []).find((e) => e.type === "phase" && e.label === "YELLOWING");
                 const nodes = [
                   { label: "Start", t: 0, reached: true },
@@ -2133,11 +2225,11 @@ function App() {
                 nodes.forEach((n, i) => { if (n.reached) currentIdx = i; });
                 const fillPct = (currentIdx / (nodes.length - 1)) * 100;
                 return (
-                  <div className="relative mt-6">
+                  <div className="relative px-4 py-3.5">
                     {/* Connector line, anchored on the vertical center of the 10px
                         marker circles (top-1 + h-0.5 → line center at y=5px) and
                         inset to the first/last circle centers (12.5% for 4 nodes). */}
-                    <div className="pointer-events-none absolute left-[12.5%] right-[12.5%] top-1 h-0.5 bg-border">
+                    <div className="pointer-events-none absolute left-[12.5%] right-[12.5%] top-[18px] h-0.5 bg-border">
                       <div className="absolute left-0 top-0 h-full bg-accent transition-all duration-500" style={{ width: `${fillPct}%` }} />
                     </div>
                     <ul className="relative flex justify-between">
@@ -2159,16 +2251,7 @@ function App() {
                   </div>
                 );
               })()}
-            </section>
 
-            {/* 3) PHASE MILESTONES */}
-            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
-                  Phase Milestones
-                </div>
-              </div>
-              
               {/* Run control + ONE contextual milestone button that always advances
                   to the next unlogged phase (Yellowing → First crack → Cooling start).
                   This leads the section so the phase-marking action is always
@@ -2181,12 +2264,12 @@ function App() {
                   : null;
                 const runPrimary = !isTimerRunning; // Start/Resume leads when not running
                 return (
-                  <div className="mt-3 grid gap-3">
+                  <div className="grid gap-2.5 p-3">
                     {isTimerRunning && next && (
                       <button
                         type="button"
                         onClick={() => logMilestone(next.label)}
-                        className="flex items-center justify-center gap-2 rounded-3xl bg-accent px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+                        className="flex items-center justify-center gap-2 rounded-2xl bg-accent px-4 py-3.5 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
                       >
                         <span className="h-2 w-2 rounded-full bg-zinc-950/70" />
                         Mark {next.text}
@@ -2196,7 +2279,7 @@ function App() {
                       type="button"
                       onClick={isTimerRunning ? handlePause : handleStart}
                       className={[
-                        "rounded-3xl px-4 py-4 font-cond text-base font-bold uppercase tracking-[0.08em] transition active:scale-[0.99]",
+                        "rounded-2xl px-4 py-3.5 font-cond text-base font-bold uppercase tracking-[0.08em] transition active:scale-[0.99]",
                         runPrimary
                           ? "bg-accent text-zinc-950 shadow-sm hover:brightness-110"
                           : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50",
@@ -2208,6 +2291,19 @@ function App() {
                 );
               })()}
 
+            </section>
+
+            {/* 3) ACTIVE PROFILE — the planned-step strip. The milestone buttons
+                moved into the instrument above, so this card now only earns its
+                place when a profile is actually being followed. */}
+            {profileFollowing && (
+            <section className="rounded-3xl border border-border/60 bg-surface/20 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">
+                  Active Profile
+                </div>
+              </div>
+              
               {profileFollowing && (
                 <div className="mt-3 p-3 rounded-2xl bg-accent/5 border border-accent/10">
                   <div className="text-[10px] font-bold text-accent-text/60 uppercase tracking-widest mb-2">Active Profile: {profileFollowing?.name}</div>
@@ -2238,6 +2334,7 @@ function App() {
                 </div>
               )}
             </section>
+            )}
 
             {/* Profile Builder & Dialogs */}
             {isProfileBuilderOpen && (
@@ -4548,6 +4645,10 @@ function App() {
 
         {activeTab === "Settings" && (
           <div className="space-y-4">
+            <ScreenCard title="RoastLink Bridge" subtitle="Live Data">
+              <RoastLinkStatusCard status={liveRoast.status} bt={liveRoast.bt} viewers={liveRoast.viewers} />
+            </ScreenCard>
+
             <ScreenCard title="Preferences" subtitle="Settings">
               {/* IDEA-009: Units of Measure */}
               <div className="space-y-4">
@@ -4793,7 +4894,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.0.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.4.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />

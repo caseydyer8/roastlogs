@@ -120,9 +120,20 @@ export default function RoastCurveChart({ roast }) {
       .filter((e) => e.type === "adjustment" || e.type === "start_settings")
       .slice()
       .sort((a, b) => Number(a.t) - Number(b.t));
-    const tempReadings = events
+    // Prefer the live RoastLink curve (dense ~1Hz bean temp) when the roast has
+    // one — the probe is the source of truth. Everything downstream (the temp
+    // line, RoR, avg/FC/drop temps, DTR) reads from tempReadings, so this single
+    // swap makes the whole chart probe-driven. Manual typed temps are the fallback
+    // for roasts logged without the bridge.
+    const curvePts = Array.isArray(roast.curve)
+      ? roast.curve
+          .filter((p) => p && Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.bt)))
+          .map((p) => [Number(p.t), Number(p.bt)])
+      : [];
+    const manualTemps = events
       .filter((e) => e.temp !== "" && e.temp !== null && e.temp !== undefined && Number(e.temp) > 0)
       .map((e) => [Number(e.t), Number(e.temp)]);
+    const tempReadings = curvePts.length >= 2 ? curvePts : manualTemps;
 
     const tempAt = buildMonotoneInterpolator(tempReadings);
     const hasTemp = tempReadings.length >= 2;
@@ -146,20 +157,25 @@ export default function RoastCurveChart({ roast }) {
       data.push({ t, temp: temp != null ? Math.round(temp * 10) / 10 : null, heat, fan, ror: null });
     }
 
-    // RoR in °/min over a trailing 30s window, then lightly smoothed (±10s
+    // RoR in °/min over a trailing 12s window, then lightly smoothed (±4s
     // moving average). Derived only where real readings bracket the window.
+    // A 30s/±10s window (the original tuning) ate the first quarter of a
+    // short 2-minute test roast before RoR could draw at all — 12s/±4s keeps
+    // the same noise-smoothing intent while surfacing much sooner.
     if (hasTemp) {
+      const RW = 12; // lookback window, seconds
+      const SM = 4;  // smoothing half-width, seconds
       const raw = new Array(total + 1).fill(null);
-      for (let t = firstTempT + 30; t <= lastTempT; t++) {
-        const a = data[t - 30]?.temp;
+      for (let t = firstTempT + RW; t <= lastTempT; t++) {
+        const a = data[t - RW]?.temp;
         const b = data[t]?.temp;
-        if (a != null && b != null) raw[t] = (b - a) * 2; // °/30s → °/min
+        if (a != null && b != null) raw[t] = (b - a) * (60 / RW); // °/RWs → °/min
       }
       for (let t = 0; t <= total; t++) {
         if (raw[t] == null) continue;
         let sum = 0;
         let count = 0;
-        for (let k = Math.max(0, t - 10); k <= Math.min(total, t + 10); k++) {
+        for (let k = Math.max(0, t - SM); k <= Math.min(total, t + SM); k++) {
           if (raw[k] != null) {
             sum += raw[k];
             count++;

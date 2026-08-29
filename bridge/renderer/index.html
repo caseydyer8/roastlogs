@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>RoastLogs Bridge</title>
+<style>
+  /* Same instrument palette as the app's theme.css (dark tokens), inlined —
+     this window has no build step, so no Tailwind. */
+  :root {
+    --bg: 21 18 15;
+    --surface: 31 26 22;
+    --card: 41 34 28;
+    --ink: 243 236 227;
+    --ink-muted: 169 156 142;
+    --accent: 217 125 61;
+    --border: 53 44 36;
+    --success: 157 178 107;
+    --error: 208 101 74;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: rgb(var(--bg));
+    color: rgb(var(--ink));
+    font-family: -apple-system, "IBM Plex Sans", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+  .brand svg { color: rgb(var(--accent)); }
+  .brand h1 { font-size: 17px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .brand .sub { font-size: 11px; color: rgb(var(--ink-muted)); margin-top: 1px; }
+
+  .field { margin-bottom: 12px; }
+  label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.08em; color: rgb(var(--ink-muted)); margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 12px;
+    border: 1px solid rgb(var(--border)); background: rgb(var(--surface));
+    color: rgb(var(--ink)); font-size: 13px; font-family: "IBM Plex Mono", monospace;
+  }
+  input:focus { outline: none; border-color: rgb(var(--accent) / 0.7); }
+
+  button.primary {
+    width: 100%; margin-top: 6px; padding: 12px; border-radius: 14px; border: none;
+    background: rgb(var(--accent)); color: #17110b; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.02em; cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: default; }
+  button.primary.stop { background: rgb(var(--error)); color: #17110b; }
+
+  .lamps { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .lamp {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-radius: 14px; border: 1px solid rgb(var(--border));
+    background: rgb(var(--surface));
+  }
+  .lamp .name { font-size: 12px; font-weight: 600; }
+  .lamp .state { display: flex; align-items: center; gap: 8px; font-size: 11px;
+                 font-family: "IBM Plex Mono", monospace; color: rgb(var(--ink-muted)); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: rgb(var(--ink-muted) / 0.5); flex-shrink: 0; }
+  .dot.live { background: rgb(var(--success)); box-shadow: 0 0 8px rgb(var(--success) / 0.6); }
+  .dot.bad { background: rgb(var(--error)); }
+  .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+  .readout {
+    margin-top: 18px; padding: 16px; border-radius: 16px; border: 1px solid rgb(var(--border));
+    background: rgb(var(--card)); display: flex; align-items: baseline; justify-content: space-between;
+  }
+  .readout .bt { font-family: "IBM Plex Mono", monospace; font-size: 30px; font-weight: 700; }
+  .readout .unit { font-size: 12px; color: rgb(var(--ink-muted)); margin-left: 4px; }
+  .readout .empty { color: rgb(var(--ink-muted)); font-size: 13px; }
+
+  .log {
+    margin-top: 16px; height: 120px; overflow-y: auto; border-radius: 12px;
+    border: 1px solid rgb(var(--border)); background: rgb(var(--surface));
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: rgb(var(--ink-muted));
+    padding: 8px 10px;
+  }
+  .log div { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log .err { color: rgb(var(--error)); }
+</style>
+</head>
+<body>
+
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z" />
+      <path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" />
+      <path d="M8 2.5c-.6.8-.6 1.7 0 2.5M12 2.5c-.6.8-.6 1.7 0 2.5" />
+    </svg>
+    <div>
+      <h1>RoastLogs Bridge</h1>
+      <div class="sub">RoastLink TWO+ &rarr; live roast data</div>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="host">RoastLink host</label>
+    <input id="host" type="text" placeholder="roastlink.local" />
+  </div>
+  <div class="field">
+    <label for="url">Supabase URL</label>
+    <input id="url" type="text" placeholder="https://xxxx.supabase.co" />
+  </div>
+  <div class="field">
+    <label for="key">Supabase publishable key</label>
+    <input id="key" type="password" placeholder="sb_publishable_..." />
+  </div>
+  <div class="field">
+    <label for="email">Bridge account email</label>
+    <input id="email" type="text" placeholder="roastlink-bridge@..." />
+  </div>
+  <div class="field">
+    <label for="password">Bridge account password</label>
+    <input id="password" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" />
+  </div>
+
+  <button id="connectBtn" class="primary">Connect</button>
+
+  <div class="lamps">
+    <div class="lamp">
+      <span class="name">RoastLink</span>
+      <span class="state"><span id="dotDevice" class="dot"></span><span id="txtDevice">idle</span></span>
+    </div>
+    <div class="lamp">
+      <span class="name">Cloud</span>
+      <span class="state"><span id="dotCloud" class="dot"></span><span id="txtCloud">idle</span></span>
+    </div>
+    <div class="lamp">
+      <span class="name">Viewers</span>
+      <span class="state"><span id="dotViewers" class="dot"></span><span id="txtViewers">0</span></span>
+    </div>
+  </div>
+
+  <div class="readout">
+    <div id="btValue"><span class="empty">No live reading yet</span></div>
+    <div id="btAge" class="unit"></div>
+  </div>
+
+  <div id="log" class="log"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

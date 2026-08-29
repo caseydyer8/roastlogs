@@ -63,11 +63,15 @@ grant execute on function public.is_admin(uuid) to authenticated;
 --    all-data admin. Allowlisting by email is immune to that and is re-run-safe.
 -- ============================================================================
 
+-- NOTE: the real addresses are intentionally NOT committed — this repo is public,
+-- and publishing them would hand out the complete list of valid usernames for an
+-- app whose signup is disabled. Substitute the two account emails at run time.
+-- Source of truth: Supabase Dashboard -> Authentication -> Users.
 insert into public.admins (user_id)
 select id from auth.users
 where email in (
-  'primary@redacted.invalid',           -- Casey (primary)
-  'secondary@redacted.invalid'         -- Casey (second account)
+  '<primary-account-email>',         -- replace before running
+  '<second-account-email>'           -- replace before running
 )
 on conflict (user_id) do nothing;
 
