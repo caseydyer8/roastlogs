@@ -20,7 +20,13 @@ server.on("upgrade", (req, socket) => {
 
   let streaming = false;
   let uptime = 1234; // device uptime seconds — deliberately not zero
-  let bt = 312.4;
+  let roastT = 0;    // seconds since telemetry started, drives the curve below
+
+  // A real SR540 roast, not a ramp. Bean temp climbs fast off the charge then
+  // flattens as the batch soaks up heat, so rate of rise decays from about 41
+  // to about 12 deg/min over ten minutes, ending near 415F. A straight ramp
+  // made the chart impossible to review once the axis was capped at 475.
+  const btAt = (t) => 200 + 0.15 * t + 138.7 * (1 - Math.exp(-t / 260));
 
   const sendText = (s) => {
     const payload = Buffer.from(s, "utf8");
@@ -40,7 +46,9 @@ server.on("upgrade", (req, socket) => {
   const tick = setInterval(() => {
     if (!streaming) return;
     uptime += 1;
-    bt += 1.6 + Math.random() * 0.5;
+    roastT += 1;
+    // A little probe noise so smoothing and RoR have something real to chew on.
+    const bt = btAt(roastT) + (Math.random() - 0.5) * 0.6;
     sendText(
       JSON.stringify({
         et: +(bt + 24).toFixed(1),
