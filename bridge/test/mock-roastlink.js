@@ -115,4 +115,5 @@ server.on("upgrade", (req, socket) => {
   socket.on("error", () => clearInterval(tick));
 });
 
-server.listen(81, "127.0.0.1", () => console.log("[mock] listening on ws://127.0.0.1:81/"));
+const PORT = Number(process.env.MOCK_PORT) || 8081;
+server.listen(PORT, "127.0.0.1", () => console.log(`[mock] listening on ws://127.0.0.1:${PORT}/  (connect the bridge to 127.0.0.1:${PORT})`));

@@ -51,6 +51,11 @@ class RoastLinkClient extends EventEmitter {
   }
 
   get url() {
+    // Allow an explicit "host:port" (e.g. "127.0.0.1:8081"), used by the local
+    // mock -- it can't bind privileged port 81 without root on macOS. A bare
+    // host ("roastlink.local") falls back to opts.port (81), the real device.
+    const m = /^(.*):(\d+)$/.exec(this.host || "");
+    if (m) return `ws://${m[1]}:${m[2]}/`;
     return `ws://${this.host}:${this.opts.port}/`;
   }
 
