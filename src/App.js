@@ -1943,28 +1943,6 @@ function App() {
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            <LiveRoastReadout
-              status={liveRoast.status}
-              bt={liveRoast.bt}
-              ror={liveRoast.ror}
-              viewers={liveRoast.viewers}
-              recording={roastStarted && !coolingStartTime}
-              points={curvePointCount}
-              expanded={liveChartOpen}
-              onToggle={() => setLiveChartOpen((v) => !v)}
-            />
-            {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
-              <div className="-mt-2 mb-4">
-                <LiveRoastChart
-                  curve={curveRef.current}
-                  roastLog={roastLog}
-                  profile={profileFollowing}
-                  elapsedSeconds={elapsedSeconds}
-                  windowMode={liveChartWindow}
-                  onWindowModeChange={setLiveChartWindow}
-                />
-              </div>
-            )}
             {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
             {(!roastStarted || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
@@ -2110,7 +2088,10 @@ function App() {
                   )}
                 </div>
 
-                <div className="mt-2 font-mono text-[64px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink">
+                <div className={`mt-2 font-mono font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink ${
+                  liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only")
+                    ? "text-[46px]" : "text-[64px]"
+                }`}>
                   {formatTime(elapsedSeconds)}
                 </div>
 
@@ -2131,6 +2112,19 @@ function App() {
                   </div>
                 )}
               </div>
+
+              {/* Live bean temp sits with the chrono, not in a separate card: one instrument. */}
+              <LiveRoastReadout
+                inset
+                status={liveRoast.status}
+                bt={liveRoast.bt}
+                ror={liveRoast.ror}
+                viewers={liveRoast.viewers}
+                recording={roastStarted && !coolingStartTime}
+                points={curvePointCount}
+                expanded={liveChartOpen}
+                onToggle={() => setLiveChartOpen((v) => !v)}
+              />
 
               {/* Segmented Fan · Heat · Temp dials — tap any to log an adjustment */}
               {(roastStarted || isTimerRunning) && (
@@ -2230,6 +2224,19 @@ function App() {
                   </div>
                 );
               })()}
+
+              {/* Live curve, attached to the hero rather than floating in its own card. */}
+              {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
+                <LiveRoastChart
+                  attached
+                  curve={curveRef.current}
+                  roastLog={roastLog}
+                  profile={profileFollowing}
+                  elapsedSeconds={elapsedSeconds}
+                  windowMode={liveChartWindow}
+                  onWindowModeChange={setLiveChartWindow}
+                />
+              )}
             </section>
 
             {/* 3) PHASE MILESTONES */}

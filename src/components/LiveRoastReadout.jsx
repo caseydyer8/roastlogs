@@ -17,7 +17,7 @@ const LABEL = {
   "bridge-only": "NO SIGNAL",
 };
 
-export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, onToggle }) {
+export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, onToggle , inset = false }) {
   if (status !== "live" && status !== "bridge-only") return null;
 
   const rorText =
@@ -28,7 +28,9 @@ export default function LiveRoastReadout({ status, bt, ror, viewers, expanded, o
       type="button"
       onClick={onToggle}
       aria-expanded={!!expanded}
-      className="mb-4 flex w-full items-center justify-between rounded-2xl border border-border/60 bg-card px-4 py-3 text-left transition active:scale-[0.99]">
+      className={inset
+        ? "mt-4 flex w-full items-center justify-between border-t border-border/50 pt-3 text-left transition active:scale-[0.99]"
+        : "mb-4 flex w-full items-center justify-between rounded-2xl border border-border/60 bg-card px-4 py-3 text-left transition active:scale-[0.99]"}>
       <div className="flex items-center gap-2">
         <span className={`h-2.5 w-2.5 rounded-full ${DOT[status]} ${status === "live" ? "animate-pulse" : ""}`} />
         <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-muted">

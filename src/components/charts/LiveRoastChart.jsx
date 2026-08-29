@@ -138,6 +138,7 @@ export default function LiveRoastChart({
   elapsedSeconds = 0,
   windowMode = "scroll", // "scroll" (last 3 min, pannable) | "expand" (whole roast)
   onWindowModeChange,
+  attached = false, // rendered inside the hero card -> no border/background of its own
 }) {
   const [panOffset, setPanOffset] = React.useState(0); // seconds scrolled back from live
   const following = panOffset === 0;
@@ -180,7 +181,9 @@ export default function LiveRoastChart({
   const now = Math.max(elapsedSeconds, total);
 
   return (
-    <div className="mt-3 rounded-2xl border border-border/60 bg-card p-3">
+    <div className={attached
+      ? "mt-4 border-t border-border/50 pt-3"
+      : "mt-3 rounded-2xl border border-border/60 bg-card p-3"}>
       {/* Window controls */}
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
@@ -232,7 +235,7 @@ export default function LiveRoastChart({
       </div>
 
       {/* Temp + RoR */}
-      <ResponsiveContainer width="100%" height={150}>
+      <ResponsiveContainer width="100%" height={attached ? 132 : 150}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.35} vertical={false} />
           <XAxis
@@ -245,8 +248,25 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          <YAxis yAxisId="temp" domain={["auto", "auto"]} width={38} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
-          <YAxis yAxisId="ror" hide domain={[0, (max) => Math.max(10, max * 1.2)]} />
+          <YAxis
+            yAxisId="temp"
+            domain={["auto", "auto"]}
+            width={42}
+            stroke="rgb(var(--border-color))"
+            fontSize={9}
+            tick={{ fill: "rgb(var(--chart-tick))" }}
+            label={{ value: "\u00B0F", position: "insideTopLeft", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-temp))" }}
+          />
+          <YAxis
+            yAxisId="ror"
+            orientation="right"
+            width={40}
+            domain={[0, (max) => Math.max(10, max * 1.2)]}
+            stroke="rgb(var(--border-color))"
+            fontSize={9}
+            tick={{ fill: "rgb(var(--chart-tick))" }}
+            label={{ value: "\u00B0/min", position: "insideTopRight", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-ror))" }}
+          />
           {band(0, yellowing ?? now, "b-dry", currentPhase === "drying")}
           {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard")}
           {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development")}
@@ -263,11 +283,20 @@ export default function LiveRoastChart({
       </ResponsiveContainer>
 
       {/* Control map: actual vs planned */}
-      <ResponsiveContainer width="100%" height={92}>
+      <ResponsiveContainer width="100%" height={attached ? 78 : 92}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.3} vertical={false} />
           <XAxis dataKey="t" type="number" domain={domain} allowDataOverflow tickFormatter={fmt} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
-          <YAxis yAxisId="dial" domain={[0, 10]} ticks={[1, 5, 9]} width={38} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
+          <YAxis
+            yAxisId="dial"
+            domain={[0, 10]}
+            ticks={[1, 5, 9]}
+            width={42}
+            stroke="rgb(var(--border-color))"
+            fontSize={9}
+            tick={{ fill: "rgb(var(--chart-tick))" }}
+            label={{ value: "dial", position: "insideTopLeft", offset: -1, fontSize: 8.5, fill: "rgb(var(--chart-tick))" }}
+          />
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={(v) => fmt(v)}
