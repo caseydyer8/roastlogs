@@ -250,7 +250,13 @@ export default function LiveRoastChart({
           />
           <YAxis
             yAxisId="temp"
-            domain={["auto", "auto"]}
+            // 475F is the ceiling: no roast has ever gone past it, so pinning the
+            // top stops the curve rescaling itself every time the peak nudges up.
+            // allowDataOverflow is required -- without it Recharts quietly widens
+            // the domain to swallow any outlier and the cap does nothing.
+            domain={["auto", 475]}
+            allowDataOverflow
+            ticks={[200, 275, 350, 425, 475]}
             width={42}
             stroke="rgb(var(--border-color))"
             fontSize={9}
