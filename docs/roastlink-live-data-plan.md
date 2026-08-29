@@ -783,3 +783,37 @@ node tools/roastlink-sniff.js <device-ip>    # explicit IP
 - Existing e2e suite passes; new screens get baselines in the same session.
 - Fan → Heat → Temp order intact; Heat/Fan chart lines still `stepAfter`.
 - `security-auditor` pass before commit; `/rls-audit` to confirm policies unchanged.
+
+---
+
+## PAUSE PIN — 2026-08-29
+
+**What we were doing.** Dry-running the live chart on localhost against the mock
+RoastLink (no hardware), to review it before the deploy. The full pipe was proven
+green end to end: mock -> bridge -> Supabase private channel -> app.
+
+**Exact next step on return.** Case reviews the expanded live graph and picks the
+default windowing mode: **"3 min"** (trailing, pannable — current default) vs
+**"Full"** (auto-expands to the whole roast). That is the ONLY open decision left
+before the version bump + deploy. Everything else is built, unit-tested (15/15),
+and pushed.
+
+**Half-finished / fragile.**
+- The chart itself is complete and unreviewed — do NOT deploy until Case signs off
+  (this hold gate).
+- Two footguns cost most of a session tonight and are worth knowing about:
+  1. **`roastlogs_e2e` localStorage flag** (`src/index.js:29`) persists after any
+     `/ui-loop` run and silently skips BOTH the login screen and the MFA gate on
+     `npm start`. Symptoms look like a broken feature: 401s on every table, live
+     dot red, bridge Viewers stuck at 0, and Sign Out appears to do nothing
+     (there is no session to end). Clear it with
+     `localStorage.removeItem("roastlogs_e2e"); location.reload();`
+     **Deferred fix:** render a visible "E2E BYPASS ACTIVE" banner whenever the
+     flag is on, so it can never masquerade as a normal signed-in session.
+  2. The mock binds **8081**, not 81 (port 81 is privileged on macOS). The bridge
+     host field must read exactly `127.0.0.1:8081`.
+
+**To resume the dry run.** Three terminals:
+`cd bridge && npm run mock` | `cd bridge && npm start` (host `127.0.0.1:8081`) |
+`npm start` at the repo root, then sign in fully **including the 6-digit MFA code**
+— the private live channel requires aal2, same bar as the roast data.

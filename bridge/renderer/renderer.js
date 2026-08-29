@@ -29,6 +29,7 @@ function logLine(text, isErr) {
   if (isErr) row.className = "err";
   const t = new Date().toLocaleTimeString([], { hour12: false });
   row.textContent = `${t}  ${text}`;
+  row.title = row.textContent; // clipped lines stay readable on hover
   logEl.appendChild(row);
   while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
@@ -111,7 +112,7 @@ connectBtn.addEventListener("click", async () => {
   connectBtn.disabled = true;
   setLamp("dotDevice", "txtDevice", "connecting");
   setLamp("dotCloud", "txtCloud", "connecting");
-  logLine(`connecting to ${host}...`);
+  logLine(`connecting to ${host}`);
   try {
     const res = await window.roastlogs.connect({ host, supabaseUrl, supabaseKey, email, password });
     if (res && res.ok) {
