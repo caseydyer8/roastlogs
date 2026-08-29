@@ -786,34 +786,80 @@ node tools/roastlink-sniff.js <device-ip>    # explicit IP
 
 ---
 
-## PAUSE PIN — 2026-08-29
+## SHIPPED — v3.4.0, 2026-08-29
 
-**What we were doing.** Dry-running the live chart on localhost against the mock
-RoastLink (no hardware), to review it before the deploy. The full pipe was proven
-green end to end: mock -> bridge -> Supabase private channel -> app.
+The live graph hold gate is closed. Reviewed on localhost, released, and
+verified live: bundle `main.f60e2005.js`, version string 3.4.0 in the shipped
+JS, `roastlink-live` present.
 
-**Exact next step on return.** Case reviews the expanded live graph and picks the
-default windowing mode: **"3 min"** (trailing, pannable — current default) vs
-**"Full"** (auto-expands to the whole roast). That is the ONLY open decision left
-before the version bump + deploy. Everything else is built, unit-tested (15/15),
-and pushed.
+**What shipped.** The Roast tab is one instrument surface divided by hairlines
+instead of four nested cards: elapsed time and bean temp on one row, the live
+curve under it, Fan/Heat/Temp as a hairline triptych, milestone and run
+controls in the thumb zone. Phase bands name themselves on the curve
+(`DRY 0:00`, `MAILLARD 3:10`, `DEV 7:45`) with the time each began, so the
+phase rail yields whenever the curve is up and falls back for probe-less manual
+roasts. Temperature axis pinned at 475F; RoR gained a real right-hand axis.
+Both window modes (3 min and Full) stay available at all times.
 
-**Half-finished / fragile.**
-- The chart itself is complete and unreviewed — do NOT deploy until Case signs off
-  (this hold gate).
-- Two footguns cost most of a session tonight and are worth knowing about:
-  1. **`roastlogs_e2e` localStorage flag** (`src/index.js:29`) persists after any
-     `/ui-loop` run and silently skips BOTH the login screen and the MFA gate on
-     `npm start`. Symptoms look like a broken feature: 401s on every table, live
-     dot red, bridge Viewers stuck at 0, and Sign Out appears to do nothing
-     (there is no session to end). Clear it with
-     `localStorage.removeItem("roastlogs_e2e"); location.reload();`
-     **Deferred fix:** render a visible "E2E BYPASS ACTIVE" banner whenever the
-     flag is on, so it can never masquerade as a normal signed-in session.
-  2. The mock binds **8081**, not 81 (port 81 is privileged on macOS). The bridge
-     host field must read exactly `127.0.0.1:8081`.
+**Release gotcha worth remembering.** The first deploy attempt published 3.0.1,
+because `main` had not been merged and `npm run deploy` happily builds whatever
+is checked out. Guard before every deploy:
+`node -p "require('./package.json').version"` and confirm the deploy log reads
+`roastlogs@<expected> deploy`.
 
-**To resume the dry run.** Three terminals:
-`cd bridge && npm run mock` | `cd bridge && npm start` (host `127.0.0.1:8081`) |
-`npm start` at the repo root, then sign in fully **including the 6-digit MFA code**
-— the private live channel requires aal2, same bar as the roast data.
+---
+
+## NEXT SESSION — equipment field + temperature phase ladder
+
+These two are one piece of work: both add to the roast record, both need
+History to render new data, both must stay compatible with existing roasts.
+
+**1. Equipment field.** A roaster/tube selector in session setup: SR540 bare,
+OEM extension tube, V5T Razzo. Wanted for two real reasons, neither of them a
+display toggle: it drives the 315F preheat warning Case asked for, and it
+records which tube a roast used, without which History comparisons mislead
+(the tube materially changes the curve).
+
+Deliberately NOT wired to rail-versus-curve visibility. That already keys off
+whether a probe is actually streaming, which is ground truth; a dropdown is a
+claim that can disagree with reality (pick Razzo, forget the bridge, get
+neither rail nor chart). Collapsing the curve already brings the rail back in
+one tap. Revisit only after a few real roasts.
+
+**2. Temperature-driven phase ladder.** Auto-log phases from live BT:
+Charge, Turnaround (the BT dip minimum, detected), Maillard Approach 280F,
+Maillard Phase 305F, Caramelization Approach 330F, Caramelization Phase 340F,
+FC Approach 375F, then First Crack (stays manual, it is heard, and it starts
+the dev timer) and Cool.
+
+Three things to settle before building:
+- **What happens to `YELLOWING`?** Every existing roast stores that label and
+  the new ladder has no such stage; Maillard Phase at 305F is roughly where
+  yellowing shows. Decide which name is canonical going forward, with History
+  still rendering the old label for old roasts. No migration either way.
+- **Real log entries or chart annotations?** A roast logs 3 phase entries
+  today; the ladder would write 7 automatically and swamp the History timeline.
+  Suggest logging them flagged auto so the timeline can collapse them.
+- **Approaches are not phases.** 280/330/375 are heads-ups; 305/340/FC/Cool are
+  boundaries. Nine nodes will not fit a phone rail. Suggest phases become bands
+  and rail nodes, approaches become transient alerts that flash and clear, and
+  turnaround becomes a marker on the curve.
+
+## KNOWN GAPS (found during the dry run, not yet fixed)
+
+- **The live curve does not survive a page reload.** `curveRef` is a React ref,
+  so a refresh mid-roast empties the curve while the timer restores from
+  localStorage. On a real roast a browser reload would silently lose the curve.
+- **A pause collapses samples onto one second.** Capture correctly continues
+  through a pause, but `elapsedSeconds` is frozen, so every incoming sample
+  overwrites the same bucket.
+- **`roastlogs_e2e` in localStorage skips BOTH the login screen and the MFA
+  gate** on `npm start` (`src/index.js:29`), and persists after any `/ui-loop`
+  run. It looks exactly like a broken app: 401s everywhere, live dot red,
+  bridge Viewers stuck at 0, Sign Out doing nothing. Clear with
+  `localStorage.removeItem("roastlogs_e2e"); location.reload();`
+  Worth a visible "E2E BYPASS ACTIVE" banner so it can never masquerade as a
+  normal session.
+- **`CLAUDE.md` still imports `@.claude/case-profile/00-04`**, deleted in the
+  privacy rewrite. The SessionStart hook points at nothing; preferences do not
+  survive between sessions. Point it at `.claude/working-agreement.md`.
