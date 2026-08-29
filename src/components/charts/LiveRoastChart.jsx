@@ -163,8 +163,19 @@ export default function LiveRoastChart({
     : yellowing != null ? "maillard"
     : "drying";
 
-  const band = (from, to, key, active) => {
+  // Phase bands carry their own name and start time, which is what retired the
+  // separate phase rail. A band's WIDTH is the phase's real duration, so this
+  // says strictly more than four evenly spaced nodes ever could.
+  //
+  // The label sits at the band's top-left, which is the one corner guaranteed to
+  // be clear: at the moment a phase begins the curve is at its lowest point for
+  // that phase, so it is always well below the label.
+  const band = (from, to, key, active, tag) => {
     if (from == null || to == null || to <= from) return null;
+    // Skip the label on a band too narrow to hold it, otherwise adjacent labels
+    // collide the instant a milestone is logged and the new band is one pixel wide.
+    const span = domain[1] - domain[0];
+    const wideEnough = span > 0 && (to - from) / span >= 0.2;
     return (
       <ReferenceArea
         key={key}
@@ -174,6 +185,15 @@ export default function LiveRoastChart({
         fill={active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"}
         fillOpacity={active ? 0.16 : 0.07}
         stroke="none"
+        label={wideEnough && tag ? {
+          value: `${tag} ${fmt(from)}`,
+          position: "insideTopLeft",
+          offset: 5,
+          fontSize: 8.5,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          letterSpacing: "0.1em",
+          fill: active ? "rgb(var(--accent-text))" : "rgb(var(--chart-tick))",
+        } : undefined}
       />
     );
   };
@@ -271,10 +291,10 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying")}
-          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard")}
-          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development")}
-          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling")}
+          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying", "DRY")}
+          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard", "MAILLARD")}
+          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development", "DEV")}
+          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling", "COOL")}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={(v) => fmt(v)}

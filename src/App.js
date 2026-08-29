@@ -1509,6 +1509,13 @@ function App() {
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
 
+  // The curve now carries the phase names and their times in its own bands, so
+  // the separate phase rail is redundant whenever the curve is on screen. It is
+  // still the only place those milestones appear on a probe-less manual roast,
+  // where no chart renders at all, so it falls back rather than disappearing.
+  const curveVisible =
+    liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only");
+
   // Recording gate: capture live bean temp into the curve ONLY between START
   // and COOLING START. RoastLogs owns the window; the bridge merely streams,
   // and nothing is persisted until the roast is saved. Bucketing by whole
@@ -2132,7 +2139,7 @@ function App() {
               </div>
 
               {/* Live curve, attached to the hero rather than floating in its own card. */}
-              {liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only") && (
+              {curveVisible && (
                 <LiveRoastChart
                   attached
                   curve={curveRef.current}
@@ -2205,8 +2212,8 @@ function App() {
                 );
               })()}
 
-              {/* Phase rail — Start → Yellowing → First crack → Drop */}
-              {roastStarted && (() => {
+              {/* Phase rail — only when the curve is not up to carry the phases itself. */}
+              {roastStarted && !curveVisible && (() => {
                 const yellowing = (roastLog || []).find((e) => e.type === "phase" && e.label === "YELLOWING");
                 const nodes = [
                   { label: "Start", t: 0, reached: true },
