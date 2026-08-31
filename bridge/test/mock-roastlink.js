@@ -22,11 +22,41 @@ server.on("upgrade", (req, socket) => {
   let uptime = 1234; // device uptime seconds — deliberately not zero
   let roastT = 0;    // seconds since telemetry started, drives the curve below
 
-  // A real SR540 roast, not a ramp. Bean temp climbs fast off the charge then
-  // flattens as the batch soaks up heat, so rate of rise decays from about 41
-  // to about 12 deg/min over ten minutes, ending near 415F. A straight ramp
-  // made the chart impossible to review once the axis was capped at 475.
-  const btAt = (t) => 200 + 0.15 * t + 138.7 * (1 - Math.exp(-t / 260));
+  // A real SR540 roast, not a ramp: a six-minute batch with a genuine
+  // TURNAROUND. Cold beans pull the chamber down off the charge, BT bottoms out
+  // around 0:42, then climbs with a decaying rate of rise to the drop.
+  //
+  // The previous curve was monotonic, which meant the turnaround marker could
+  // never fire against it -- there was no dip to detect. It also ran ten
+  // minutes, so every temperature threshold landed late and bunched.
+  //
+  // Written as explicit anchors rather than a fitted exponential so the
+  // turnaround time and the drop temperature are things you set, not things you
+  // solve for.
+  const T_CHARGE = 214;   // probe reading as the beans go in
+  const T_MIN = 196;      // the turnaround low
+  const T_MIN_AT = 42;    // seconds — where that low lands
+  const T_END = 404;      // BT at the drop
+  const DROP_AT = 360;    // seconds — a six-minute roast
+  const TAU = 210;        // climb-out time constant; sets how RoR decays
+
+  const CLIMB_NORM = 1 - Math.exp(-(DROP_AT - T_MIN_AT) / TAU);
+
+  const btAt = (t) => {
+    if (t <= 0) return T_CHARGE;
+    if (t < T_MIN_AT) {
+      // Easing out into the low, so the floor is rounded rather than a corner
+      // the rate-of-rise maths would read as a step change.
+      const k = 1 - t / T_MIN_AT;
+      return T_CHARGE - (T_CHARGE - T_MIN) * (1 - k * k);
+    }
+    // Exponential approach to the drop temperature: this is what gives a real
+    // roast its decaying rate of rise instead of a straight line.
+    return (
+      T_MIN +
+      ((T_END - T_MIN) * (1 - Math.exp(-(t - T_MIN_AT) / TAU))) / CLIMB_NORM
+    );
+  };
 
   const sendText = (s) => {
     const payload = Buffer.from(s, "utf8");

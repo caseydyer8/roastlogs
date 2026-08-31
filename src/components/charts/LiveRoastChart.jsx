@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
 } from "recharts";
 
@@ -30,6 +31,51 @@ import {
 // ---------------------------------------------------------------------------
 
 const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
+
+// Short names for the phase ribbon. Kept in one place because the ribbon lane
+// is narrow: these want to stay 3-4 characters so a short phase still shows a
+// readable name rather than a bare colour block.
+const PHASE_TAGS = {
+  drying: "DRY",
+  maillard: "MAI",
+  caramelization: "CAR",
+  development: "DEV",
+};
+
+// Acronyms belong on the charts, where space is the constraint. Everywhere with
+// room -- the tooltip here, the Roast Timeline over in App.js -- says the full
+// word, so the tooltip doubles as the key for the ribbon's short tags.
+const PHASE_NAMES = {
+  drying: "Drying",
+  maillard: "Maillard",
+  caramelization: "Caramelization",
+  development: "Development",
+};
+
+// Moments are instants, not spans: a dot on the curve and a Roast Timeline row.
+// They never get a band -- a zero-length event forced into a span renders as a
+// ~10px sliver that cannot hold its own name. The tooltip names them, which is
+// why no text is drawn beside the dot.
+const MOMENT_LABELS = {
+  TURNAROUND: "Turnaround",
+  YELLOWING: "Yellowing",
+  "MAILLARD APPROACH": "Maillard approach",
+  "CARAMELIZATION APPROACH": "Caramelization approach",
+  "FC APPROACH": "First crack approach",
+  "FIRST CRACK": "First crack",
+  "COOLING START": "Drop",
+};
+
+// One tint per phase, shared by the ribbon segment and the shaded band beneath
+// it so the two read as the same object. Previously every band used the same
+// grey at 0.07 and only the active one differed, which on a dark ground made
+// the phases indistinguishable in the plot.
+const PHASE_VAR = {
+  drying: "--phase-dry",
+  maillard: "--phase-mai",
+  caramelization: "--phase-car",
+  development: "--phase-dev",
+};
 const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
 const ROR_SMOOTH = 4;       // +/- seconds of moving average
 
@@ -52,7 +98,16 @@ const stepSeconds = (step) =>
 // overlay, carry-forward dials, phase boundaries) can be verified headlessly
 // rather than only by eyeballing a chart.
 export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, elapsedSeconds = 0 }) {
-    const total = Math.max(elapsedSeconds, curve.length ? curve[curve.length - 1].t : 0, 1);
+    // Drop ends the tracked roast. The SR540 runs its own 3-minute cool cycle
+    // afterwards and there is nothing worth charting in it, so once DROP is
+    // logged the chart stops growing instead of trailing a flat empty tail
+    // while the timer runs on to the save screen.
+    const dropAt = (() => {
+      const e = roastLog.find((x) => x && x.type === "phase" && x.label === "COOLING START");
+      return e ? Number(e.t) : null;
+    })();
+    const rawTotal = Math.max(elapsedSeconds, curve.length ? curve[curve.length - 1].t : 0, 1);
+    const total = dropAt != null ? Math.max(dropAt, 1) : rawTotal;
 
     // Phase boundaries from the roast log.
     const phaseAt = (label) => {
@@ -61,7 +116,22 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     };
     const yellowing = phaseAt("YELLOWING");
     const firstCrack = phaseAt("FIRST CRACK");
-    const cooling = phaseAt("COOLING START");
+    const drop = phaseAt("COOLING START");
+
+    // Maillard opens at the 305F crossing the ladder logged. Falls back to the
+    // Yellowing mark when there is none, which is what every roast saved before
+    // the ladder existed has, and what a probe-less manual roast still produces.
+    // So old roasts render exactly as they always did, and no migration is
+    // needed -- only a live probe roast gets the temperature-accurate boundary.
+    const maillard = phaseAt("MAILLARD") ?? yellowing;
+    const caramelization = phaseAt("CARAMELIZATION");
+
+    // Moments: instants worth a dot. Drawn only where the curve actually has a
+    // reading at that second, so a probe-less roast quietly shows none.
+    const moments = roastLog
+      .filter((e) => e && e.type === "phase" && MOMENT_LABELS[e.label])
+      .map((e) => ({ label: e.label, name: MOMENT_LABELS[e.label], t: Number(e.t) }))
+      .filter((m) => Number.isFinite(m.t));
 
     // Actual Fan/Heat, carried forward from logged adjustments.
     const events = roastLog
@@ -128,7 +198,7 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       data[t].ror = n ? Math.round((sum / n) * 10) / 10 : null;
     }
 
-    return { data, total, yellowing, firstCrack, cooling, lastBt, hasProfile: steps.length > 0 };
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0 };
 }
 
 export default function LiveRoastChart({
@@ -143,12 +213,41 @@ export default function LiveRoastChart({
   const [panOffset, setPanOffset] = React.useState(0); // seconds scrolled back from live
   const following = panOffset === 0;
 
+  // Rendered width of the phase-ribbon lane, so a segment too narrow for its
+  // name shows colour alone instead of a truncated word.
+  const ribbonRef = React.useRef(null);
+  const [ribbonWidth, setRibbonWidth] = React.useState(0);
+
+  // Measure the tag for real rather than estimating ~6px per character. The
+  // estimate was pessimistic by a couple of pixels, which is the whole margin
+  // on a short phase: a 45-second DEV band at the end of a roast came out at
+  // 24px against a 25.9px estimate and lost its name for no reason.
+  const measureRef = React.useRef(null);
+  const tagWidth = React.useCallback((tag) => {
+    if (!measureRef.current) {
+      if (typeof document === "undefined") return tag.length * 6;
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (!ctx) return tag.length * 6;
+      ctx.font = "8.5px ui-monospace, SFMono-Regular, monospace";
+      measureRef.current = ctx;
+    }
+    // measureText does not know about letter-spacing, so add it back: 0.1em.
+    return measureRef.current.measureText(tag).width + tag.length * 0.85;
+  }, []);
+  React.useEffect(() => {
+    const el = ribbonRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setRibbonWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   const model = React.useMemo(
     () => buildLiveChartModel({ curve, roastLog, profile, elapsedSeconds }),
     [curve, roastLog, profile, elapsedSeconds]
   );
 
-  const { data, total, yellowing, firstCrack, cooling, hasProfile } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile } = model;
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
@@ -158,51 +257,99 @@ export default function LiveRoastChart({
   }, [windowMode, total, panOffset]);
 
   // Which phase is happening right now -- this is the band that gets lit up.
-  const currentPhase = cooling != null ? "cooling"
-    : firstCrack != null ? "development"
-    : yellowing != null ? "maillard"
+  const currentPhase = firstCrack != null ? "development"
+    : caramelization != null ? "caramelization"
+    : maillard != null ? "maillard"
     : "drying";
 
-  // Phase bands carry their own name and start time, which is what retired the
-  // separate phase rail. A band's WIDTH is the phase's real duration, so this
-  // says strictly more than four evenly spaced nodes ever could.
-  //
-  // The label sits at the band's top-left, which is the one corner guaranteed to
-  // be clear: at the moment a phase begins the curve is at its lowest point for
-  // that phase, so it is always well below the label.
-  const band = (from, to, key, active, tag) => {
+  // Phase bands shade the plot to show each phase's real DURATION, which four
+  // evenly spaced rail nodes never could. They carry no text: the name lives in
+  // the ribbon above the plot instead. In-plot labels sat at the band's
+  // top-left, which is exactly where the y-axis ticks are, and any band under
+  // 20% of the window dropped its label entirely -- so on a full-roast view DEV
+  // and COOL went unnamed, in the mode where the name matters most.
+  const band = (from, to, key, active, phaseKey) => {
     if (from == null || to == null || to <= from) return null;
-    // Skip the label on a band too narrow to hold it, otherwise adjacent labels
-    // collide the instant a milestone is logged and the new band is one pixel wide.
-    const span = domain[1] - domain[0];
-    const wideEnough = span > 0 && (to - from) / span >= 0.2;
     return (
       <ReferenceArea
         key={key}
         x1={from}
         x2={to}
         yAxisId="temp"
-        fill={active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"}
-        fillOpacity={active ? 0.16 : 0.07}
+        fill={`rgb(var(${PHASE_VAR[phaseKey] || "--border-color"}))`}
+        fillOpacity={active ? 0.2 : 0.1}
         stroke="none"
-        label={wideEnough && tag ? {
-          value: `${tag} ${fmt(from)}`,
-          position: "insideTopLeft",
-          offset: 5,
-          fontSize: 8.5,
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          letterSpacing: "0.1em",
-          fill: active ? "rgb(var(--accent-text))" : "rgb(var(--chart-tick))",
-        } : undefined}
       />
     );
   };
 
   const now = Math.max(elapsedSeconds, total);
+  // Where the tracked roast stops: the drop if there is one, otherwise the
+  // moving live edge.
+  const end = drop != null ? drop : now;
+
+  // Which phase a given second falls in, for the tooltip header. Read from the
+  // same boundaries the bands and ribbon use, so the three can never disagree.
+  const phaseNameAt = (t) => {
+    if (firstCrack != null && t >= firstCrack) return PHASE_NAMES.development;
+    if (caramelization != null && t >= caramelization) return PHASE_NAMES.caramelization;
+    if (maillard != null && t >= maillard) return PHASE_NAMES.maillard;
+    if (t >= 0) return PHASE_NAMES.drying;
+    return null;
+  };
+  // A moment within a few seconds of the scan point wins the header: that is
+  // the question being asked when you put a finger on a dot. Otherwise the
+  // header names the phase this second falls in.
+  const momentNear = (t) => {
+    let best = null;
+    for (const m of moments) {
+      const d = Math.abs(m.t - t);
+      if (d <= 4 && (!best || d < Math.abs(best.t - t))) best = m;
+    }
+    return best;
+  };
+  const tooltipLabel = (v) => {
+    const m = momentNear(v);
+    if (m) return `${fmt(v)} · ${m.name}`;
+    const name = phaseNameAt(v);
+    return name ? `${fmt(v)} · ${name}` : fmt(v);
+  };
+
+  // Phase ribbon -- a dedicated lane above the plot carrying the phase names.
+  // Its own row is the whole point: a name here can never collide with the
+  // curve, the y-axis ticks, or the next phase's name, so every phase stays
+  // named at every window width instead of dropping out when its band is
+  // narrow. Segment WIDTH still reads as duration, same as the bands below.
+  //
+  // Geometry note: the segments must line up with the plot area, not the
+  // container, so the lane is inset by the two y-axis widths below.
+  // Four spans. No Cooling band: the roaster runs its own cool cycle after the
+  // drop and there is nothing to track in it, so DROP is where the data ends.
+  const phases = [
+    { tag: PHASE_TAGS.drying, from: 0, to: maillard ?? end, key: "drying" },
+    { tag: PHASE_TAGS.maillard, from: maillard, to: caramelization ?? firstCrack ?? end, key: "maillard" },
+    { tag: PHASE_TAGS.caramelization, from: caramelization, to: firstCrack ?? end, key: "caramelization" },
+    { tag: PHASE_TAGS.development, from: firstCrack, to: end, key: "development" },
+  ];
+  const span = domain[1] - domain[0];
+  const segments = phases
+    .map((p) => {
+      if (p.from == null || p.to == null || p.to <= p.from) return null;
+      // Clamp into the visible window; a phase that started before it still
+      // shows, anchored at the left edge.
+      const a = Math.max(p.from, domain[0]);
+      const b = Math.min(p.to, domain[1]);
+      if (span <= 0 || b <= a) return null;
+      const left = ((a - domain[0]) / span) * 100;
+      const width = ((b - a) / span) * 100;
+      const fits = ribbonWidth > 0 && (width / 100) * ribbonWidth >= tagWidth(p.tag) + 6;
+      return { ...p, left, width, fits, active: currentPhase === p.key };
+    })
+    .filter(Boolean);
 
   return (
     <div className={attached
-      ? "px-2 pb-2 pt-3"
+      ? "px-2 pb-3 pt-3"
       : "mt-3 rounded-2xl border border-border/60 bg-card p-3"}>
       {/* Window controls */}
       <div className="mb-2 flex items-center justify-between">
@@ -254,8 +401,43 @@ export default function LiveRoastChart({
         </div>
       </div>
 
-      {/* Temp + RoR */}
-      <ResponsiveContainer width="100%" height={attached ? 132 : 150}>
+      {/* Phase ribbon. Inset by the two y-axis widths (42 left, 40 right) so the
+          segments sit exactly over the plot area they describe. The right inset
+          is 44, not 40: the RoR axis is 40 wide and the chart carries a further
+          4px right margin. Measured against the rendered grid, not guessed. */}
+      {segments.length > 0 && (
+        <div className="mb-1 flex h-4 overflow-hidden rounded-[3px]" style={{ marginLeft: 42, marginRight: 44 }}>
+          <div ref={ribbonRef} className="relative w-full">
+            {segments.map((seg) => (
+              <div
+                key={seg.key}
+                className="absolute inset-y-0 flex items-center justify-center overflow-hidden"
+                style={{
+                  left: `${seg.left}%`,
+                  width: `${seg.width}%`,
+                  background: `rgb(var(${PHASE_VAR[seg.key] || "--border-color"}) / ${seg.active ? 0.42 : 0.2})`,
+                }}
+                title={`${seg.tag} ${fmt(seg.from)}`}
+              >
+                {seg.fits && (
+                  <span
+                    className="px-[3px] font-mono text-[8.5px] uppercase tracking-[0.1em]"
+                    style={{ color: `rgb(var(${PHASE_VAR[seg.key] || "--chart-tick"}))` }}
+                  >
+                    {seg.tag}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Temp + RoR. Its x-axis is hidden: the control map directly below shares
+          this exact domain and carries the one time ruler for both panels.
+          Two identical rulers 80px apart was the single biggest piece of
+          restatement in this zone. */}
+      <ResponsiveContainer width="100%" height={attached ? 116 : 134}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.35} vertical={false} />
           <XAxis
@@ -263,10 +445,9 @@ export default function LiveRoastChart({
             type="number"
             domain={domain}
             allowDataOverflow
-            tickFormatter={fmt}
+            tick={false}
+            height={2}
             stroke="rgb(var(--border-color))"
-            fontSize={9}
-            tick={{ fill: "rgb(var(--chart-tick))" }}
           />
           <YAxis
             yAxisId="temp"
@@ -286,18 +467,41 @@ export default function LiveRoastChart({
             yAxisId="ror"
             orientation="right"
             width={40}
-            domain={[0, (max) => Math.max(10, max * 1.2)]}
+            // Rounded up to a whole 10: the raw max * 1.2 printed ticks like
+            // "489.5999" against the container edge.
+            domain={[0, (max) => Math.max(10, Math.ceil((max * 1.2) / 10) * 10)]}
+            allowDecimals={false}
             stroke="rgb(var(--border-color))"
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying", "DRY")}
-          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard", "MAILLARD")}
-          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development", "DEV")}
-          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling", "COOL")}
+          {phases.map((p) =>
+            band(p.from, p.to, `b-${p.key}`, currentPhase === p.key, p.key)
+          )}
+          {/* Moments: a dot on the curve at the reading it happened at. No text
+              label -- Case reads the mark itself, and the tooltip names it on a
+              scan. Rendered only where the curve has a value at that second, so
+              a probe-less roast shows none rather than dots pinned at zero. */}
+          {moments.map((m) => {
+            const pt = data[Math.round(m.t)];
+            if (!pt || pt.temp == null) return null;
+            return (
+              <ReferenceDot
+                key={`m-${m.label}`}
+                x={m.t}
+                y={pt.temp}
+                yAxisId="temp"
+                r={3.5}
+                fill="rgb(var(--bg-surface))"
+                stroke="rgb(var(--chart-temp))"
+                strokeWidth={2}
+                isFront
+              />
+            );
+          })}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
-            labelFormatter={(v) => fmt(v)}
+            labelFormatter={tooltipLabel}
             formatter={(v, n) => [v, n]}
           />
           <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} />
@@ -307,8 +511,8 @@ export default function LiveRoastChart({
       </ResponsiveContainer>
 
       {/* Control map: actual vs planned */}
-      <ResponsiveContainer width="100%" height={attached ? 94 : 108}>
-        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 14, left: 0 }}>
+      <ResponsiveContainer width="100%" height={attached ? 90 : 104}>
+        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 10, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.3} vertical={false} />
           <XAxis dataKey="t" type="number" domain={domain} allowDataOverflow tickFormatter={fmt} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
           <YAxis
@@ -320,9 +524,14 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
+          {/* Invisible counterweight to the temp panel's right-hand RoR axis.
+              Without it this panel's plot area is 40px wider than the one above,
+              the two time scales disagree, and the shared ruler below lies about
+              the curve. */}
+          <YAxis yAxisId="dial-spacer" orientation="right" width={40} tick={false} axisLine={false} />
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
-            labelFormatter={(v) => fmt(v)}
+            labelFormatter={tooltipLabel}
           />
           {/* Planned first, so actual draws on top of its target. */}
           {hasProfile && (
@@ -337,14 +546,6 @@ export default function LiveRoastChart({
         </ComposedChart>
       </ResponsiveContainer>
 
-      {/* Legend */}
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] uppercase tracking-wider text-ink-muted">
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-temp))" }} />Temp &deg;F</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-ror))" }} />RoR &deg;/min</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-fan))" }} />Fan</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-heat))" }} />Heat <span className="opacity-60">dial 1-9</span></span>
-        {hasProfile && <span className="opacity-70">dashed = plan</span>}
-      </div>
     </div>
   );
 }

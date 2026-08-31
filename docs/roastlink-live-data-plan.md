@@ -809,71 +809,133 @@ is checked out. Guard before every deploy:
 
 ---
 
-## NEXT SESSION — equipment field + temperature phase ladder
+## DENSITY PASS — done 2026-08-31 (PR #12, awaiting localhost review)
 
-These two are one piece of work: both add to the roast record, both need
-History to render new data, both must stay compatible with existing roasts.
+The instrument was **607px in a 603px window**: it missed fitting by a hair, so
+every zone had been shaved to make five fit and the payoff was never delivered.
+Of the curve zone's 298px, ~50px was restatement (two identical x-axes 80px
+apart, plus a legend row), none of it plot pixels.
 
-**1. Equipment field.** A roaster/tube selector in session setup: SR540 bare,
-OEM extension tube, V5T Razzo. Wanted for two real reasons, neither of them a
-display toggle: it drives the 315F preheat warning Case asked for, and it
-records which tube a roast used, without which History comparisons mislead
-(the tube materially changes the curve).
+The old note's leading hypothesis named the right zone but the wrong cause. The
+panels were not too short; they were over-chromed. **607px -> 578px running,
+clearing the nav by 25px, with no plot pixels lost and no zone removed.**
 
-Deliberately NOT wired to rail-versus-curve visibility. That already keys off
-whether a probe is actually streaming, which is ground truth; a dropdown is a
-claim that can disagree with reality (pick Razzo, forget the bridge, get
-neither rail nor chart). Collapsing the curve already brings the rail back in
-one tap. Revisit only after a few real roasts.
+Three things measurement turned up that were not in the hypotheses:
 
-**2. Temperature-driven phase ladder.** Auto-log phases from live BT:
-Charge, Turnaround (the BT dip minimum, detected), Maillard Approach 280F,
-Maillard Phase 305F, Caramelization Approach 330F, Caramelization Phase 340F,
-FC Approach 375F, then First Crack (stays manual, it is heard, and it starts
-the dev timer) and Cool.
+- **A latent alignment bug.** The temp panel carries a right-hand RoR axis and
+  the control map did not, so their plot areas differed by 40px and the two
+  time scales never lined up. Harmless while each drew its own ruler; a
+  correctness problem the moment one ruler serves both. Fixed with a
+  counterweight axis.
+- **The floating adjustment button was sitting on top of PAUSE.** It opens the
+  same popup as a dial tap, so it now appears only once the real controls
+  scroll away (IntersectionObserver, not a scroll listener).
+- **The RoR axis was printing unrounded floats** ("489.5999").
 
-Three things to settle before building:
-- **What happens to `YELLOWING`?** Every existing roast stores that label and
-  the new ladder has no such stage; Maillard Phase at 305F is roughly where
-  yellowing shows. Decide which name is canonical going forward, with History
-  still rendering the old label for old roasts. No migration either way.
-- **Real log entries or chart annotations?** A roast logs 3 phase entries
-  today; the ladder would write 7 automatically and swamp the History timeline.
-  Suggest logging them flagged auto so the timeline can collapse them.
-- **Approaches are not phases.** 280/330/375 are heads-ups; 305/340/FC/Cool are
-  boundaries. Nine nodes will not fit a phone rail. Suggest phases become bands
-  and rail nodes, approaches become transient alerts that flash and clear, and
-  turnaround becomes a marker on the curve.
+Phase names moved off the plot into a **16px ribbon** above it. In-plot labels
+sat at the band's top-left, which is exactly where the y-axis ticks are, and any
+band under 20% of the window dropped its label entirely -- so on a full-roast
+view DEV and COOL went unnamed, in the mode where the name matters most. The
+ribbon fit-tests each name against its measured segment width and shows colour
+alone rather than truncating.
 
-## OPEN DESIGN NOTE — the instrument is still too tight
+## DECISIONS SETTLED 2026-08-31
 
-Verified working on real hardware 2026-08-29. Case's read: it works well, but
-the UI is "still a little smooshed and could use some work". Deferred, not
-dismissed.
+**Phase vs moment.** A PHASE is a span: shaded band + ribbon segment, width means
+duration. A MOMENT is an instant: a dot on the curve and a Roast Timeline row,
+nothing else. Measured on a real-shaped roast, only 2 of 9 ladder tags fit as
+bands -- the approaches came out as 10-19px slivers -- because Charge,
+Turnaround and the three Approaches have no duration. Forcing a moment into a
+span is the category error that produced them.
 
-Nothing here is diagnosed yet, so start the next pass by pinning down WHICH
-zone feels tight rather than uniformly adding padding. Best current guesses,
-in order:
+| PHASES (bands) | Boundary |
+|---|---|
+| Drying | Charge -> 305F |
+| Maillard | 305F -> 340F |
+| Caramelization | 340F -> First Crack |
+| Development | First Crack -> Drop |
 
-- **The curve is carrying the squeeze.** Its two panels are 132px and 94px in
-  `LiveRoastChart.jsx` under `attached`, chosen to make five zones fit a 390px
-  phone. That is the number most likely to feel cramped, and the one hardest to
-  give back without reintroducing a scroll.
-- **Five zones may be one too many.** Dials and the milestone buttons both want
-  vertical room. Worth testing whether the dials can share a row with something
-  or shrink to values plus tick bars without the label line.
-- **Zone padding is uniform** (roughly 13px) where it probably should not be.
-  The chrono row can afford less, the buttons more.
+| MOMENTS (dots) | When |
+|---|---|
+| Turnaround | detected BT dip minimum |
+| Yellowing | MANUAL, when Case presses it |
+| Maillard approach | 280F |
+| Caramelization approach | 330F |
+| First crack approach | 375F |
 
-The honest option to keep on the table: if it cannot be made to breathe at five
-zones, the answer is fewer zones, not smaller type. Removing the option beats
-shrinking the polish.
+First Crack and Drop are both a dot and a band edge.
+
+**No Cooling phase.** The SR540 runs its own 3-minute cool cycle after the drop
+and there is nothing worth tracking in it. DROP ends the tracked data, so the
+chart stops growing there rather than trailing a flat tail while the timer runs
+on to the save screen.
+
+**YELLOWING is a moment, not a boundary.** Case marks it by eye and the press
+timestamps it; he wants it for cross-roast comparison on the same bean. It no
+longer opens the Maillard band -- 305F does.
+
+**Backwards compatibility: Maillard falls back to the Yellowing mark.** It opens
+at the 305F crossing when one was logged, and at the YELLOWING entry when none
+was. Every roast already in History renders exactly as it did, probe-less manual
+roasts keep working, and no migration or re-save is needed.
+
+**Acronyms are a chart-only concern.** Charts show short tags; anywhere with room
+shows the full word. Labels are STORED in full (`MAILLARD APPROACH`,
+`CARAMELIZATION`, ...) because the Roast Timeline renders `entry.label` directly.
+The chart maps them via `PHASE_TAGS` / `PHASE_NAMES` in `LiveRoastChart.jsx`.
+The tooltip prints the full name (`06:28 · Maillard`, or the moment when scanning
+near a dot), which makes it the key for the ribbon's acronyms.
+
+**Ladder entries are ordinary phase entries, unflagged.**
+
+**The phase rail keeps today's behaviour** -- it renders only when the curve is
+not on screen, keying off whether data is actually arriving rather than off the
+equipment dropdown, which is a claim that can disagree with reality.
+
+## NEXT SESSION — equipment field
+
+The temperature phase ladder is BUILT (2026-08-31, PR #12). What remains:
+
+**Equipment field.** A roaster/tube selector in session setup: SR540 bare, OEM
+extension tube, V5T Razzo. It drives the 315F preheat warning, and it records
+which tube a roast used, without which History comparisons mislead (the tube
+materially changes the curve). Deliberately NOT wired to rail-versus-curve
+visibility -- see the rail decision above.
+
+**Ladder follow-ups, not yet done:**
+- The History roast-detail chart (`RoastCurveChart.jsx`) does not yet draw the
+  moment dots or the four-phase bands; only the live chart does. Saved roasts
+  DO carry the entries, and the Roast Timeline shows them, so nothing is lost --
+  the History chart just does not visualise them yet.
+- Turnaround detection guards are first-pass: it ignores the first 10s, looks
+  only inside the first 4 minutes, and needs a 5F rise off the low before it
+  commits. Wants checking against a few real roasts.
+- Approaches fire once, on a rising crossing only. If BT dips back below a
+  threshold and re-crosses, nothing re-fires. That is intended; confirm it
+  matches how Case reads them.
+
+## PLAYWRIGHT BASELINES — action needed on Case's machine
+
+**The v3.4.0 instrument rebuild shipped without regenerating a single
+snapshot** (`git show --stat b411eb2 | grep -c snapshots` -> 0). The roast-tab
+baselines were last updated at `885a0cd`, before the rebuild, so they still
+expect a `PHASE MILESTONES` section the app no longer has. Six tests have been
+failing since v3.4.0 for that reason and will fail on any machine.
+
+Fix is `npx playwright test --update-snapshots` on Case's machine, after
+reviewing the density pass. Do NOT regenerate baselines from a cloud container:
+a further eight failures there are 2-pixel height differences from that
+container's font rendering, and Playwright rejects on size mismatch before
+`maxDiffPixelRatio` can apply, so committing those would bake foreign rendering
+into the repo.
 
 ## KNOWN GAPS (found during the dry run, not yet fixed)
 
-- **The live curve does not survive a page reload.** `curveRef` is a React ref,
-  so a refresh mid-roast empties the curve while the timer restores from
-  localStorage. On a real roast a browser reload would silently lose the curve.
+- ~~**The live curve does not survive a page reload.**~~ FIXED 2026-08-31
+  (PR #12). The curve persists under `live_curve` alongside the other
+  in-progress keys, written every 5th sample with a `pagehide` /
+  `visibilitychange` flush for the tail. The `live_` prefix means
+  `enforceLocalDataOwner`'s account-switch purge already covers it.
 - **A pause collapses samples onto one second.** Capture correctly continues
   through a pause, but `elapsedSeconds` is frozen, so every incoming sample
   overwrites the same bucket.
@@ -884,6 +946,5 @@ shrinking the polish.
   `localStorage.removeItem("roastlogs_e2e"); location.reload();`
   Worth a visible "E2E BYPASS ACTIVE" banner so it can never masquerade as a
   normal session.
-- **`CLAUDE.md` still imports `@.claude/case-profile/00-04`**, deleted in the
-  privacy rewrite. The SessionStart hook points at nothing; preferences do not
-  survive between sessions. Point it at `.claude/working-agreement.md`.
+- ~~**`CLAUDE.md` still imports `@.claude/case-profile/00-04`**~~ FIXED -- it
+  now imports `.claude/working-agreement.md`.

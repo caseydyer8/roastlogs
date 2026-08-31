@@ -751,13 +751,87 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
   );
 }
 
+// The in-progress roast curve is persisted alongside the other live_* keys so
+// a mid-roast page reload does not lose it. ~1 sample/second, so a 12-minute
+// roast is on the order of 700 points -- comfortably inside localStorage.
+// ---------------------------------------------------------------------------
+// Temperature phase ladder.
+//
+// PHASES are spans: they open a shaded band on the curve and a segment on the
+// phase ribbon, and their width means duration. MOMENTS are instants: a dot on
+// the curve and a row in the Roast Timeline, nothing more. The distinction is
+// not cosmetic -- giving a moment a band renders it as a ~10px sliver that can
+// never hold its own name, which is exactly what the ribbon measurements showed.
+//
+// Labels are stored in FULL, because the Roast Timeline renders entry.label
+// directly and Case wants words there. The charts map these to short tags via
+// PHASE_TAGS in LiveRoastChart.jsx. Store full, abbreviate at the chart edge.
+//
+// Every threshold fires at most once per roast (logMilestone is idempotent on
+// the label) and only on a RISING crossing while the roast is actually running.
+const LADDER_STEPS = [
+  { label: "MAILLARD APPROACH", f: 280, kind: "moment" },
+  { label: "MAILLARD", f: 305, kind: "phase" },
+  { label: "CARAMELIZATION APPROACH", f: 330, kind: "moment" },
+  { label: "CARAMELIZATION", f: 340, kind: "phase" },
+  { label: "FC APPROACH", f: 375, kind: "moment" },
+];
+
+// Turnaround: the bean mass pulls chamber heat down off the charge, so BT falls
+// then climbs. The dip minimum is the turning point roasters actually use.
+// Guards, because a thermocouple settling in the first seconds looks exactly
+// like a dip: ignore the first few seconds, require a real rise off the low
+// before calling it, and stop looking once the window has passed.
+const TURNAROUND_MIN_T = 10;      // seconds; skip the probe settling
+const TURNAROUND_WINDOW = 240;    // seconds; a turning point never comes later
+const TURNAROUND_RISE_F = 5;      // degrees above the low before it counts
+
+const LIVE_CURVE_KEY = "live_curve";
+
+function readStoredCurve() {
+  try {
+    const raw = localStorage.getItem(LIVE_CURVE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Defensive: a half-written or hand-edited value must not crash the chart.
+    return parsed.filter(
+      (pt) => pt && typeof pt.t === "number" && typeof pt.bt === "number"
+    );
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeStoredCurve(curve) {
+  try {
+    localStorage.setItem(LIVE_CURVE_KEY, JSON.stringify(curve));
+  } catch (e) {
+    // A full quota must never take down a roast in progress.
+  }
+}
+
 function App() {
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
   const liveRoast = useLiveRoast();
-  const curveRef = React.useRef([]); // live bean-temp curve for the roast in progress
-  const [curvePointCount, setCurvePointCount] = React.useState(0);
+  // Live bean-temp curve for the roast in progress. Hydrated from localStorage
+  // rather than starting empty: everything else about an in-progress roast
+  // (elapsed time, roastLog, milestones) already survives a reload, and a ref
+  // that did not meant a browser refresh mid-roast silently emptied the curve
+  // while the clock carried on. The saved roast would then be missing its
+  // temperature trace with nothing on screen to say so.
+  const curveRef = React.useRef(readStoredCurve());
+  const [curvePointCount, setCurvePointCount] = React.useState(() => curveRef.current.length);
   const [liveChartOpen, setLiveChartOpen] = React.useState(false);
+
+  // The floating adjustment button opens the same pre-filled popup as tapping a
+  // Fan/Heat/Temp dial, so while the dials and run controls are actually on
+  // screen it is a duplicate that sits on top of PAUSE. It earns its place only
+  // once those controls have scrolled away, which is what this watches.
+  // IntersectionObserver rather than a scroll listener: no work per frame.
+  const thumbZoneRef = React.useRef(null);
+  const [thumbZoneVisible, setThumbZoneVisible] = React.useState(true);
   // "scroll" = trailing 3-minute window (pannable); "expand" = whole roast so
   // far. Both are built so the better one can be chosen from real use.
   const [liveChartWindow, setLiveChartWindow] = React.useState("scroll");
@@ -1343,13 +1417,33 @@ function App() {
     return () => window.clearInterval(id);
   }, [isDevTimerRunning, isTimerRunning]);
 
+  // Log a phase entry at a specific second rather than "now". Turnaround needs
+  // this: it is only recognisable once BT has climbed back off the low, but it
+  // BELONGS at the low, several seconds earlier. Entries stay newest-first, so
+  // insert by timestamp rather than unshifting blindly.
+  const logMilestoneAt = (label, t) => {
+    if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
+    setRoastLog((prev) => {
+      if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
+      const entry = { type: "phase", label, t };
+      const idx = prev.findIndex((e) => Number(e && e.t) <= t);
+      if (idx === -1) return [...prev, entry];
+      return [...prev.slice(0, idx), entry, ...prev.slice(idx)];
+    });
+  };
+
   const logMilestone = (label) => {
     // A logged milestone is done — ignore re-taps. The amber-filled button reads like a
     // toggle, and a duplicate FIRST CRACK would also reset firstCrackTime while the DEV
     // counter keeps running, corrupting the saved dev time.
     if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
 
-    setRoastLog((prev) => [{ type: 'phase', label, t: elapsedSeconds }, ...prev]);
+    // The state updater re-checks: the ladder can evaluate several samples
+    // before a re-render lands, and the guard above still sees the stale array.
+    setRoastLog((prev) => {
+      if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
+      return [{ type: 'phase', label, t: elapsedSeconds }, ...prev];
+    });
     
     if (label === "FIRST CRACK") {
       setIsDevTimerRunning(true);
@@ -1394,6 +1488,8 @@ function App() {
     if (!roastStarted) {
       curveRef.current = [];
       setCurvePointCount(0);
+      writeStoredCurve([]);
+      turnaroundLowRef.current = null;
       if (profile) {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
@@ -1440,6 +1536,7 @@ function App() {
     };
     curveRef.current = [];
     setCurvePointCount(0);
+    writeStoredCurve([]);
 
     const existingRoasts = [];
     try {
@@ -1516,6 +1613,17 @@ function App() {
   const curveVisible =
     liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only");
 
+  React.useEffect(() => {
+    const el = thumbZoneRef.current;
+    if (!el) { setThumbZoneVisible(false); return; }
+    const io = new IntersectionObserver(
+      ([entry]) => setThumbZoneVisible(entry.isIntersecting),
+      { threshold: 0.6 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isTimerRunning, roastStarted]);
+
   // Recording gate: capture live bean temp into the curve ONLY between START
   // and COOLING START. RoastLogs owns the window; the bridge merely streams,
   // and nothing is persisted until the roast is saved. Bucketing by whole
@@ -1532,8 +1640,68 @@ function App() {
     } else {
       buf.push({ t: sec, bt });
       setCurvePointCount(buf.length);
+      // Persist every 5th point rather than every one: a reload can then cost
+      // at most ~5s of trace, while a 700-point stringify stays off the hot
+      // path during a roast. The unload handler below covers the tail.
+      if (buf.length % 5 === 0) writeStoredCurve(buf);
     }
   }, [liveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
+
+  // Temperature ladder: auto-log threshold crossings from live BT. Gated to a
+  // running roast between START and DROP, same window as curve recording -- a
+  // paused roast is still hot, but its timestamps are frozen, so a crossing
+  // logged then would carry a misleading t.
+  const turnaroundLowRef = React.useRef(null);
+  const prevBtRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!roastStarted || coolingStartTime || !isTimerRunning) {
+      prevBtRef.current = null;
+      return;
+    }
+    const bt = liveRoast.bt;
+    if (typeof bt !== "number") return;
+    const prevBt = prevBtRef.current;
+    prevBtRef.current = bt;
+
+    // A threshold fires only on a genuine RISING crossing -- previous sample
+    // below it, this one at or above. Testing `bt >= f` alone would dump all
+    // five entries at the current second the moment a bridge connects partway
+    // through a roast already at 400F, stamping them with times the roast never
+    // passed through. With no previous sample there is no crossing to see, so
+    // nothing fires until the next one.
+    if (prevBt != null) {
+      LADDER_STEPS.forEach((step) => {
+        if (prevBt < step.f && bt >= step.f) logMilestone(step.label);
+      });
+    }
+
+    // Turnaround, tracked against the running low rather than a fixed rule, so
+    // it lands on the actual minimum instead of the first sample past it.
+    if (elapsedSeconds >= TURNAROUND_MIN_T && elapsedSeconds <= TURNAROUND_WINDOW) {
+      const low = turnaroundLowRef.current;
+      if (low == null || bt < low.bt) {
+        turnaroundLowRef.current = { bt, t: elapsedSeconds };
+      } else if (bt >= low.bt + TURNAROUND_RISE_F) {
+        logMilestoneAt("TURNAROUND", low.t);
+      }
+    }
+  }, [liveRoast.latest, liveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
+
+  // Flush the tail of the curve when the page is going away. pagehide is the
+  // event that actually fires on mobile Safari (beforeunload does not), and
+  // visibilitychange covers the app being backgrounded mid-roast.
+  React.useEffect(() => {
+    const flush = () => {
+      if (curveRef.current.length) writeStoredCurve(curveRef.current);
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, []);
 
   // Open the adjustment logger. Fan/Heat prefill from the last logged values (they are
   // dial STATES — carry-forward is truth), but Temp always opens BLANK: it is a fresh
@@ -1891,7 +2059,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.4.0",
+        appVersion: "3.5.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -2075,7 +2243,7 @@ function App() {
                 derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
             <section className="overflow-hidden rounded-3xl border border-border/60 bg-surface/30 divide-y divide-border/50">
 
-              <div className="p-4">
+              <div className="px-4 pb-3 pt-3.5">
                 <div className="flex items-end justify-between gap-3">
               <div className="flex min-w-0 flex-col items-start gap-1 text-left">
                 <div className="flex items-center gap-2">
@@ -2105,13 +2273,22 @@ function App() {
                   {formatTime(elapsedSeconds)}
                 </div>
 
-                {(beanName || roastStarted) && (
+                {(beanName || (roastStarted && !curveVisible)) && (
                   <div className="flex flex-wrap items-center gap-2">
                     {beanName && <span className="font-cond text-[15px] font-bold text-ink">{beanName}</span>}
-                    {(() => {
+                    {/* The curve's phase ribbon names the current phase whenever it is
+                        on screen, so this pill would say the same word twice, 200px
+                        apart. It stays for the probe-less case, where the ribbon
+                        never renders. */}
+                    {!curveVisible && (() => {
+                      const marked = (l) => (roastLog || []).some((e) => e.type === "phase" && e.label === l);
+                      // Same boundaries the curve uses, including the fallback to
+                      // the Yellowing mark when no 305F crossing was recorded --
+                      // otherwise the pill and the ribbon name different phases.
                       const phase = coolingStartTime !== null ? "Cooling"
                         : firstCrackTime !== null ? "Development"
-                        : (roastLog || []).some((e) => e.type === "phase" && e.label === "YELLOWING") ? "Maillard"
+                        : marked("CARAMELIZATION") ? "Caramelization"
+                        : marked("MAILLARD") || marked("YELLOWING") ? "Maillard"
                         : roastStarted ? "Drying" : null;
                       return phase ? (
                         <span className="rounded-full border border-accent/40 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-text">
@@ -2153,7 +2330,7 @@ function App() {
 
               {/* Segmented Fan · Heat · Temp dials — tap any to log an adjustment */}
               {(roastStarted || isTimerRunning) && (
-                <div className="px-1 py-2">
+                <div className="px-1 py-3">
                   <div className="grid grid-cols-3 divide-x divide-border/50">
                   <button
                     type="button"
@@ -2164,7 +2341,7 @@ function App() {
                     <div className="mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums text-ink">{latestLogged.fan || "—"}</div>
                     <div className="mt-1.5 flex justify-center gap-[3px]">
                       {Array.from({ length: 9 }).map((_, i) => (
-                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.fan || 0) ? "bg-accent" : "bg-card"}`} />
+                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.fan || 0) ? "bg-chart-fan" : "bg-card"}`} />
                       ))}
                     </div>
                   </button>
@@ -2177,7 +2354,7 @@ function App() {
                     <div className="mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums text-ink">{latestLogged.heat || "—"}</div>
                     <div className="mt-1.5 flex justify-center gap-[3px]">
                       {Array.from({ length: 9 }).map((_, i) => (
-                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.heat || 0) ? "bg-accent" : "bg-card"}`} />
+                        <span key={i} className={`h-3 w-[5px] rounded-sm ${i < Number(latestLogged.heat || 0) ? "bg-chart-heat" : "bg-card"}`} />
                       ))}
                     </div>
                   </button>
@@ -2264,22 +2441,22 @@ function App() {
                   : null;
                 const runPrimary = !isTimerRunning; // Start/Resume leads when not running
                 return (
-                  <div className="grid gap-2.5 p-3">
+                  <div ref={thumbZoneRef} className="flex gap-2.5 px-3 pb-3.5 pt-3">
                     {isTimerRunning && next && (
                       <button
                         type="button"
                         onClick={() => logMilestone(next.label)}
-                        className="flex items-center justify-center gap-2 rounded-2xl bg-accent px-4 py-3.5 font-cond text-base font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+                        className="flex min-w-0 flex-[2] items-center justify-center gap-1.5 rounded-2xl bg-accent px-3 py-3.5 font-cond text-[15px] font-bold uppercase tracking-[0.04em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
                       >
-                        <span className="h-2 w-2 rounded-full bg-zinc-950/70" />
-                        Mark {next.text}
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-950/70" />
+                        <span className="truncate">Mark {next.text}</span>
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={isTimerRunning ? handlePause : handleStart}
                       className={[
-                        "rounded-2xl px-4 py-3.5 font-cond text-base font-bold uppercase tracking-[0.08em] transition active:scale-[0.99]",
+                        "min-w-0 flex-1 rounded-2xl px-3 py-3.5 font-cond text-[15px] font-bold uppercase tracking-[0.04em] transition active:scale-[0.99]",
                         runPrimary
                           ? "bg-accent text-zinc-950 shadow-sm hover:brightness-110"
                           : "border border-border/70 bg-primary/30 text-ink hover:bg-surface/50",
@@ -2441,8 +2618,10 @@ function App() {
               </div>
             </section>
 
-            {/* Floating Adjustment Log Button — second entry to the same pre-filled popup */}
-            {isTimerRunning && (
+            {/* Floating Adjustment Log Button — second entry to the same pre-filled
+                popup, shown only while the real controls are scrolled out of
+                view. On screen together it covered PAUSE. */}
+            {isTimerRunning && !thumbZoneVisible && (
               <button
                 type="button"
                 onClick={() => openAdjPopup(null)}
@@ -4894,7 +5073,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.4.0</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.5.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
