@@ -809,7 +809,7 @@ is checked out. Guard before every deploy:
 
 ---
 
-## DENSITY PASS — done 2026-08-31 (PR #12, awaiting localhost review)
+## DENSITY PASS — SHIPPED in v3.5.0, 2026-08-31
 
 The instrument was **607px in a 603px window**: it missed fitting by a hair, so
 every zone had been shaved to make five fit and the payoff was never delivered.
@@ -892,9 +892,9 @@ near a dot), which makes it the key for the ribbon's acronyms.
 not on screen, keying off whether data is actually arriving rather than off the
 equipment dropdown, which is a claim that can disagree with reality.
 
-## NEXT SESSION — equipment field
+## STILL UNBUILT — equipment field
 
-The temperature phase ladder is BUILT (2026-08-31, PR #12). What remains:
+The temperature phase ladder SHIPPED in v3.5.0 (2026-08-31). What remains:
 
 **Equipment field.** A roaster/tube selector in session setup: SR540 bare, OEM
 extension tube, V5T Razzo. It drives the 315F preheat warning, and it records
@@ -914,7 +914,84 @@ visibility -- see the rail decision above.
   threshold and re-crosses, nothing re-fires. That is intended; confirm it
   matches how Case reads them.
 
-## PLAYWRIGHT BASELINES — action needed on Case's machine
+## SESSION PIN — 2026-08-31, stopped clean
+
+**Where we stopped.** v3.5.0 shipped and verified live: bundle
+`main.f60e2005.js` -> `main.929346fc.js`, `3.5.0` in the shipped JS, `3.4.0`
+gone, gh-pages `e0ae528`. Playwright baselines regenerated on Case's machine,
+**38/38 passing**. Nothing half-finished.
+
+**Exact next step on return.** Make the History roast-detail chart
+(`RoastCurveChart.jsx`) mirror the live instrument. Full plan below.
+
+**Fragile / don't forget.** The live chart and the History chart now describe
+the same roast with **different vocabularies and different colours**. Live uses
+the four-phase ladder with semantic phase tokens; History still uses the old
+three-band model with three hardcoded hexes. Until they are unified, the same
+roast looks like two different roasts depending on which screen you open.
+
+## NEXT — mirror the live chart in History
+
+`src/components/charts/RoastCurveChart.jsx`. Deliberately a separate component
+from `LiveRoastChart` (that one renders a growing buffer with a moving now-edge;
+this one renders a finished roast), and that separation should stay. What must
+NOT stay separate is the vocabulary.
+
+**What is wrong today, found 2026-08-31:**
+
+1. **Three hardcoded hexes** at lines ~320/322/325: `#f59e0b` amber, `#22c55e`
+   green, `#a78bfa` violet. These are theme-blind -- they do not respond to the
+   light/dark toggle at all, which violates the project's colour-token rule --
+   and they do not match the live chart's phase tints, so Drying is amber on one
+   screen and warm grey on the other.
+2. **Still the pre-ladder three-band model**: `YELLOWING` / `FIRST CRACK` /
+   `COOLING START` only. No Maillard-at-305F, no Caramelization, and it still
+   draws a cooling band that the live chart no longer has.
+3. **In-plot phase labels** (`phaseLabelContent`) -- the same pattern removed
+   from the live chart because labels collide with the y-axis ticks.
+4. **Five `ResponsiveContainer`s, two sharing `xAxisProps`** -- check whether the
+   stacked panels duplicate a time ruler the way the live chart did, and whether
+   their plot widths differ (the live chart's panels were 40px apart because one
+   carried a right-hand RoR axis and the other did not).
+
+**Order of work:**
+
+1. **Extract the shared vocabulary first**, before touching anything visual.
+   `PHASE_TAGS`, `PHASE_NAMES`, `PHASE_VAR`, `MOMENT_LABELS` and the boundary
+   resolution (including the Maillard-falls-back-to-Yellowing rule) currently
+   live inside `LiveRoastChart.jsx`. Move them to something like
+   `src/lib/roastPhases.js` and have both charts import it. Duplicating them is
+   how the two screens drift apart again a month from now.
+2. Replace the three hexes with the phase tokens. Both themes come free.
+3. Adopt the four-phase model + the Yellowing fallback. Drop the cooling band.
+4. Add the phase ribbon above the plot.
+5. Add moment dots. `ReferenceDot` is already imported here.
+6. Delete the in-plot phase labels; the ribbon replaces them.
+7. Tooltip names the phase, and the moment when scanning near a dot.
+
+**Gotchas specific to History:**
+
+- **History is always full-roast** -- there is no 3-minute window to fall back
+  on, so it is the WORST case for ribbon fit, not the average one. Measured on a
+  312px lane, five spans come out around 24-30px against a 24-30px need. Tight.
+  Re-measure rather than assuming the live chart's numbers carry over.
+- **The fallback path is the COMMON case here, not the exception.** Every roast
+  saved before 2026-08-31 has a `YELLOWING` entry and no `MAILLARD` entry, so
+  History will almost always be rendering via the fallback. Test that path
+  first, not last.
+- **Some saved roasts have no `curve` at all** (anything pre-RoastLink). Moment
+  dots must no-op cleanly, and the bands must still render from log entries
+  alone.
+- `roast.curve` IS available on newer saved roasts, so a 305F crossing could be
+  derived retroactively -- but Case explicitly chose the Yellowing fallback over
+  backfilling saved data. Do not quietly turn this into a backfill.
+- This will change the History screenshots, so budget a
+  `npx playwright test --update-snapshots` run on Case's machine afterwards.
+
+Also still unbuilt: the **equipment field** (SR540 bare / OEM extension tube /
+V5T Razzo), specified above.
+
+## PLAYWRIGHT BASELINES — CLEARED 2026-08-31 (38/38 passing)
 
 **The v3.4.0 instrument rebuild shipped without regenerating a single
 snapshot** (`git show --stat b411eb2 | grep -c snapshots` -> 0). The roast-tab
@@ -922,11 +999,12 @@ baselines were last updated at `885a0cd`, before the rebuild, so they still
 expect a `PHASE MILESTONES` section the app no longer has. Six tests have been
 failing since v3.4.0 for that reason and will fail on any machine.
 
-Fix is `npx playwright test --update-snapshots` on Case's machine, after
-reviewing the density pass. Do NOT regenerate baselines from a cloud container:
-a further eight failures there are 2-pixel height differences from that
-container's font rendering, and Playwright rejects on size mismatch before
-`maxDiffPixelRatio` can apply, so committing those would bake foreign rendering
+Regenerated on Case's machine at `17bb14a` -- 6 files, and the suite now runs
+**38/38 green**. Note for next time: the eight OTHER failures seen in the cloud
+container were 2-pixel height differences from that container's font rendering
+and passed fine locally, which is why baselines must never be regenerated from a
+container. Playwright rejects on size mismatch before `maxDiffPixelRatio` can
+apply, so a 2px delta fails hard and committing it would bake foreign rendering
 into the repo.
 
 ## KNOWN GAPS (found during the dry run, not yet fixed)
