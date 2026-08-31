@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
 } from "recharts";
 
@@ -37,8 +38,8 @@ const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 const PHASE_TAGS = {
   drying: "DRY",
   maillard: "MAI",
+  caramelization: "CAR",
   development: "DEV",
-  cooling: "COOL",
 };
 
 // Acronyms belong on the charts, where space is the constraint. Everywhere with
@@ -47,8 +48,22 @@ const PHASE_TAGS = {
 const PHASE_NAMES = {
   drying: "Drying",
   maillard: "Maillard",
+  caramelization: "Caramelization",
   development: "Development",
-  cooling: "Cooling",
+};
+
+// Moments are instants, not spans: a dot on the curve and a Roast Timeline row.
+// They never get a band -- a zero-length event forced into a span renders as a
+// ~10px sliver that cannot hold its own name. The tooltip names them, which is
+// why no text is drawn beside the dot.
+const MOMENT_LABELS = {
+  TURNAROUND: "Turnaround",
+  YELLOWING: "Yellowing",
+  "MAILLARD APPROACH": "Maillard approach",
+  "CARAMELIZATION APPROACH": "Caramelization approach",
+  "FC APPROACH": "First crack approach",
+  "FIRST CRACK": "First crack",
+  "COOLING START": "Drop",
 };
 
 // One tint per phase, shared by the ribbon segment and the shaded band beneath
@@ -60,7 +75,6 @@ const PHASE_VAR = {
   maillard: "--phase-mai",
   caramelization: "--phase-car",
   development: "--phase-dev",
-  cooling: "--phase-cool",
 };
 const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
 const ROR_SMOOTH = 4;       // +/- seconds of moving average
@@ -84,7 +98,16 @@ const stepSeconds = (step) =>
 // overlay, carry-forward dials, phase boundaries) can be verified headlessly
 // rather than only by eyeballing a chart.
 export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, elapsedSeconds = 0 }) {
-    const total = Math.max(elapsedSeconds, curve.length ? curve[curve.length - 1].t : 0, 1);
+    // Drop ends the tracked roast. The SR540 runs its own 3-minute cool cycle
+    // afterwards and there is nothing worth charting in it, so once DROP is
+    // logged the chart stops growing instead of trailing a flat empty tail
+    // while the timer runs on to the save screen.
+    const dropAt = (() => {
+      const e = roastLog.find((x) => x && x.type === "phase" && x.label === "COOLING START");
+      return e ? Number(e.t) : null;
+    })();
+    const rawTotal = Math.max(elapsedSeconds, curve.length ? curve[curve.length - 1].t : 0, 1);
+    const total = dropAt != null ? Math.max(dropAt, 1) : rawTotal;
 
     // Phase boundaries from the roast log.
     const phaseAt = (label) => {
@@ -93,7 +116,22 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     };
     const yellowing = phaseAt("YELLOWING");
     const firstCrack = phaseAt("FIRST CRACK");
-    const cooling = phaseAt("COOLING START");
+    const drop = phaseAt("COOLING START");
+
+    // Maillard opens at the 305F crossing the ladder logged. Falls back to the
+    // Yellowing mark when there is none, which is what every roast saved before
+    // the ladder existed has, and what a probe-less manual roast still produces.
+    // So old roasts render exactly as they always did, and no migration is
+    // needed -- only a live probe roast gets the temperature-accurate boundary.
+    const maillard = phaseAt("MAILLARD") ?? yellowing;
+    const caramelization = phaseAt("CARAMELIZATION");
+
+    // Moments: instants worth a dot. Drawn only where the curve actually has a
+    // reading at that second, so a probe-less roast quietly shows none.
+    const moments = roastLog
+      .filter((e) => e && e.type === "phase" && MOMENT_LABELS[e.label])
+      .map((e) => ({ label: e.label, name: MOMENT_LABELS[e.label], t: Number(e.t) }))
+      .filter((m) => Number.isFinite(m.t));
 
     // Actual Fan/Heat, carried forward from logged adjustments.
     const events = roastLog
@@ -160,7 +198,7 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       data[t].ror = n ? Math.round((sum / n) * 10) / 10 : null;
     }
 
-    return { data, total, yellowing, firstCrack, cooling, lastBt, hasProfile: steps.length > 0 };
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0 };
 }
 
 export default function LiveRoastChart({
@@ -209,7 +247,7 @@ export default function LiveRoastChart({
     [curve, roastLog, profile, elapsedSeconds]
   );
 
-  const { data, total, yellowing, firstCrack, cooling, hasProfile } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile } = model;
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
@@ -219,9 +257,9 @@ export default function LiveRoastChart({
   }, [windowMode, total, panOffset]);
 
   // Which phase is happening right now -- this is the band that gets lit up.
-  const currentPhase = cooling != null ? "cooling"
-    : firstCrack != null ? "development"
-    : yellowing != null ? "maillard"
+  const currentPhase = firstCrack != null ? "development"
+    : caramelization != null ? "caramelization"
+    : maillard != null ? "maillard"
     : "drying";
 
   // Phase bands shade the plot to show each phase's real DURATION, which four
@@ -246,17 +284,33 @@ export default function LiveRoastChart({
   };
 
   const now = Math.max(elapsedSeconds, total);
+  // Where the tracked roast stops: the drop if there is one, otherwise the
+  // moving live edge.
+  const end = drop != null ? drop : now;
 
   // Which phase a given second falls in, for the tooltip header. Read from the
   // same boundaries the bands and ribbon use, so the three can never disagree.
   const phaseNameAt = (t) => {
-    if (cooling != null && t >= cooling) return PHASE_NAMES.cooling;
     if (firstCrack != null && t >= firstCrack) return PHASE_NAMES.development;
-    if (yellowing != null && t >= yellowing) return PHASE_NAMES.maillard;
+    if (caramelization != null && t >= caramelization) return PHASE_NAMES.caramelization;
+    if (maillard != null && t >= maillard) return PHASE_NAMES.maillard;
     if (t >= 0) return PHASE_NAMES.drying;
     return null;
   };
+  // A moment within a few seconds of the scan point wins the header: that is
+  // the question being asked when you put a finger on a dot. Otherwise the
+  // header names the phase this second falls in.
+  const momentNear = (t) => {
+    let best = null;
+    for (const m of moments) {
+      const d = Math.abs(m.t - t);
+      if (d <= 4 && (!best || d < Math.abs(best.t - t))) best = m;
+    }
+    return best;
+  };
   const tooltipLabel = (v) => {
+    const m = momentNear(v);
+    if (m) return `${fmt(v)} · ${m.name}`;
     const name = phaseNameAt(v);
     return name ? `${fmt(v)} · ${name}` : fmt(v);
   };
@@ -269,11 +323,13 @@ export default function LiveRoastChart({
   //
   // Geometry note: the segments must line up with the plot area, not the
   // container, so the lane is inset by the two y-axis widths below.
+  // Four spans. No Cooling band: the roaster runs its own cool cycle after the
+  // drop and there is nothing to track in it, so DROP is where the data ends.
   const phases = [
-    { tag: PHASE_TAGS.drying, from: 0, to: yellowing ?? now, key: "drying" },
-    { tag: PHASE_TAGS.maillard, from: yellowing, to: firstCrack ?? now, key: "maillard" },
-    { tag: PHASE_TAGS.development, from: firstCrack, to: cooling ?? now, key: "development" },
-    { tag: PHASE_TAGS.cooling, from: cooling, to: cooling != null ? now : null, key: "cooling" },
+    { tag: PHASE_TAGS.drying, from: 0, to: maillard ?? end, key: "drying" },
+    { tag: PHASE_TAGS.maillard, from: maillard, to: caramelization ?? firstCrack ?? end, key: "maillard" },
+    { tag: PHASE_TAGS.caramelization, from: caramelization, to: firstCrack ?? end, key: "caramelization" },
+    { tag: PHASE_TAGS.development, from: firstCrack, to: end, key: "development" },
   ];
   const span = domain[1] - domain[0];
   const segments = phases
@@ -419,10 +475,30 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying", "drying")}
-          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard", "maillard")}
-          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development", "development")}
-          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling", "cooling")}
+          {phases.map((p) =>
+            band(p.from, p.to, `b-${p.key}`, currentPhase === p.key, p.key)
+          )}
+          {/* Moments: a dot on the curve at the reading it happened at. No text
+              label -- Case reads the mark itself, and the tooltip names it on a
+              scan. Rendered only where the curve has a value at that second, so
+              a probe-less roast shows none rather than dots pinned at zero. */}
+          {moments.map((m) => {
+            const pt = data[Math.round(m.t)];
+            if (!pt || pt.temp == null) return null;
+            return (
+              <ReferenceDot
+                key={`m-${m.label}`}
+                x={m.t}
+                y={pt.temp}
+                yAxisId="temp"
+                r={3.5}
+                fill="rgb(var(--bg-surface))"
+                stroke="rgb(var(--chart-temp))"
+                strokeWidth={2}
+                isFront
+              />
+            );
+          })}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={tooltipLabel}

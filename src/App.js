@@ -754,6 +754,38 @@ function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCa
 // The in-progress roast curve is persisted alongside the other live_* keys so
 // a mid-roast page reload does not lose it. ~1 sample/second, so a 12-minute
 // roast is on the order of 700 points -- comfortably inside localStorage.
+// ---------------------------------------------------------------------------
+// Temperature phase ladder.
+//
+// PHASES are spans: they open a shaded band on the curve and a segment on the
+// phase ribbon, and their width means duration. MOMENTS are instants: a dot on
+// the curve and a row in the Roast Timeline, nothing more. The distinction is
+// not cosmetic -- giving a moment a band renders it as a ~10px sliver that can
+// never hold its own name, which is exactly what the ribbon measurements showed.
+//
+// Labels are stored in FULL, because the Roast Timeline renders entry.label
+// directly and Case wants words there. The charts map these to short tags via
+// PHASE_TAGS in LiveRoastChart.jsx. Store full, abbreviate at the chart edge.
+//
+// Every threshold fires at most once per roast (logMilestone is idempotent on
+// the label) and only on a RISING crossing while the roast is actually running.
+const LADDER_STEPS = [
+  { label: "MAILLARD APPROACH", f: 280, kind: "moment" },
+  { label: "MAILLARD", f: 305, kind: "phase" },
+  { label: "CARAMELIZATION APPROACH", f: 330, kind: "moment" },
+  { label: "CARAMELIZATION", f: 340, kind: "phase" },
+  { label: "FC APPROACH", f: 375, kind: "moment" },
+];
+
+// Turnaround: the bean mass pulls chamber heat down off the charge, so BT falls
+// then climbs. The dip minimum is the turning point roasters actually use.
+// Guards, because a thermocouple settling in the first seconds looks exactly
+// like a dip: ignore the first few seconds, require a real rise off the low
+// before calling it, and stop looking once the window has passed.
+const TURNAROUND_MIN_T = 10;      // seconds; skip the probe settling
+const TURNAROUND_WINDOW = 240;    // seconds; a turning point never comes later
+const TURNAROUND_RISE_F = 5;      // degrees above the low before it counts
+
 const LIVE_CURVE_KEY = "live_curve";
 
 function readStoredCurve() {
@@ -1385,13 +1417,33 @@ function App() {
     return () => window.clearInterval(id);
   }, [isDevTimerRunning, isTimerRunning]);
 
+  // Log a phase entry at a specific second rather than "now". Turnaround needs
+  // this: it is only recognisable once BT has climbed back off the low, but it
+  // BELONGS at the low, several seconds earlier. Entries stay newest-first, so
+  // insert by timestamp rather than unshifting blindly.
+  const logMilestoneAt = (label, t) => {
+    if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
+    setRoastLog((prev) => {
+      if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
+      const entry = { type: "phase", label, t };
+      const idx = prev.findIndex((e) => Number(e && e.t) <= t);
+      if (idx === -1) return [...prev, entry];
+      return [...prev.slice(0, idx), entry, ...prev.slice(idx)];
+    });
+  };
+
   const logMilestone = (label) => {
     // A logged milestone is done — ignore re-taps. The amber-filled button reads like a
     // toggle, and a duplicate FIRST CRACK would also reset firstCrackTime while the DEV
     // counter keeps running, corrupting the saved dev time.
     if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
 
-    setRoastLog((prev) => [{ type: 'phase', label, t: elapsedSeconds }, ...prev]);
+    // The state updater re-checks: the ladder can evaluate several samples
+    // before a re-render lands, and the guard above still sees the stale array.
+    setRoastLog((prev) => {
+      if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
+      return [{ type: 'phase', label, t: elapsedSeconds }, ...prev];
+    });
     
     if (label === "FIRST CRACK") {
       setIsDevTimerRunning(true);
@@ -1437,6 +1489,7 @@ function App() {
       curveRef.current = [];
       setCurvePointCount(0);
       writeStoredCurve([]);
+      turnaroundLowRef.current = null;
       if (profile) {
         setProfileFollowing(profile);
         setCurrentProfileStepIdx(-1);
@@ -1593,6 +1646,46 @@ function App() {
       if (buf.length % 5 === 0) writeStoredCurve(buf);
     }
   }, [liveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
+
+  // Temperature ladder: auto-log threshold crossings from live BT. Gated to a
+  // running roast between START and DROP, same window as curve recording -- a
+  // paused roast is still hot, but its timestamps are frozen, so a crossing
+  // logged then would carry a misleading t.
+  const turnaroundLowRef = React.useRef(null);
+  const prevBtRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!roastStarted || coolingStartTime || !isTimerRunning) {
+      prevBtRef.current = null;
+      return;
+    }
+    const bt = liveRoast.bt;
+    if (typeof bt !== "number") return;
+    const prevBt = prevBtRef.current;
+    prevBtRef.current = bt;
+
+    // A threshold fires only on a genuine RISING crossing -- previous sample
+    // below it, this one at or above. Testing `bt >= f` alone would dump all
+    // five entries at the current second the moment a bridge connects partway
+    // through a roast already at 400F, stamping them with times the roast never
+    // passed through. With no previous sample there is no crossing to see, so
+    // nothing fires until the next one.
+    if (prevBt != null) {
+      LADDER_STEPS.forEach((step) => {
+        if (prevBt < step.f && bt >= step.f) logMilestone(step.label);
+      });
+    }
+
+    // Turnaround, tracked against the running low rather than a fixed rule, so
+    // it lands on the actual minimum instead of the first sample past it.
+    if (elapsedSeconds >= TURNAROUND_MIN_T && elapsedSeconds <= TURNAROUND_WINDOW) {
+      const low = turnaroundLowRef.current;
+      if (low == null || bt < low.bt) {
+        turnaroundLowRef.current = { bt, t: elapsedSeconds };
+      } else if (bt >= low.bt + TURNAROUND_RISE_F) {
+        logMilestoneAt("TURNAROUND", low.t);
+      }
+    }
+  }, [liveRoast.latest, liveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
 
   // Flush the tail of the curve when the page is going away. pagehide is the
   // event that actually fires on mobile Safari (beforeunload does not), and
@@ -2188,9 +2281,14 @@ function App() {
                         apart. It stays for the probe-less case, where the ribbon
                         never renders. */}
                     {!curveVisible && (() => {
+                      const marked = (l) => (roastLog || []).some((e) => e.type === "phase" && e.label === l);
+                      // Same boundaries the curve uses, including the fallback to
+                      // the Yellowing mark when no 305F crossing was recorded --
+                      // otherwise the pill and the ribbon name different phases.
                       const phase = coolingStartTime !== null ? "Cooling"
                         : firstCrackTime !== null ? "Development"
-                        : (roastLog || []).some((e) => e.type === "phase" && e.label === "YELLOWING") ? "Maillard"
+                        : marked("CARAMELIZATION") ? "Caramelization"
+                        : marked("MAILLARD") || marked("YELLOWING") ? "Maillard"
                         : roastStarted ? "Drying" : null;
                       return phase ? (
                         <span className="rounded-full border border-accent/40 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-text">

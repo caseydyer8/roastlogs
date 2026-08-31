@@ -841,70 +841,78 @@ alone rather than truncating.
 
 ## DECISIONS SETTLED 2026-08-31
 
-**Acronyms are a chart-only concern.** Charts show short tags; anywhere with
-room shows the full word. The Roast Timeline renders `entry.label` directly, so
-this works as long as the ladder **stores full labels** and only the chart maps
-them. That mapping is `PHASE_TAGS` / `PHASE_NAMES` in `LiveRoastChart.jsx`. The
-chart tooltip prints the full name (`06:28 · Maillard`), which makes it the key
-for the ribbon's acronyms.
+**Phase vs moment.** A PHASE is a span: shaded band + ribbon segment, width means
+duration. A MOMENT is an instant: a dot on the curve and a Roast Timeline row,
+nothing else. Measured on a real-shaped roast, only 2 of 9 ladder tags fit as
+bands -- the approaches came out as 10-19px slivers -- because Charge,
+Turnaround and the three Approaches have no duration. Forcing a moment into a
+span is the category error that produced them.
 
-**YELLOWING stays manual and stays canonical.** Case marks it by eye, and the
-press timestamps it. It is a visual observation he wants for cross-roast
-comparison once he has more roasts on the same bean. **Maillard at 305F is a
-SEPARATE, additional auto point** -- not a rename, not a replacement. The two
-coexist, so there is no History compatibility problem and no migration.
+| PHASES (bands) | Boundary |
+|---|---|
+| Drying | Charge -> 305F |
+| Maillard | 305F -> 340F |
+| Caramelization | 340F -> First Crack |
+| Development | First Crack -> Drop |
 
-**Ladder entries are ordinary phase entries, unflagged.** They land in the
-Roast Timeline like any other.
+| MOMENTS (dots) | When |
+|---|---|
+| Turnaround | detected BT dip minimum |
+| Yellowing | MANUAL, when Case presses it |
+| Maillard approach | 280F |
+| Caramelization approach | 330F |
+| First crack approach | 375F |
 
-**Spans get bands; moments get dots.** Measured on a real-shaped 11-minute
-roast at 390px, only **2 of 9** ladder tags fit as ribbon segments (3 of 9 on
-desktop): the approaches come out as 10-19px slivers. The reason is a category
-distinction -- Charge, Turnaround, and the three Approaches are *moments*, not
-phases; they have no duration, and a 10px band is what a zero-length event
-looks like forced into a span. So:
-- **Ribbon segments** (spans): Drying, Maillard, Caramelization, Development,
-  Cool. All fit and stay named at every width.
-- **Dot markers on the curve** (moments): Charge, Turnaround, Maillard
-  Approach 280F, Caramelization Approach 330F, FC Approach 375F. No always-on
-  text -- Case reads the mark itself. Tapping or hovering a dot names it, and
-  the scan tooltip names the phase at that point.
+First Crack and Drop are both a dot and a band edge.
+
+**No Cooling phase.** The SR540 runs its own 3-minute cool cycle after the drop
+and there is nothing worth tracking in it. DROP ends the tracked data, so the
+chart stops growing there rather than trailing a flat tail while the timer runs
+on to the save screen.
+
+**YELLOWING is a moment, not a boundary.** Case marks it by eye and the press
+timestamps it; he wants it for cross-roast comparison on the same bean. It no
+longer opens the Maillard band -- 305F does.
+
+**Backwards compatibility: Maillard falls back to the Yellowing mark.** It opens
+at the 305F crossing when one was logged, and at the YELLOWING entry when none
+was. Every roast already in History renders exactly as it did, probe-less manual
+roasts keep working, and no migration or re-save is needed.
+
+**Acronyms are a chart-only concern.** Charts show short tags; anywhere with room
+shows the full word. Labels are STORED in full (`MAILLARD APPROACH`,
+`CARAMELIZATION`, ...) because the Roast Timeline renders `entry.label` directly.
+The chart maps them via `PHASE_TAGS` / `PHASE_NAMES` in `LiveRoastChart.jsx`.
+The tooltip prints the full name (`06:28 · Maillard`, or the moment when scanning
+near a dot), which makes it the key for the ribbon's acronyms.
+
+**Ladder entries are ordinary phase entries, unflagged.**
 
 **The phase rail keeps today's behaviour** -- it renders only when the curve is
-not on screen, which in practice means no probe streaming. It keys off whether
-data is actually arriving, not off the equipment dropdown, which is a claim that
-can disagree with reality.
+not on screen, keying off whether data is actually arriving rather than off the
+equipment dropdown, which is a claim that can disagree with reality.
 
-**Acronyms (Case's, 2026-08-31).** Charge `CHA`, Turnaround `TURN`, Maillard
-Approach 280F `MAIA`, Caramelization Approach 330F `CARA`, Caramelization Phase
-340F `CAR`, FC Approach 375F `FCA`, First Crack `FC`, Cool `COOL`. Current
-shipped spans use `DRY` / `MAI` / `DEV` / `COOL`.
+## NEXT SESSION — equipment field
 
-## NEXT SESSION — equipment field + temperature phase ladder
+The temperature phase ladder is BUILT (2026-08-31, PR #12). What remains:
 
-Still to build. Both add to the roast record; both need History to stay
-compatible with existing roasts. The three blocking questions are now answered
-above.
-
-**1. Equipment field.** A roaster/tube selector in session setup: SR540 bare,
-OEM extension tube, V5T Razzo. It drives the 315F preheat warning, and it
-records which tube a roast used, without which History comparisons mislead (the
-tube materially changes the curve). Deliberately NOT wired to rail-versus-curve
+**Equipment field.** A roaster/tube selector in session setup: SR540 bare, OEM
+extension tube, V5T Razzo. It drives the 315F preheat warning, and it records
+which tube a roast used, without which History comparisons mislead (the tube
+materially changes the curve). Deliberately NOT wired to rail-versus-curve
 visibility -- see the rail decision above.
 
-**2. Temperature-driven phase ladder.** Auto-log from live BT: Charge,
-Turnaround (BT dip minimum, detected), Maillard Approach 280F, Maillard Phase
-305F, Caramelization Approach 330F, Caramelization Phase 340F, FC Approach
-375F, then First Crack (stays manual -- it is heard, and it starts the dev
-timer) and Cool.
-
-Open sub-questions for the build:
-- Turnaround detection needs a settled rule (first local minimum after charge,
-  with a noise guard) so it does not fire on probe jitter in the first seconds.
-- Approaches firing once vs re-firing if BT dips back below the threshold.
-- Whether the ribbon's Caramelization span needs its own boundary in the
-  existing four-band model, which currently goes straight from Maillard to
-  Development at First Crack.
+**Ladder follow-ups, not yet done:**
+- The History roast-detail chart (`RoastCurveChart.jsx`) does not yet draw the
+  moment dots or the four-phase bands; only the live chart does. Saved roasts
+  DO carry the entries, and the Roast Timeline shows them, so nothing is lost --
+  the History chart just does not visualise them yet.
+- Turnaround detection guards are first-pass: it ignores the first 10s, looks
+  only inside the first 4 minutes, and needs a 5F rise off the low before it
+  commits. Wants checking against a few real roasts.
+- Approaches fire once, on a rising crossing only. If BT dips back below a
+  threshold and re-crosses, nothing re-fires. That is intended; confirm it
+  matches how Case reads them.
 
 ## PLAYWRIGHT BASELINES — action needed on Case's machine
 
