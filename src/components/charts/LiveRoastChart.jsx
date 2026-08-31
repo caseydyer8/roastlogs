@@ -30,6 +30,16 @@ import {
 // ---------------------------------------------------------------------------
 
 const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
+
+// Short names for the phase ribbon. Kept in one place because the ribbon lane
+// is narrow: these want to stay 3-4 characters so a short phase still shows a
+// readable name rather than a bare colour block.
+const PHASE_TAGS = {
+  drying: "DRY",
+  maillard: "MAI",
+  development: "DEV",
+  cooling: "COOL",
+};
 const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
 const ROR_SMOOTH = 4;       // +/- seconds of moving average
 
@@ -143,6 +153,18 @@ export default function LiveRoastChart({
   const [panOffset, setPanOffset] = React.useState(0); // seconds scrolled back from live
   const following = panOffset === 0;
 
+  // Rendered width of the phase-ribbon lane, so a segment too narrow for its
+  // name shows colour alone instead of a truncated word.
+  const ribbonRef = React.useRef(null);
+  const [ribbonWidth, setRibbonWidth] = React.useState(0);
+  React.useEffect(() => {
+    const el = ribbonRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setRibbonWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   const model = React.useMemo(
     () => buildLiveChartModel({ curve, roastLog, profile, elapsedSeconds }),
     [curve, roastLog, profile, elapsedSeconds]
@@ -163,19 +185,14 @@ export default function LiveRoastChart({
     : yellowing != null ? "maillard"
     : "drying";
 
-  // Phase bands carry their own name and start time, which is what retired the
-  // separate phase rail. A band's WIDTH is the phase's real duration, so this
-  // says strictly more than four evenly spaced nodes ever could.
-  //
-  // The label sits at the band's top-left, which is the one corner guaranteed to
-  // be clear: at the moment a phase begins the curve is at its lowest point for
-  // that phase, so it is always well below the label.
-  const band = (from, to, key, active, tag) => {
+  // Phase bands shade the plot to show each phase's real DURATION, which four
+  // evenly spaced rail nodes never could. They carry no text: the name lives in
+  // the ribbon above the plot instead. In-plot labels sat at the band's
+  // top-left, which is exactly where the y-axis ticks are, and any band under
+  // 20% of the window dropped its label entirely -- so on a full-roast view DEV
+  // and COOL went unnamed, in the mode where the name matters most.
+  const band = (from, to, key, active) => {
     if (from == null || to == null || to <= from) return null;
-    // Skip the label on a band too narrow to hold it, otherwise adjacent labels
-    // collide the instant a milestone is logged and the new band is one pixel wide.
-    const span = domain[1] - domain[0];
-    const wideEnough = span > 0 && (to - from) / span >= 0.2;
     return (
       <ReferenceArea
         key={key}
@@ -185,24 +202,46 @@ export default function LiveRoastChart({
         fill={active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"}
         fillOpacity={active ? 0.16 : 0.07}
         stroke="none"
-        label={wideEnough && tag ? {
-          value: `${tag} ${fmt(from)}`,
-          position: "insideTopLeft",
-          offset: 5,
-          fontSize: 8.5,
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          letterSpacing: "0.1em",
-          fill: active ? "rgb(var(--accent-text))" : "rgb(var(--chart-tick))",
-        } : undefined}
       />
     );
   };
 
   const now = Math.max(elapsedSeconds, total);
 
+  // Phase ribbon -- a dedicated lane above the plot carrying the phase names.
+  // Its own row is the whole point: a name here can never collide with the
+  // curve, the y-axis ticks, or the next phase's name, so every phase stays
+  // named at every window width instead of dropping out when its band is
+  // narrow. Segment WIDTH still reads as duration, same as the bands below.
+  //
+  // Geometry note: the segments must line up with the plot area, not the
+  // container, so the lane is inset by the two y-axis widths below.
+  const phases = [
+    { tag: PHASE_TAGS.drying, from: 0, to: yellowing ?? now, key: "drying" },
+    { tag: PHASE_TAGS.maillard, from: yellowing, to: firstCrack ?? now, key: "maillard" },
+    { tag: PHASE_TAGS.development, from: firstCrack, to: cooling ?? now, key: "development" },
+    { tag: PHASE_TAGS.cooling, from: cooling, to: cooling != null ? now : null, key: "cooling" },
+  ];
+  const span = domain[1] - domain[0];
+  const segments = phases
+    .map((p) => {
+      if (p.from == null || p.to == null || p.to <= p.from) return null;
+      // Clamp into the visible window; a phase that started before it still
+      // shows, anchored at the left edge.
+      const a = Math.max(p.from, domain[0]);
+      const b = Math.min(p.to, domain[1]);
+      if (span <= 0 || b <= a) return null;
+      const left = ((a - domain[0]) / span) * 100;
+      const width = ((b - a) / span) * 100;
+      // ~6px per character at 8.5px mono, plus the 8px of horizontal padding.
+      const fits = ribbonWidth > 0 && (width / 100) * ribbonWidth >= p.tag.length * 6 + 8;
+      return { ...p, left, width, fits, active: currentPhase === p.key };
+    })
+    .filter(Boolean);
+
   return (
     <div className={attached
-      ? "px-2 pb-2 pt-3"
+      ? "px-2 pb-3 pt-3"
       : "mt-3 rounded-2xl border border-border/60 bg-card p-3"}>
       {/* Window controls */}
       <div className="mb-2 flex items-center justify-between">
@@ -254,8 +293,42 @@ export default function LiveRoastChart({
         </div>
       </div>
 
-      {/* Temp + RoR */}
-      <ResponsiveContainer width="100%" height={attached ? 132 : 150}>
+      {/* Phase ribbon. Inset by the two y-axis widths (42 left, 40 right) so the
+          segments sit exactly over the plot area they describe. The right inset
+          is 44, not 40: the RoR axis is 40 wide and the chart carries a further
+          4px right margin. Measured against the rendered grid, not guessed. */}
+      {segments.length > 0 && (
+        <div className="mb-1 flex h-4 overflow-hidden rounded-[3px]" style={{ marginLeft: 42, marginRight: 44 }}>
+          <div ref={ribbonRef} className="relative w-full">
+            {segments.map((seg) => (
+              <div
+                key={seg.key}
+                className={`absolute inset-y-0 flex items-center justify-center overflow-hidden ${
+                  seg.active ? "bg-accent/25" : "bg-border/40"
+                }`}
+                style={{ left: `${seg.left}%`, width: `${seg.width}%` }}
+                title={`${seg.tag} ${fmt(seg.from)}`}
+              >
+                {seg.fits && (
+                  <span
+                    className={`px-1 font-mono text-[8.5px] uppercase tracking-[0.1em] ${
+                      seg.active ? "text-accent-text" : "text-ink-muted"
+                    }`}
+                  >
+                    {seg.tag}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Temp + RoR. Its x-axis is hidden: the control map directly below shares
+          this exact domain and carries the one time ruler for both panels.
+          Two identical rulers 80px apart was the single biggest piece of
+          restatement in this zone. */}
+      <ResponsiveContainer width="100%" height={attached ? 116 : 134}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.35} vertical={false} />
           <XAxis
@@ -263,10 +336,9 @@ export default function LiveRoastChart({
             type="number"
             domain={domain}
             allowDataOverflow
-            tickFormatter={fmt}
+            tick={false}
+            height={2}
             stroke="rgb(var(--border-color))"
-            fontSize={9}
-            tick={{ fill: "rgb(var(--chart-tick))" }}
           />
           <YAxis
             yAxisId="temp"
@@ -286,15 +358,18 @@ export default function LiveRoastChart({
             yAxisId="ror"
             orientation="right"
             width={40}
-            domain={[0, (max) => Math.max(10, max * 1.2)]}
+            // Rounded up to a whole 10: the raw max * 1.2 printed ticks like
+            // "489.5999" against the container edge.
+            domain={[0, (max) => Math.max(10, Math.ceil((max * 1.2) / 10) * 10)]}
+            allowDecimals={false}
             stroke="rgb(var(--border-color))"
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying", "DRY")}
-          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard", "MAILLARD")}
-          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development", "DEV")}
-          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling", "COOL")}
+          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying")}
+          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard")}
+          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development")}
+          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling")}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={(v) => fmt(v)}
@@ -307,8 +382,8 @@ export default function LiveRoastChart({
       </ResponsiveContainer>
 
       {/* Control map: actual vs planned */}
-      <ResponsiveContainer width="100%" height={attached ? 94 : 108}>
-        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 14, left: 0 }}>
+      <ResponsiveContainer width="100%" height={attached ? 90 : 104}>
+        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 10, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.3} vertical={false} />
           <XAxis dataKey="t" type="number" domain={domain} allowDataOverflow tickFormatter={fmt} stroke="rgb(var(--border-color))" fontSize={9} tick={{ fill: "rgb(var(--chart-tick))" }} />
           <YAxis
@@ -320,6 +395,11 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
+          {/* Invisible counterweight to the temp panel's right-hand RoR axis.
+              Without it this panel's plot area is 40px wider than the one above,
+              the two time scales disagree, and the shared ruler below lies about
+              the curve. */}
+          <YAxis yAxisId="dial-spacer" orientation="right" width={40} tick={false} axisLine={false} />
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={(v) => fmt(v)}
@@ -337,14 +417,6 @@ export default function LiveRoastChart({
         </ComposedChart>
       </ResponsiveContainer>
 
-      {/* Legend */}
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] uppercase tracking-wider text-ink-muted">
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-temp))" }} />Temp &deg;F</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-ror))" }} />RoR &deg;/min</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-fan))" }} />Fan</span>
-        <span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: "rgb(var(--chart-heat))" }} />Heat <span className="opacity-60">dial 1-9</span></span>
-        {hasProfile && <span className="opacity-70">dashed = plan</span>}
-      </div>
     </div>
   );
 }
