@@ -33,6 +33,17 @@
   --chart-temp: 217 125 61;     /* #d97d3d ember (the hero line) */
   --chart-grid: 53 44 36;       /* #352c24 */
   --chart-tick: 169 156 142;    /* #a99c8e */
+
+  /* Phase tints. The roast runs cool-to-hot, so these walk the existing palette
+     in that order rather than introducing new hues: parchment air -> pale gold
+     -> ember -> terracotta fire, then violet for the cool-down. Used by BOTH
+     the chart's phase ribbon and the shaded band under the curve, so the two
+     read as the same object. */
+  --phase-dry: 169 156 142;     /* #a99c8e warm grey  - before the sugars move */
+  --phase-mai: 217 201 163;     /* #d9c9a3 parchment  - yellowing colour */
+  --phase-car: 217 125 61;      /* #d97d3d ember      - caramelising */
+  --phase-dev: 208 101 74;      /* #d0654a terracotta - hottest stretch */
+  --phase-cool: 184 160 214;    /* #b8a0d6 violet     - off the heat */
 }
 
 [data-theme="light"] {
@@ -60,4 +71,11 @@
   --chart-temp: 194 96 31;      /* #c2601f ember */
   --chart-grid: 220 216 209;    /* #dcd8d1 */
   --chart-tick: 116 106 95;     /* #746a5f */
+
+  /* Same walk, darkened so each tint holds its own against paper. */
+  --phase-dry: 116 106 95;      /* #746a5f */
+  --phase-mai: 125 106 74;      /* #7d6a4a */
+  --phase-car: 194 96 31;       /* #c2601f */
+  --phase-dev: 182 74 51;       /* #b64a33 */
+  --phase-cool: 122 90 168;     /* #7a5aa8 */
 }

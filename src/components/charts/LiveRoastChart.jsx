@@ -50,6 +50,18 @@ const PHASE_NAMES = {
   development: "Development",
   cooling: "Cooling",
 };
+
+// One tint per phase, shared by the ribbon segment and the shaded band beneath
+// it so the two read as the same object. Previously every band used the same
+// grey at 0.07 and only the active one differed, which on a dark ground made
+// the phases indistinguishable in the plot.
+const PHASE_VAR = {
+  drying: "--phase-dry",
+  maillard: "--phase-mai",
+  caramelization: "--phase-car",
+  development: "--phase-dev",
+  cooling: "--phase-cool",
+};
 const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
 const ROR_SMOOTH = 4;       // +/- seconds of moving average
 
@@ -167,6 +179,23 @@ export default function LiveRoastChart({
   // name shows colour alone instead of a truncated word.
   const ribbonRef = React.useRef(null);
   const [ribbonWidth, setRibbonWidth] = React.useState(0);
+
+  // Measure the tag for real rather than estimating ~6px per character. The
+  // estimate was pessimistic by a couple of pixels, which is the whole margin
+  // on a short phase: a 45-second DEV band at the end of a roast came out at
+  // 24px against a 25.9px estimate and lost its name for no reason.
+  const measureRef = React.useRef(null);
+  const tagWidth = React.useCallback((tag) => {
+    if (!measureRef.current) {
+      if (typeof document === "undefined") return tag.length * 6;
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (!ctx) return tag.length * 6;
+      ctx.font = "8.5px ui-monospace, SFMono-Regular, monospace";
+      measureRef.current = ctx;
+    }
+    // measureText does not know about letter-spacing, so add it back: 0.1em.
+    return measureRef.current.measureText(tag).width + tag.length * 0.85;
+  }, []);
   React.useEffect(() => {
     const el = ribbonRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -201,7 +230,7 @@ export default function LiveRoastChart({
   // top-left, which is exactly where the y-axis ticks are, and any band under
   // 20% of the window dropped its label entirely -- so on a full-roast view DEV
   // and COOL went unnamed, in the mode where the name matters most.
-  const band = (from, to, key, active) => {
+  const band = (from, to, key, active, phaseKey) => {
     if (from == null || to == null || to <= from) return null;
     return (
       <ReferenceArea
@@ -209,8 +238,8 @@ export default function LiveRoastChart({
         x1={from}
         x2={to}
         yAxisId="temp"
-        fill={active ? "rgb(var(--accent-fill))" : "rgb(var(--border-color))"}
-        fillOpacity={active ? 0.16 : 0.07}
+        fill={`rgb(var(${PHASE_VAR[phaseKey] || "--border-color"}))`}
+        fillOpacity={active ? 0.2 : 0.1}
         stroke="none"
       />
     );
@@ -257,8 +286,7 @@ export default function LiveRoastChart({
       if (span <= 0 || b <= a) return null;
       const left = ((a - domain[0]) / span) * 100;
       const width = ((b - a) / span) * 100;
-      // ~6px per character at 8.5px mono, plus the 8px of horizontal padding.
-      const fits = ribbonWidth > 0 && (width / 100) * ribbonWidth >= p.tag.length * 6 + 8;
+      const fits = ribbonWidth > 0 && (width / 100) * ribbonWidth >= tagWidth(p.tag) + 6;
       return { ...p, left, width, fits, active: currentPhase === p.key };
     })
     .filter(Boolean);
@@ -327,17 +355,18 @@ export default function LiveRoastChart({
             {segments.map((seg) => (
               <div
                 key={seg.key}
-                className={`absolute inset-y-0 flex items-center justify-center overflow-hidden ${
-                  seg.active ? "bg-accent/25" : "bg-border/40"
-                }`}
-                style={{ left: `${seg.left}%`, width: `${seg.width}%` }}
+                className="absolute inset-y-0 flex items-center justify-center overflow-hidden"
+                style={{
+                  left: `${seg.left}%`,
+                  width: `${seg.width}%`,
+                  background: `rgb(var(${PHASE_VAR[seg.key] || "--border-color"}) / ${seg.active ? 0.42 : 0.2})`,
+                }}
                 title={`${seg.tag} ${fmt(seg.from)}`}
               >
                 {seg.fits && (
                   <span
-                    className={`px-1 font-mono text-[8.5px] uppercase tracking-[0.1em] ${
-                      seg.active ? "text-accent-text" : "text-ink-muted"
-                    }`}
+                    className="px-[3px] font-mono text-[8.5px] uppercase tracking-[0.1em]"
+                    style={{ color: `rgb(var(${PHASE_VAR[seg.key] || "--chart-tick"}))` }}
                   >
                     {seg.tag}
                   </span>
@@ -390,10 +419,10 @@ export default function LiveRoastChart({
             fontSize={9}
             tick={{ fill: "rgb(var(--chart-tick))" }}
           />
-          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying")}
-          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard")}
-          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development")}
-          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling")}
+          {band(0, yellowing ?? now, "b-dry", currentPhase === "drying", "drying")}
+          {band(yellowing, firstCrack ?? now, "b-mail", currentPhase === "maillard", "maillard")}
+          {band(firstCrack, cooling ?? now, "b-dev", currentPhase === "development", "development")}
+          {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling", "cooling")}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={tooltipLabel}
