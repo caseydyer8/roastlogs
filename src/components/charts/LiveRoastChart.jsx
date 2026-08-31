@@ -40,6 +40,16 @@ const PHASE_TAGS = {
   development: "DEV",
   cooling: "COOL",
 };
+
+// Acronyms belong on the charts, where space is the constraint. Everywhere with
+// room -- the tooltip here, the Roast Timeline over in App.js -- says the full
+// word, so the tooltip doubles as the key for the ribbon's short tags.
+const PHASE_NAMES = {
+  drying: "Drying",
+  maillard: "Maillard",
+  development: "Development",
+  cooling: "Cooling",
+};
 const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
 const ROR_SMOOTH = 4;       // +/- seconds of moving average
 
@@ -208,6 +218,20 @@ export default function LiveRoastChart({
 
   const now = Math.max(elapsedSeconds, total);
 
+  // Which phase a given second falls in, for the tooltip header. Read from the
+  // same boundaries the bands and ribbon use, so the three can never disagree.
+  const phaseNameAt = (t) => {
+    if (cooling != null && t >= cooling) return PHASE_NAMES.cooling;
+    if (firstCrack != null && t >= firstCrack) return PHASE_NAMES.development;
+    if (yellowing != null && t >= yellowing) return PHASE_NAMES.maillard;
+    if (t >= 0) return PHASE_NAMES.drying;
+    return null;
+  };
+  const tooltipLabel = (v) => {
+    const name = phaseNameAt(v);
+    return name ? `${fmt(v)} · ${name}` : fmt(v);
+  };
+
   // Phase ribbon -- a dedicated lane above the plot carrying the phase names.
   // Its own row is the whole point: a name here can never collide with the
   // curve, the y-axis ticks, or the next phase's name, so every phase stays
@@ -372,7 +396,7 @@ export default function LiveRoastChart({
           {cooling != null && band(cooling, now, "b-cool", currentPhase === "cooling")}
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
-            labelFormatter={(v) => fmt(v)}
+            labelFormatter={tooltipLabel}
             formatter={(v, n) => [v, n]}
           />
           <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} />
@@ -402,7 +426,7 @@ export default function LiveRoastChart({
           <YAxis yAxisId="dial-spacer" orientation="right" width={40} tick={false} axisLine={false} />
           <Tooltip
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
-            labelFormatter={(v) => fmt(v)}
+            labelFormatter={tooltipLabel}
           />
           {/* Planned first, so actual draws on top of its target. */}
           {hasProfile && (
