@@ -1,62 +1,52 @@
 # Open actions — read at session start
 
-> Case's standing instruction, recorded 2026-08-31. Surfaced automatically by
-> the `SessionStart` hook in `.claude/settings.json`. **Delete or rewrite this
-> file once the sequence below is done** — a stale open-action file is worse
-> than none.
+> Surfaced automatically by the `SessionStart` hook in `.claude/settings.json`.
+> **Delete this file once the sequence below is done** — a stale open-action
+> file is worse than none.
 
-## Case's requested opening sequence
+## Where PR #13 stands (updated 2026-09-03)
 
-He asked, in his own words, to be told at the start of the next session:
+Case answered the (a)/(b) question: **(b) — build the History work onto this
+branch first**, so PR #13 is a real change rather than a docs pin. That is done.
+It now carries:
 
-1. **"We are ready to test on PR #13"** — say this first, before anything else.
-2. Then **run the security agent** (`security-auditor`).
-3. Then **merge, deploy, publish** (`/release` handles the three-place version
-   bump; the deploy must run on Case's machine, never from a cloud container —
-   the Supabase keys live only in his gitignored `.env`, and a build without
-   them publishes a keyless bundle that locks both accounts out of the live
-   site).
+1. The v3.5.0 session pin and the History plan (docs).
+2. Three defects Case found across two live roasts on 2026-09-02: the drifting
+   dev timer, the duplicate `00:00` row, and missing temperatures on markers,
+   moments and profile rows.
+3. The shared phase vocabulary extracted to `src/lib/roastPhases.js`.
+4. The History roast-detail chart mirroring the live instrument.
 
-## One thing to raise with him before step 1
+## What is left, in order
 
-**PR #13 as it stands is docs-only** — a single markdown file, the v3.5.0
-session pin plus the History-chart plan. There is nothing in it to functionally
-test, and a security pass over a docs diff will find nothing, because it touches
-no auth, sync, RLS or Supabase code.
+1. **Case reviews on localhost.** Not yet done. `git pull` the branch, then
+   `npm start`; the bridge mock is `bridge/ npm run mock` with the bridge app
+   pointed at `127.0.0.1:8081`.
+2. **Run the `security-auditor` agent** — Case asked for this pass explicitly.
+   Note honestly what it did and did not cover: this branch touches charts,
+   timers and timeline rendering, not auth, sync, RLS or Supabase, so treat it
+   as a periodic audit rather than a gate on this diff.
+3. **Regenerate the Playwright baselines on Case's machine**:
+   `npx playwright test --update-snapshots`. The History chart and roast tab
+   genuinely look different now. Never regenerate from a cloud container.
+4. **Merge, then `/release`, then deploy.** The deploy runs on Case's machine
+   only: his gitignored `.env` holds the Supabase keys, and a build without them
+   publishes a keyless bundle that locks both accounts out of the live site.
+   Guard before deploying: `node -p "require('./package.json').version"` and
+   confirm the deploy log reads `roastlogs@<expected> deploy`.
 
-So confirm which he meant:
+## Things Case should be told, not left to discover
 
-- **(a)** Merge PR #13 as-is now (it is green and needs no ceremony), and apply
-  the test -> security -> merge -> deploy sequence to the *next* piece of real
-  work; or
-- **(b)** Build the History chart work onto that same branch first, so PR #13
-  becomes a real change worth testing, securing and shipping.
+- **Dev time now freezes on a pause** rather than counting on. That is what
+  makes the Roast tab and History agree, but beans keep roasting through a
+  pause.
+- **Two e2e assertions were changed, not dropped.** Both asserted the in-plot
+  "FC" divider pill that the ribbon retires; they now assert the ribbon, so the
+  intent — the chart NAMES its phases — is preserved.
+- The duplicate `00:00` fix is **forward-only** by Case's decision. The two
+  roasts from 2026-09-02 keep their duplicate row.
 
-Ask; do not guess. Under either reading the security pass is worth running as a
-**periodic audit** rather than as a gate on this diff — that is a legitimate use
-of the agent, and Case asked for it, so run it either way. Just be honest about
-what it did and did not cover.
+## Still unbuilt after this
 
-## The actual next build, whichever way he answers
-
-`docs/roastlink-live-data-plan.md` -> **"NEXT — mirror the live chart in
-History"**. Short version: `RoastCurveChart.jsx` still runs the pre-ladder
-three-band model and hardcodes `#f59e0b` / `#22c55e` / `#a78bfa`, which are
-theme-blind and match nothing in the live palette, so the same roast shows
-different colours depending on which screen you open it from.
-
-**Lead by extracting the shared vocabulary** (`PHASE_TAGS`, `PHASE_NAMES`,
-`PHASE_VAR`, `MOMENT_LABELS`, and the Maillard-falls-back-to-Yellowing boundary
-rule) out of `LiveRoastChart.jsx` into one module both charts import — before
-the visible colour swap. Duplicating those is how the two screens drifted apart
-in the first place.
-
-Also still unbuilt: the **equipment field** (SR540 bare / OEM extension tube /
-V5T Razzo).
-
-## Where the build stands
-
-v3.5.0 shipped and verified live on 2026-08-31: bundle `main.f60e2005.js` ->
-`main.929346fc.js`, `3.5.0` in the shipped JS, `3.4.0` gone, gh-pages
-`e0ae528`. Playwright suite **38/38 green** after baselines were regenerated on
-Case's machine at `17bb14a`. PR #12 merged. Nothing half-finished.
+The equipment field (SR540 bare / OEM extension tube / V5T Razzo), specified in
+`docs/roastlink-live-data-plan.md`.
