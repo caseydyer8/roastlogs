@@ -786,6 +786,43 @@ const TURNAROUND_MIN_T = 10;      // seconds; skip the probe settling
 const TURNAROUND_WINDOW = 240;    // seconds; a turning point never comes later
 const TURNAROUND_RISE_F = 5;      // degrees above the low before it counts
 
+// A saved roast's stored devSeconds came from a free-running interval that
+// drifted, so a roast whose log carries BOTH marks is recomputed from them --
+// the gap between the two buttons, which is what dev time actually means.
+// Falls back to the stored value when the log is incomplete, and never
+// rewrites what is saved.
+function devSecondsOf(roast) {
+  if (!roast) return 0;
+  const log = Array.isArray(roast.roastLog) ? roast.roastLog : [];
+  const at = (label) => {
+    const e = log.find((x) => x && x.type === "phase" && x.label === label);
+    return e ? Number(e.t) : null;
+  };
+  const fc = at("FIRST CRACK");
+  const drop = at("COOLING START");
+  if (fc != null && drop != null && drop >= fc) return drop - fc;
+  return roast.devSeconds || 0;
+}
+
+// Bean temp at a given second, read off the roast curve. The curve is 1Hz and
+// every log entry sits on a whole second, so this is an exact lookup rather
+// than an interpolation. Returns null when there is no curve at all, which is
+// every roast recorded before RoastLink and every probe-less manual roast --
+// those genuinely have no measured temperature, and the row shows a dash.
+function curveTempAt(curve, t) {
+  if (!Array.isArray(curve) || !curve.length || !Number.isFinite(Number(t))) return null;
+  const want = Math.round(Number(t));
+  let best = null;
+  for (const p of curve) {
+    if (!p || !Number.isFinite(p.t) || !Number.isFinite(p.bt)) continue;
+    if (Math.round(p.t) === want) return Math.round(p.bt);
+    // Tolerate a one-second gap, which a dropped sample can leave behind.
+    const d = Math.abs(Math.round(p.t) - want);
+    if (d <= 1 && (best == null || d < best.d)) best = { d, bt: p.bt };
+  }
+  return best ? Math.round(best.bt) : null;
+}
+
 const LIVE_CURVE_KEY = "live_curve";
 
 function readStoredCurve() {
@@ -889,8 +926,11 @@ function App() {
   const [elapsedSeconds, setElapsedSeconds] = React.useState(() => Number(localStorage.getItem("live_elapsedSeconds")) || 0);
 
   // New Development Timer state
-  const [isDevTimerRunning, setIsDevTimerRunning] = React.useState(false);
-  const [devSeconds, setDevSeconds] = React.useState(() => Number(localStorage.getItem("live_devSeconds")) || 0);
+  // Development time is DERIVED, never counted. It used to be a free-running
+  // setInterval started at FIRST CRACK, ticking on its own 1000ms clock
+  // independent of the roast clock -- so it drifted, and the Roast tab and
+  // History disagreed by a second or two on the same roast. It is now exactly
+  // what Case means by it: the gap between the two buttons he pressed.
   const [firstCrackTime, setFirstCrackTime] = React.useState(() => Number(localStorage.getItem("live_firstCrackTime")) || null);
   const [coolingStartTime, setCoolingStartTime] = React.useState(() => Number(localStorage.getItem("live_coolingStartTime")) || null);
 
@@ -1227,10 +1267,6 @@ function App() {
   }, [elapsedSeconds]);
 
   React.useEffect(() => {
-    localStorage.setItem("live_devSeconds", devSeconds);
-  }, [devSeconds]);
-
-  React.useEffect(() => {
     localStorage.setItem("live_firstCrackTime", firstCrackTime);
   }, [firstCrackTime]);
 
@@ -1329,10 +1365,8 @@ function App() {
     setStartingFan("");
     setStartingTemp("");
     setElapsedSeconds(0);
-    setDevSeconds(0);
     setFirstCrackTime(null);
     setCoolingStartTime(null);
-    setIsDevTimerRunning(false);
     setRoastLog([]);
     setProfileFollowing(null);
     setCurrentProfileStepIdx(-1);
@@ -1389,8 +1423,16 @@ function App() {
 
       // Trigger logic: exact moment
       if (elapsedSeconds === nextStepSeconds) {
-        // Auto-log if not manually logged for this timestamp
-        const alreadyLogged = roastLog.some(entry => entry.t === elapsedSeconds && entry.type === 'adjustment');
+        // Auto-log only if this second does not ALREADY carry dial values.
+        // This used to test `type === 'adjustment'` alone, which misses the
+        // START row (`type: 'start_settings'`) -- so a profile whose first step
+        // sits at 00:00 wrote a second row with the same Fan/Heat, and the
+        // timeline opened with a duplicate 00:00.
+        const alreadyLogged = roastLog.some(
+          (entry) =>
+            entry.t === elapsedSeconds &&
+            (entry.type === 'adjustment' || entry.type === 'start_settings')
+        );
         if (!alreadyLogged) {
           setRoastLog((prev) => [
             { type: 'adjustment', t: elapsedSeconds, heat: nextStep.heat, fan: nextStep.fan, temp: "", label: "Profile" },
@@ -1408,14 +1450,6 @@ function App() {
     const [mm, ss] = timeStr.split(':').map(Number);
     return (mm * 60) + ss;
   };
-
-  React.useEffect(() => {
-    if (!isDevTimerRunning || !isTimerRunning) return undefined;
-    const id = window.setInterval(() => {
-      setDevSeconds((s) => s + 1);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [isDevTimerRunning, isTimerRunning]);
 
   // Log a phase entry at a specific second rather than "now". Turnaround needs
   // this: it is only recognisable once BT has climbed back off the low, but it
@@ -1446,11 +1480,9 @@ function App() {
     });
     
     if (label === "FIRST CRACK") {
-      setIsDevTimerRunning(true);
       setFirstCrackTime(elapsedSeconds);
     } else if (label === "COOLING START") {
       setIsTimerRunning(false);
-      setIsDevTimerRunning(false);
       setCoolingStartTime(elapsedSeconds);
     }
   };
@@ -1513,8 +1545,7 @@ function App() {
 
   const handleStop = () => {
     setIsTimerRunning(false);
-    setIsDevTimerRunning(false);
-    
+
     const newRoast = {
       id: Date.now(),
       date: new Date().toLocaleString(),
@@ -1605,6 +1636,11 @@ function App() {
   // ticked. Pausing within the first second (elapsedSeconds still 0) must not look like
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
+
+  // Ends at the drop once it is marked, otherwise tracks the live clock.
+  const devSeconds = firstCrackTime == null
+    ? 0
+    : Math.max(0, (coolingStartTime != null ? coolingStartTime : elapsedSeconds) - firstCrackTime);
 
   // The curve now carries the phase names and their times in its own bands, so
   // the separate phase rail is redundant whenever the curve is on screen. It is
@@ -2546,7 +2582,6 @@ function App() {
                         clearLiveSession();
                         setShowDiscardModal(false);
                         setIsTimerRunning(false);
-                        setIsDevTimerRunning(false);
                       }}
                       className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition"
                     >
@@ -2584,6 +2619,17 @@ function App() {
                     {(roastLog || []).map((entry, idx) => {
                       const isPhase = entry.type === 'phase';
                       const isStart = entry.type === 'start_settings';
+                      // Every row gets a temperature when the roast has a curve
+                      // to read it from: a phase or moment never carried one,
+                      // and a profile-driven adjustment is written with an empty
+                      // temp because nothing is typed at that moment. Falling
+                      // back to the curve means the reading shown is the probe's
+                      // own, at that exact second.
+                      const shownTemp = toDisplayTemp(
+                        (entry.temp !== "" && entry.temp != null)
+                          ? entry.temp
+                          : curveTempAt(curveRef.current, entry.t)
+                      );
                       return (
                         <li key={`${entry.t}-${idx}`} className="flex items-stretch gap-2.5 px-3 py-1.5">
                           <span className={`w-1 shrink-0 rounded-full ${isPhase || isStart ? "bg-accent" : "bg-card"}`} />
@@ -2592,15 +2638,20 @@ function App() {
                               {formatTime(entry.t)}
                             </span>
                             {isPhase ? (
-                              <span className="text-xs font-bold uppercase tracking-wide text-accent-text">
-                                {entry.label}
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate text-xs font-bold uppercase tracking-wide text-accent-text">
+                                  {entry.label}
+                                </span>
+                                <span className="shrink-0 font-mono text-xs tabular-nums text-ink-muted">
+                                  {shownTemp}
+                                </span>
                               </span>
                             ) : (
                               <span className="flex items-center gap-1.5 text-xs text-ink-muted tabular-nums">
                                 <span>
                                   F: <span className="font-semibold text-ink">{entry.fan || "—"}</span>
                                   {" · "}H: <span className="font-semibold text-ink">{entry.heat || "—"}</span>
-                                  {" · "}T: <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
+                                  {" · "}T: <span className="font-semibold text-ink">{shownTemp}</span>
                                 </span>
                                 {isStart && (
                                   <span className="rounded-md border border-accent/30 bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-text">
@@ -3480,7 +3531,7 @@ function App() {
                       <div className="col-span-1">
                         <div className="text-[10px] uppercase tracking-widest text-error-text">Dev Time</div>
                         {!isEditingRoast ? (
-                          <div className="text-sm font-bold text-error-text">{selectedRoast.devSeconds}s</div>
+                          <div className="text-sm font-bold text-error-text">{devSecondsOf(selectedRoast)}s</div>
                         ) : (() => {
                           const firstCrack = editedRoast.roastLog.find(e => e.label === "FIRST CRACK");
                           const coolingStart = editedRoast.roastLog.find(e => e.label === "COOLING START");
@@ -3563,8 +3614,15 @@ function App() {
                             {entry.type === 'phase' ? (
                               <div className="flex items-center justify-between rounded-xl bg-accent/10 px-3 py-2 border border-accent/20">
                                 {!isEditingRoast ? (
-                                  <div className="text-sm font-bold uppercase tracking-wide text-accent-text">
-                                    {entry.label}
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <div className="truncate text-sm font-bold uppercase tracking-wide text-accent-text">
+                                      {entry.label}
+                                    </div>
+                                    {/* Read off the saved curve: a phase or moment
+                                        never stored a temperature of its own. */}
+                                    <div className="shrink-0 font-mono text-xs tabular-nums text-ink-muted">
+                                      {toDisplayTemp(curveTempAt(selectedRoast && selectedRoast.curve, entry.t))}
+                                    </div>
                                   </div>
                                 ) : (
                                   <input 
@@ -3631,7 +3689,11 @@ function App() {
                                     <span className="mx-0.5">·</span>
                                     T:
                                     {!isEditingRoast ? (
-                                      <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
+                                      <span className="font-semibold text-ink">{toDisplayTemp(
+                                      (entry.temp !== "" && entry.temp != null)
+                                        ? entry.temp
+                                        : curveTempAt(selectedRoast && selectedRoast.curve, entry.t)
+                                    )}</span>
                                     ) : (
                                       <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-primary/40 border border-border rounded px-1 text-ink" />
                                     )}
@@ -3678,7 +3740,11 @@ function App() {
                                   <span className="mx-0.5">·</span>
                                   T:
                                   {!isEditingRoast ? (
-                                    <span className="font-semibold text-ink">{toDisplayTemp(entry.temp)}</span>
+                                    <span className="font-semibold text-ink">{toDisplayTemp(
+                                      (entry.temp !== "" && entry.temp != null)
+                                        ? entry.temp
+                                        : curveTempAt(selectedRoast && selectedRoast.curve, entry.t)
+                                    )}</span>
                                   ) : (
                                     <input type="text" value={entry.temp} onChange={(e) => updateLogEntry(i, 'temp', e.target.value)} className="w-12 bg-primary/40 border border-border rounded px-1 text-ink" />
                                   )}
