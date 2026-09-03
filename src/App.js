@@ -1455,11 +1455,11 @@ function App() {
   // this: it is only recognisable once BT has climbed back off the low, but it
   // BELONGS at the low, several seconds earlier. Entries stay newest-first, so
   // insert by timestamp rather than unshifting blindly.
-  const logMilestoneAt = (label, t) => {
+  const logMilestoneAt = (label, t, temp = "") => {
     if ((roastLog || []).some((e) => e.type === "phase" && e.label === label)) return;
     setRoastLog((prev) => {
       if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
-      const entry = { type: "phase", label, t };
+      const entry = { type: "phase", label, t, temp };
       const idx = prev.findIndex((e) => Number(e && e.t) <= t);
       if (idx === -1) return [...prev, entry];
       return [...prev.slice(0, idx), entry, ...prev.slice(idx)];
@@ -1474,9 +1474,15 @@ function App() {
 
     // The state updater re-checks: the ladder can evaluate several samples
     // before a re-render lands, and the guard above still sees the stale array.
+    // Stamp the reading at the instant of the press. Deriving it later from the
+    // curve returns that second's LAST sample, which can be a degree or two
+    // hotter than what was actually on screen when the button went down.
+    const pressTemp = typeof liveRoast.bt === "number"
+      ? String(Math.round(liveRoast.bt * 10) / 10)
+      : "";
     setRoastLog((prev) => {
       if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
-      return [{ type: 'phase', label, t: elapsedSeconds }, ...prev];
+      return [{ type: 'phase', label, t: elapsedSeconds, temp: pressTemp }, ...prev];
     });
     
     if (label === "FIRST CRACK") {
@@ -1688,16 +1694,16 @@ function App() {
   // paused roast is still hot, but its timestamps are frozen, so a crossing
   // logged then would carry a misleading t.
   const turnaroundLowRef = React.useRef(null);
-  const prevBtRef = React.useRef(null);
+  const prevSampleRef = React.useRef(null); // { bt, t } of the previous sample
   React.useEffect(() => {
     if (!roastStarted || coolingStartTime || !isTimerRunning) {
-      prevBtRef.current = null;
+      prevSampleRef.current = null;
       return;
     }
     const bt = liveRoast.bt;
     if (typeof bt !== "number") return;
-    const prevBt = prevBtRef.current;
-    prevBtRef.current = bt;
+    const prev = prevSampleRef.current;
+    prevSampleRef.current = { bt, t: elapsedSeconds };
 
     // A threshold fires only on a genuine RISING crossing -- previous sample
     // below it, this one at or above. Testing `bt >= f` alone would dump all
@@ -1705,9 +1711,22 @@ function App() {
     // through a roast already at 400F, stamping them with times the roast never
     // passed through. With no previous sample there is no crossing to see, so
     // nothing fires until the next one.
-    if (prevBt != null) {
+    //
+    // The device streams at 1Hz, so a fast climb can jump 279.0 -> 281.9 between
+    // two samples. Logging the sample that noticed would put the marker ~2F late
+    // -- and reading the temperature back off the curve made it worse, because a
+    // curve second holds the LAST sample in it. Both errors stacked.
+    //
+    // So INTERPOLATE. A threshold crossing happens at the threshold, by
+    // definition, so the temperature recorded is the threshold exactly; the time
+    // is placed where BT actually passed it, between the two samples.
+    if (prev != null) {
       LADDER_STEPS.forEach((step) => {
-        if (prevBt < step.f && bt >= step.f) logMilestone(step.label);
+        if (!(prev.bt < step.f && bt >= step.f)) return;
+        const span = bt - prev.bt;
+        const frac = span > 0 ? (step.f - prev.bt) / span : 0;
+        const crossedAt = Math.round(prev.t + frac * (elapsedSeconds - prev.t));
+        logMilestoneAt(step.label, crossedAt, String(step.f));
       });
     }
 
@@ -1718,7 +1737,9 @@ function App() {
       if (low == null || bt < low.bt) {
         turnaroundLowRef.current = { bt, t: elapsedSeconds };
       } else if (bt >= low.bt + TURNAROUND_RISE_F) {
-        logMilestoneAt("TURNAROUND", low.t);
+        // The measured minimum, not a curve read-back: turnaround is a real
+        // reading rather than a threshold.
+        logMilestoneAt("TURNAROUND", low.t, String(Math.round(low.bt * 10) / 10));
       }
     }
   }, [liveRoast.latest, liveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);

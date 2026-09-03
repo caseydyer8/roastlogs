@@ -408,12 +408,13 @@ export default function RoastCurveChart({ roast }) {
   const momentDots = (axisId) =>
     momentsFrom(roast && roast.roastLog).map((m) => {
       const pt = data[Math.round(m.t)];
-      if (!pt || pt.temp == null) return null;
+      const y = m.temp != null ? m.temp : (pt ? pt.temp : null);
+      if (y == null) return null;
       return (
         <ReferenceDot
           key={`md-${axisId}-${m.label}`}
           x={m.t}
-          y={pt.temp}
+          y={y}
           yAxisId={axisId}
           r={3.5}
           fill="rgb(var(--bg-surface))"

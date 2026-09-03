@@ -92,7 +92,15 @@ export function momentsFrom(roastLog) {
   const log = Array.isArray(roastLog) ? roastLog : [];
   return log
     .filter((e) => e && e.type === "phase" && MOMENT_LABELS[e.label])
-    .map((e) => ({ label: e.label, name: MOMENT_LABELS[e.label], t: Number(e.t) }))
+    .map((e) => ({
+      label: e.label,
+      name: MOMENT_LABELS[e.label],
+      t: Number(e.t),
+      // Stamped at log time. A threshold crossing carries the threshold itself,
+      // so its dot sits exactly on the value it marks rather than on that
+      // second's last sample.
+      temp: e.temp !== "" && e.temp != null ? Number(e.temp) : null,
+    }))
     .filter((m) => Number.isFinite(m.t));
 }
 
