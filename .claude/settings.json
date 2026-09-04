@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Case's working standards are in .claude/working-agreement.md. If it is not already in your context, read it before doing anything else, and work from it. Address the user as Case in every response. Roast controls are always Fan before Heat.\"}}'",
+            "command": "echo \"{\\\"hookSpecificOutput\\\": {\\\"hookEventName\\\": \\\"SessionStart\\\", \\\"additionalContext\\\": \\\"Case's working standards are in .claude/working-agreement.md. If it is not already in your context, read it before doing anything else, and work from it. Address the user as Case in every response. Roast controls are always Fan before Heat. ALSO: if docs/NEXT-SESSION.md exists, read it before replying \\\\u2014 it carries Case's standing open actions from the previous session, and he expects them raised first.\\\"}}\"",
             "statusMessage": "Loading Case's developer profile..."
           }
         ]

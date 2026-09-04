@@ -12,6 +12,15 @@ import {
   ReferenceArea,
   Label,
 } from "recharts";
+import {
+  PHASE_NAMES,
+  PHASE_VAR,
+  MOMENT_LABELS,
+  phaseBoundaries,
+  momentsFrom,
+  phaseKeyAt,
+  phaseSpans,
+} from "../../lib/roastPhases";
 
 // ---------------------------------------------------------------------------
 // RoastCurveChart — "Split Roast Story" History detail visualization (v1.1)
@@ -107,13 +116,15 @@ export default function RoastCurveChart({ roast }) {
     const total = Number(roast.totalSeconds) || 0;
     if (total <= 0) return null;
 
-    const phaseT = (label) => {
-      const e = log.find((p) => p.type === "phase" && p.label === label);
-      return e ? Number(e.t) : null;
-    };
-    const yellowing = phaseT("YELLOWING");
-    const firstCrack = phaseT("FIRST CRACK");
-    const coolingStart = phaseT("COOLING START");
+    // Shared with the live chart, fallback and all: Maillard opens at the 305F
+    // crossing when the ladder logged one, and at the YELLOWING mark when it did
+    // not. In History that fallback is the COMMON path -- every roast saved
+    // before 2026-08-31 has no MAILLARD entry.
+    const bounds = phaseBoundaries(log);
+    const yellowing = bounds.yellowing;
+    const firstCrack = bounds.firstCrack;
+    const coolingStart = bounds.drop;
+    const moments = momentsFrom(log);
 
     // Real temp readings, sorted ascending, plus dial state per second.
     const events = log
@@ -234,27 +245,28 @@ export default function RoastCurveChart({ roast }) {
       });
     });
 
-    return { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, phases, deviations, hasTemp };
+    return { data, total, yellowing, firstCrack, coolingStart, bounds, moments, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, phases, deviations, hasTemp };
   }, [roast]);
 
   if (!model) return null;
 
-  const { data, total, yellowing, firstCrack, coolingStart, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, deviations, hasTemp } = model;
+  const { data, total, yellowing, firstCrack, coolingStart, bounds, moments, avgTemp, avgRor, dropTemp, dtr, fcTemp, weightLoss, deviations, hasTemp } = model;
 
-  // Which roast phase a given time (seconds) falls in, using the same
-  // yellowing / firstCrack / coolingStart boundaries as the bands. Falls back
-  // sensibly when a boundary is missing.
-  const phaseForT = (t) => {
+  // Which roast phase a given second falls in -- resolved through the same
+  // shared helper the live chart uses, so the two can never disagree about what
+  // a moment in the roast is called.
+  const phaseForT = (t) => (t == null ? null : PHASE_NAMES[phaseKeyAt(t, bounds)] || null);
+
+  // A moment within a few seconds of the scan point wins the tooltip header:
+  // that is the question being asked when you put a finger on a dot.
+  const momentNear = (t) => {
     if (t == null) return null;
-    if (yellowing != null && firstCrack != null) {
-      if (t < yellowing) return "Drying";
-      if (t < firstCrack) return "Maillard";
-      if (coolingStart != null && t >= coolingStart) return "Cooling";
-      return "Development";
+    let best = null;
+    for (const m of moments) {
+      const d = Math.abs(m.t - t);
+      if (d <= 4 && (!best || d < Math.abs(best.t - t))) best = m;
     }
-    if (firstCrack != null) return t < firstCrack ? "Pre-first-crack" : "Development";
-    if (yellowing != null) return t < yellowing ? "Drying" : "Maillard";
-    return null;
+    return best;
   };
 
   // Shared dark tooltip for both charts. `variant` selects which measures to
@@ -281,7 +293,10 @@ export default function RoastCurveChart({ roast }) {
     }
     return (
       <div style={tooltipStyle}>
-        <div style={{ color: "rgb(var(--text-primary))", fontWeight: 700, marginBottom: 3 }}>{formatMMSS(t)}</div>
+        <div style={{ color: "rgb(var(--text-primary))", fontWeight: 700, marginBottom: 3 }}>
+          {formatMMSS(t)}
+          {(() => { const m = momentNear(t); return m ? ` · ${m.name}` : ""; })()}
+        </div>
         {phase && (
           <div style={{ fontSize: 11, marginBottom: 2 }}>
             <span style={{ color: "rgb(var(--text-muted))" }}>Phase </span>
@@ -315,35 +330,133 @@ export default function RoastCurveChart({ roast }) {
     );
   };
 
+  // Four spans, tinted from the same semantic tokens the live chart uses. These
+  // were three hardcoded hexes (#f59e0b, #22c55e, #a78bfa) that ignored the
+  // light/dark toggle entirely and matched nothing in the live palette, so the
+  // same roast was amber on one screen and warm grey on the other.
+  // Phase ribbon. History is ALWAYS a full-roast view, so it is the worst case
+  // for fit rather than the average -- measure the lane and test each tag
+  // against its own segment rather than assuming the live chart's numbers.
+  const ribbonRef = React.useRef(null);
+  const [ribbonWidth, setRibbonWidth] = React.useState(0);
+  React.useEffect(() => {
+    const el = ribbonRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setRibbonWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  const measureRef = React.useRef(null);
+  const tagWidth = React.useCallback((tag) => {
+    if (!measureRef.current) {
+      if (typeof document === "undefined") return tag.length * 6;
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (!ctx) return tag.length * 6;
+      ctx.font = "8.5px ui-monospace, SFMono-Regular, monospace";
+      measureRef.current = ctx;
+    }
+    return measureRef.current.measureText(tag).width + tag.length * 0.85;
+  }, []);
+
+  const spanEnd = coolingStart != null ? coolingStart : total;
+  const spans = phaseSpans(bounds, spanEnd).filter(
+    (p) => p.from != null && p.to != null && p.to > p.from
+  );
+
+  const ribbonSegments = spans
+    .map((p) => {
+      if (!(total > 0)) return null;
+      const left = (p.from / total) * 100;
+      const width = ((p.to - p.from) / total) * 100;
+      const fits = ribbonWidth > 0 && (width / 100) * ribbonWidth >= tagWidth(p.tag) + 6;
+      return { ...p, left, width, fits };
+    })
+    .filter(Boolean);
+
+  // Inset to match the plot area: 44px left axis, 10px right margin.
+  const phaseRibbon = ribbonSegments.length > 0 && (
+    <div className="mb-1 flex h-4 overflow-hidden rounded-[3px]" style={{ marginLeft: 44, marginRight: 10 }}>
+      <div ref={ribbonRef} className="relative w-full">
+        {ribbonSegments.map((seg) => (
+          <div
+            key={`rib-${seg.key}`}
+            className="absolute inset-y-0 flex items-center justify-center overflow-hidden"
+            style={{
+              left: `${seg.left}%`,
+              width: `${seg.width}%`,
+              background: `rgb(var(${PHASE_VAR[seg.key] || "--border-color"}) / 0.28)`,
+            }}
+            title={`${seg.tag} ${formatMMSS(seg.from)}`}
+          >
+            {seg.fits && (
+              <span
+                className="px-[3px] font-mono text-[8.5px] uppercase tracking-[0.1em]"
+                style={{ color: `rgb(var(${PHASE_VAR[seg.key] || "--chart-tick"}))` }}
+              >
+                {seg.tag}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // Moment dots, drawn only where the saved curve actually has a reading at
+  // that second. A roast recorded before RoastLink carries no curve at all, so
+  // this quietly renders nothing rather than pinning dots at zero.
+  const momentDots = (axisId) =>
+    momentsFrom(roast && roast.roastLog).map((m) => {
+      const pt = data[Math.round(m.t)];
+      const y = m.temp != null ? m.temp : (pt ? pt.temp : null);
+      if (y == null) return null;
+      return (
+        <ReferenceDot
+          key={`md-${axisId}-${m.label}`}
+          x={m.t}
+          y={y}
+          yAxisId={axisId}
+          r={3.5}
+          fill="rgb(var(--bg-surface))"
+          stroke="rgb(var(--chart-temp))"
+          strokeWidth={2}
+          isFront
+        />
+      );
+    });
+
   const bands = (axisId) => (
     <>
-      {yellowing != null && <ReferenceArea yAxisId={axisId} x1={0} x2={yellowing} fill="#f59e0b" fillOpacity={0.05} strokeOpacity={0} />}
-      {yellowing != null && firstCrack != null && (
-        <ReferenceArea yAxisId={axisId} x1={yellowing} x2={firstCrack} fill="#22c55e" fillOpacity={0.06} strokeOpacity={0} />
-      )}
-      {firstCrack != null && (
-        <ReferenceArea yAxisId={axisId} x1={firstCrack} x2={coolingStart != null ? coolingStart : total} fill="#a78bfa" fillOpacity={0.07} strokeOpacity={0} />
-      )}
+      {spans.map((p) => (
+        <ReferenceArea
+          key={`band-${axisId}-${p.key}`}
+          yAxisId={axisId}
+          x1={p.from}
+          x2={p.to}
+          fill={`rgb(var(${PHASE_VAR[p.key] || "--border-color"}))`}
+          fillOpacity={0.12}
+          strokeOpacity={0}
+        />
+      ))}
     </>
   );
 
+  // Boundary rules only. The in-plot pill labels are gone: they sat where the
+  // y-axis ticks are, and the phase ribbon above the plot names every span
+  // without ever colliding.
   const phaseLines = (withLabels, axisId) => (
     <>
-      {yellowing != null && (
-        <ReferenceLine yAxisId={axisId} x={yellowing} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("YELLOW", "rgb(var(--text-muted))")} />}
-        </ReferenceLine>
-      )}
-      {firstCrack != null && (
-        <ReferenceLine yAxisId={axisId} x={firstCrack} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("FC", "rgb(var(--chart-ror))")} />}
-        </ReferenceLine>
-      )}
-      {coolingStart != null && (
-        <ReferenceLine yAxisId={axisId} x={coolingStart} stroke="rgb(var(--border-color))" strokeDasharray="3 4">
-          {withLabels && <Label content={phaseLabelContent("DROP", "rgb(var(--text-muted))")} />}
-        </ReferenceLine>
-      )}
+      {[bounds.maillard, bounds.caramelization, firstCrack, coolingStart]
+        .filter((t) => t != null)
+        .map((t, i) => (
+          <ReferenceLine
+            key={`pl-${axisId}-${i}-${t}`}
+            yAxisId={axisId}
+            x={t}
+            stroke="rgb(var(--border-color))"
+            strokeDasharray="3 4"
+          />
+        ))}
     </>
   );
 
@@ -375,9 +488,10 @@ export default function RoastCurveChart({ roast }) {
           <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-temp align-middle" />Temp</span>
           <span><span className="mr-1.5 inline-block h-[3px] w-3.5 rounded bg-chart-ror align-middle" />RoR</span>
         </div>
+        {phaseRibbon}
         <div className="h-56 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} syncId="roastStory" margin={{ top: 22, right: 10, left: -14, bottom: 0 }}>
+            <ComposedChart data={data} syncId="roastStory" margin={{ top: 8, right: 10, left: -14, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--chart-grid))" vertical={false} />
               {bands("temp")}
               <XAxis {...xAxisProps} />
@@ -385,6 +499,7 @@ export default function RoastCurveChart({ roast }) {
               <YAxis yAxisId="ror" hide domain={[0, (dataMax) => Math.max(10, dataMax * 1.15)]} />
               <Tooltip content={<CustomTooltip variant="temp" />} />
               {phaseLines(true, "temp")}
+              {momentDots("temp")}
               {hasTemp && (
                 <Line yAxisId="ror" type="monotone" dataKey="ror" stroke="rgb(var(--chart-ror))" strokeWidth={1.75} dot={false} name="RoR" connectNulls isAnimationActive={false} />
               )}

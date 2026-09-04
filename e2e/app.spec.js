@@ -266,8 +266,14 @@ test("history: roast detail renders the split roast-story chart", async ({ page 
 
   // Both ComposedCharts (development curve + control map) must render.
   await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
-  // Phase divider labels from the chart rework.
-  await expect(page.getByText("FC", { exact: true }).first()).toBeVisible();
+  // The chart must still NAME its phases. The mechanism changed in v3.5.x --
+  // in-plot divider pills ("FC") sat where the y-axis ticks are and were
+  // replaced by the phase ribbon above the plot, shared with the live chart --
+  // so this asserts the ribbon rather than the retired label. The fixture roast
+  // has YELLOWING/FIRST CRACK/COOLING START and no MAILLARD entry, which
+  // exercises the Yellowing fallback: DRY / MAI / DEV.
+  await expect(page.getByTitle(/^DEV /).first()).toBeVisible();
+  await expect(page.getByTitle(/^DRY /).first()).toBeVisible();
   // Metric tiles present.
   await expect(page.getByText("Avg RoR")).toBeVisible();
   await expect(page.getByText("DTR")).toBeVisible();
@@ -320,7 +326,11 @@ test.describe("light mode", () => {
     await page.getByText("E2E Ethiopia Test").first().click();
 
     await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
-    await expect(page.getByText("FC", { exact: true }).first()).toBeVisible();
+    // Ribbon rather than the retired in-plot "FC" pill -- see the dark-mode
+    // test above. Also proves the phase tints resolve in light mode: they are
+    // semantic tokens now, where they used to be three hardcoded hexes that
+    // ignored the theme entirely.
+    await expect(page.getByTitle(/^DEV /).first()).toBeVisible();
 
     await fullPageShot(page, "history-chart-light.png");
   });
