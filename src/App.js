@@ -9,6 +9,8 @@ import { useLiveRoast } from "./hooks/useLiveRoast";
 import LiveRoastReadout from "./components/LiveRoastReadout";
 import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 import LiveRoastChart from "./components/charts/LiveRoastChart";
+import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
+import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -852,6 +854,19 @@ function App() {
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
   const liveRoast = useLiveRoast();
+
+  // Unlock audio/speech on the first real tap anywhere in the app, well
+  // before the preheat screen ever needs to alert -- iOS otherwise blocks
+  // both until a genuine user gesture has occurred.
+  React.useEffect(() => {
+    const unlock = () => {
+      primeAudio();
+      document.removeEventListener("pointerdown", unlock);
+    };
+    document.addEventListener("pointerdown", unlock);
+    return () => document.removeEventListener("pointerdown", unlock);
+  }, []);
+
   // Live bean-temp curve for the roast in progress. Hydrated from localStorage
   // rather than starting empty: everything else about an in-progress roast
   // (elapsed time, roastLog, milestones) already survives a reload, and a ref
@@ -906,18 +921,6 @@ function App() {
     "Italian (Darkest)",
   ];
 
-  // Roaster hardware. Ordered most-used first. Only the Razzo carries a probe,
-  // which is why `probe` is stored on the roast rather than re-derived later --
-  // the Phase 2 capability gate (no probe => no live mode) reads this one field.
-  const EQUIPMENT_OPTIONS = [
-    { id: "razzo-v5t", label: "SR540 + Razzo V5T", probe: "k-type" },
-    { id: "oem-tube", label: "SR540 + OEM Extension Tube", probe: null },
-    { id: "sr540", label: "Standard SR540", probe: null },
-  ];
-
-  const equipmentLabel = (setup) =>
-    EQUIPMENT_OPTIONS.find((o) => o.id === setup)?.label || "Not recorded";
-
   const formatTime = (totalSeconds) => {
     const s = Math.max(0, Math.floor(totalSeconds));
     const mm = String(Math.floor(s / 60)).padStart(2, "0");
@@ -942,6 +945,24 @@ function App() {
     () => localStorage.getItem("roastlogs_equipment") || "oem-tube"
   );
   const equipmentChosenRef = React.useRef(false);
+
+  // Capability gate: only the Razzo has a probe, so a config without one must
+  // never show or record a live reading, even if a bridge happens to be
+  // broadcasting (e.g. left running from an earlier session). One gated view
+  // of liveRoast, rather than a hasProbe check scattered at every call site.
+  const hasProbe = equipmentHasProbe(equipmentSetup);
+  const gatedLiveRoast = hasProbe
+    ? liveRoast
+    : { ...liveRoast, status: "no-bridge", isLive: false, bt: null, ror: null, latest: null };
+
+  // Preheat target lives with the device prefs, not per-roast -- only the
+  // Razzo has a target at all, so one value covers it.
+  const [preheatTarget, setPreheatTarget] = React.useState(
+    () => Number(localStorage.getItem("roastlogs_preheat_target")) || 315
+  );
+  React.useEffect(() => {
+    localStorage.setItem("roastlogs_preheat_target", String(preheatTarget));
+  }, [preheatTarget]);
 
   const [isTimerRunning, setIsTimerRunning] = React.useState(false);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(() => Number(localStorage.getItem("live_elapsedSeconds")) || 0);
@@ -1526,8 +1547,8 @@ function App() {
     // Stamp the reading at the instant of the press. Deriving it later from the
     // curve returns that second's LAST sample, which can be a degree or two
     // hotter than what was actually on screen when the button went down.
-    const pressTemp = typeof liveRoast.bt === "number"
-      ? String(Math.round(liveRoast.bt * 10) / 10)
+    const pressTemp = typeof gatedLiveRoast.bt === "number"
+      ? String(Math.round(gatedLiveRoast.bt * 10) / 10)
       : "";
     setRoastLog((prev) => {
       if (prev.some((e) => e && e.type === "phase" && e.label === label)) return prev;
@@ -1584,7 +1605,7 @@ function App() {
       // Log starting settings. Same live-BT stamp as handleLogAdjustment: when
       // the bridge is live, startingTemp (the manual-entry field) is blank
       // because the dial shows the probe reading instead of a typed value.
-      const startTemp = startingTemp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : startingTemp);
+      const startTemp = startingTemp || (gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number" ? String(Math.round(gatedLiveRoast.bt)) : startingTemp);
       setRoastLog([{ 
         type: 'start_settings', 
         t: 0, 
@@ -1665,7 +1686,7 @@ function App() {
     // than a typed value, so `temp` (the manual-entry state) stays blank.
     // Stamp the live BT in automatically so the timeline still records a
     // temp for this adjustment, matching what was actually on screen.
-    const loggedTemp = temp || (liveRoast.isLive && typeof liveRoast.bt === "number" ? String(Math.round(liveRoast.bt)) : temp);
+    const loggedTemp = temp || (gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number" ? String(Math.round(gatedLiveRoast.bt)) : temp);
     setRoastLog((prev) => [
       { type: 'adjustment', t: adjPopupTimestamp ?? elapsedSeconds, heat, fan, temp: loggedTemp },
       ...(prev || []),
@@ -1696,6 +1717,12 @@ function App() {
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
 
+  // With a probe selected, no roast running, and a real live reading on
+  // screen, the Roast tab becomes the preheat instrument instead of the setup
+  // form. Falls back to the ordinary setup screen the instant any of those
+  // stops being true -- an instrument can't read a number it doesn't have.
+  const preheatActive = hasProbe && gatedLiveRoast.isLive && !roastStarted && !isTimerRunning;
+
   // The bridge only ever publishes chamber temperature from the K-type probe,
   // and only the Razzo has one -- so a bridge on the channel is strong evidence
   // of what is physically on the roaster. Adopt it, under three limits:
@@ -1724,7 +1751,7 @@ function App() {
   // still the only place those milestones appear on a probe-less manual roast,
   // where no chart renders at all, so it falls back rather than disappearing.
   const curveVisible =
-    liveChartOpen && (liveRoast.status === "live" || liveRoast.status === "bridge-only");
+    liveChartOpen && (gatedLiveRoast.status === "live" || gatedLiveRoast.status === "bridge-only");
 
   React.useEffect(() => {
     const el = thumbZoneRef.current;
@@ -1743,7 +1770,7 @@ function App() {
   // second downsamples the ~5Hz live feed to ~1Hz (latest reading wins).
   React.useEffect(() => {
     if (!roastStarted || coolingStartTime) return;
-    const bt = liveRoast.bt;
+    const bt = gatedLiveRoast.bt;
     if (typeof bt !== "number") return;
     const sec = elapsedSeconds;
     const buf = curveRef.current;
@@ -1758,7 +1785,7 @@ function App() {
       // path during a roast. The unload handler below covers the tail.
       if (buf.length % 5 === 0) writeStoredCurve(buf);
     }
-  }, [liveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
+  }, [gatedLiveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
 
   // Temperature ladder: auto-log threshold crossings from live BT. Gated to a
   // running roast between START and DROP, same window as curve recording -- a
@@ -1771,7 +1798,7 @@ function App() {
       prevSampleRef.current = null;
       return;
     }
-    const bt = liveRoast.bt;
+    const bt = gatedLiveRoast.bt;
     if (typeof bt !== "number") return;
     const prev = prevSampleRef.current;
     prevSampleRef.current = { bt, t: elapsedSeconds };
@@ -1813,7 +1840,7 @@ function App() {
         logMilestoneAt("TURNAROUND", low.t, String(Math.round(low.bt * 10) / 10));
       }
     }
-  }, [liveRoast.latest, liveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
+  }, [gatedLiveRoast.latest, gatedLiveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
 
   // Flush the tail of the curve when the page is going away. pagehide is the
   // event that actually fires on mobile Safari (beforeunload does not), and
@@ -2246,8 +2273,9 @@ function App() {
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
         {activeTab === "Roast" && (
           <div className="space-y-4">
-            {/* 1) SESSION — full editable card; collapses to a summary bar once live */}
-            {(!roastStarted || setupOpen) ? (
+            {/* 1) SESSION — full editable card; collapses to a summary bar once live,
+                or once the preheat screen takes over (tap to get it back). */}
+            {((!roastStarted && !preheatActive) || setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Session</div>
@@ -2336,14 +2364,18 @@ function App() {
                 <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Equipment</div>
                 <div className="mt-3">
                   <label className="block">
-                    <div className="text-xs font-medium text-ink">Roaster Setup</div>
+                    <div className="text-xs font-medium text-ink">
+                      Roaster Setup
+                      {roastStarted && <span className="ml-1.5 text-ink-muted">(locked for this roast)</span>}
+                    </div>
                     <select
                       value={equipmentSetup}
+                      disabled={roastStarted}
                       onChange={(e) => {
                         equipmentChosenRef.current = true;
                         setEquipmentSetup(e.target.value);
                       }}
-                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {EQUIPMENT_OPTIONS.map((opt) => (
                         <option key={opt.id} value={opt.id}>
@@ -2369,8 +2401,9 @@ function App() {
             </button>
             )}
 
-            {/* PROMINENT PROFILE BUILDER CARD */}
-            {!roastStarted && !isTimerRunning && (
+            {/* PROMINENT PROFILE BUILDER CARD — not while the preheat screen has
+                the tab, so the giant instrument doesn't compete with a card. */}
+            {!roastStarted && !isTimerRunning && !preheatActive && (
               <section 
                 onClick={() => setIsProfileBuilderOpen(true)}
                 className="rounded-3xl bg-accent/10 border border-accent/20 p-4 cursor-pointer hover:bg-accent/15 transition-colors"
@@ -2396,6 +2429,15 @@ function App() {
                 derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
             <section className="overflow-hidden rounded-3xl border border-border/60 bg-surface/30 divide-y divide-border/50">
 
+              {preheatActive ? (
+                <div className="px-4 pb-3 pt-3.5">
+                  <PreheatScreen
+                    bt={gatedLiveRoast.bt}
+                    target={preheatTarget}
+                    onTargetChange={setPreheatTarget}
+                  />
+                </div>
+              ) : (
               <div className="px-4 pb-3 pt-3.5">
                 <div className="flex items-end justify-between gap-3">
               <div className="flex min-w-0 flex-col items-start gap-1 text-left">
@@ -2420,7 +2462,7 @@ function App() {
                 </div>
 
                 <div className={`font-mono font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink ${
-                  liveRoast.status === "live" || liveRoast.status === "bridge-only"
+                  gatedLiveRoast.status === "live" || gatedLiveRoast.status === "bridge-only"
                     ? "text-[46px]" : "text-[60px]"
                 }`}>
                   {formatTime(elapsedSeconds)}
@@ -2456,10 +2498,10 @@ function App() {
               {/* Live bean temp sits with the chrono, not in a separate card: one instrument. */}
               <LiveRoastReadout
                 cluster
-                status={liveRoast.status}
-                bt={liveRoast.bt}
-                ror={liveRoast.ror}
-                viewers={liveRoast.viewers}
+                status={gatedLiveRoast.status}
+                bt={gatedLiveRoast.bt}
+                ror={gatedLiveRoast.ror}
+                viewers={gatedLiveRoast.viewers}
                 recording={roastStarted && !coolingStartTime}
                 points={curvePointCount}
                 expanded={liveChartOpen}
@@ -2467,6 +2509,7 @@ function App() {
               />
                 </div>
               </div>
+              )}
 
               {/* Live curve, attached to the hero rather than floating in its own card. */}
               {curveVisible && (
@@ -2517,13 +2560,13 @@ function App() {
                     className="px-2 py-1.5 text-center transition active:scale-95"
                   >
                     <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-muted">Temp</div>
-                    <div className={`mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-accent-text" : "text-ink"}`}>
-                      {liveRoast.isLive && typeof liveRoast.bt === "number"
-                        ? Math.round(liveRoast.bt)
+                    <div className={`mt-1 font-mono text-[27px] font-semibold leading-tight tabular-nums ${gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number" ? "text-accent-text" : "text-ink"}`}>
+                      {gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number"
+                        ? Math.round(gatedLiveRoast.bt)
                         : (latestLogged.temp ? toDisplayTemp(latestLogged.temp) : "—")}
                     </div>
-                    <div className={`mt-2 font-mono text-[9.5px] uppercase tracking-[0.14em] ${liveRoast.isLive && typeof liveRoast.bt === "number" ? "text-success-text" : "text-ink-muted"}`}>
-                      {liveRoast.isLive && typeof liveRoast.bt === "number" ? "live" : "reading"}
+                    <div className={`mt-2 font-mono text-[9.5px] uppercase tracking-[0.14em] ${gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number" ? "text-success-text" : "text-ink-muted"}`}>
+                      {gatedLiveRoast.isLive && typeof gatedLiveRoast.bt === "number" ? "live" : "reading"}
                     </div>
                   </button>
                   </div>

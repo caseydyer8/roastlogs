@@ -45,9 +45,27 @@ trapped in agent config.
   a `live_` key, so `clearLiveSession` and the sign-in purge leave it alone).
   A bridge on the channel auto-selects the Razzo, since only it has a probe —
   but never over an explicit pick and never once a roast is under way.
-  **Phase 2, deliberately deferred:** the capability gate (hide live mode when
-  the setup has no probe), the 315°F preheat screen, and cross-equipment flags
-  in the comparison tool. See `docs/equipment-field-plan.md`.
+  **Phase 2 shipped, verified on localhost 2026-09-04** (gate, preheat, and
+  comparison flag all confirmed against a real bridge + mock device; code
+  review and security review both clean): the shared vocabulary
+  (`EQUIPMENT_OPTIONS`/`equipmentLabel`/`equipmentHasProbe`) now lives in
+  `src/lib/equipment.js`, imported by `App.js` and `RoastCompareChart.jsx` —
+  don't redefine it inline again. `App.js` derives one `gatedLiveRoast` (a
+  view of `liveRoast` forced to `status: "no-bridge"` when the selected setup
+  has no probe) and every Roast-tab display/recording path reads that instead
+  of `liveRoast` directly — the bridge auto-select effect and the Settings
+  "RoastLink Bridge" diagnostic are the two deliberate exceptions, since they
+  need the real signal. `PreheatScreen.jsx` takes over the Roast-tab hero
+  (giant BT vs. a target, default 315°F, editable, `localStorage.
+  roastlogs_preheat_target`) whenever a probe is selected, no roast is
+  running, and a real live reading is on screen — on *every* roast, not just
+  back-to-back ones. On a rising crossing it chimes, speaks, and shows the
+  same phrase (`"Roaster's warmed up!"`, one constant in that file) at once —
+  audio only; `navigator.vibrate()` doesn't exist in iOS Safari/PWA, so haptics
+  were dropped from scope rather than shipped broken. `RoastCompareChart.jsx`
+  flags two or more compared roasts with *different, known* `equipment.setup`
+  values — roasts missing the field entirely are never treated as a mismatch.
+  See `docs/equipment-field-plan.md` and `docs/roastlink-live-data-plan.md`.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.

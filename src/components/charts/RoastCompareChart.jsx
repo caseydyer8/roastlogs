@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { equipmentLabel } from "../../lib/equipment";
 
 // Same-bean roast comparison. Read-only over already-saved roasts — no data
 // model changes. Each roast gets one identity color carried across the temp
@@ -143,8 +144,23 @@ export default function RoastCompareChart({ roasts }) {
   const list = (roasts || []).slice(0, 3);
   if (list.length < 2) return null;
 
+  // Flag it, don't guess it: roasts missing `equipment` entirely (pre-v3.7.0,
+  // or "Not recorded") aren't a contradiction, so they never trigger this --
+  // only two or more KNOWN, DIFFERENT setups do. The Razzo's thicker glass
+  // carries more thermal mass, so a curve shift here can be hardware, not
+  // technique.
+  const knownSetups = [...new Set(list.map((r) => r.equipment?.setup).filter(Boolean))];
+  const mixedEquipment = knownSetups.length > 1;
+
   return (
     <div className="space-y-4">
+      {mixedEquipment && (
+        <div className="rounded-2xl border border-accent/40 bg-accent/5 px-3 py-2 text-[11px] font-medium text-accent-text">
+          Different equipment — {knownSetups.map(equipmentLabel).join(", ")} — curves
+          aren't directly comparable.
+        </div>
+      )}
+
       {/* Legend chips */}
       <div className="flex flex-wrap gap-2">
         {list.map((r, i) => (

@@ -50,6 +50,40 @@ test("equipment: a roast logged before v3.7.0 reads 'Not recorded', never a gues
   await expect(page.getByText("Not recorded")).toBeVisible();
 });
 
+test("equipment: comparison tool flags two DIFFERENT known setups", async ({ page }) => {
+  const roastA = { ...fixtureRoast, id: 1, date: "2026-07-01", equipment: { setup: "razzo-v5t", probe: "k-type" } };
+  const roastB = { ...fixtureRoast, id: 2, date: "2026-07-02", equipment: { setup: "sr540", probe: null } };
+  // Stacks after beforeEach's init script -- both run in order on reload, so
+  // this one overwrites the single-roast seed with our two-roast pair.
+  await page.addInitScript(([a, b]) => window.localStorage.setItem("roasts", JSON.stringify([a, b])), [roastA, roastB]);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureRoast.beanName).click();
+  await page.getByText(/^Compare \d+ roasts$/).click();
+
+  await expect(page.getByText(/Different equipment/)).toBeVisible();
+  await expect(page.getByText("SR540 + Razzo V5T")).toBeVisible();
+  await expect(page.getByText("Standard SR540")).toBeVisible();
+});
+
+test("equipment: comparison tool does NOT flag matching or unrecorded equipment", async ({ page }) => {
+  // One roast records equipment, the other predates the field entirely (like
+  // the 26 real pre-v3.7.0 roasts) -- missing data is not a contradiction.
+  const roastA = { ...fixtureRoast, id: 1, date: "2026-07-01", equipment: { setup: "razzo-v5t", probe: "k-type" } };
+  const roastB = { ...fixtureRoast, id: 2, date: "2026-07-02" };
+  await page.addInitScript(([a, b]) => window.localStorage.setItem("roasts", JSON.stringify([a, b])), [roastA, roastB]);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureRoast.beanName).click();
+  await page.getByText(/^Compare \d+ roasts$/).click();
+
+  await expect(page.getByText(/Different equipment/)).toHaveCount(0);
+});
+
 test("app shell: bottom nav stays pinned to the viewport bottom while content scrolls", async ({ page }) => {
   // Guards the v3 app-shell fix directly, in place of the full-page pixel
   // diff that used to (accidentally) cover it. The old bug: the bar rendered
