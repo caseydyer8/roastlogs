@@ -125,6 +125,30 @@ changes get a security pass before commit.
 
 ---
 
+## How to write to me
+
+Case has ADHD and reads fast. Long, flat prose is a defect even when every line
+is accurate — treat length as a requirement, not a style note.
+
+- **Heavy visual variety.** Inline `code tags` for key terms, filenames, commands
+  and steps. Callout quotes (`>`) for summaries and takeaways. Numbered lists
+  with **bold headers** instead of long paragraphs.
+- **Lead with the result**, then the detail. No preamble, no closing recap.
+- **Expand every abbreviation once** — E2E, RLS, aal2, MFA, PWA. An unexplained
+  "E2E" once cost a full round trip when it was read as "end-to-end encryption"
+  rather than "end-to-end tests".
+- **Correct terminology plus a one-line plain-English definition.** Don't dumb
+  the term down and don't leave it bare.
+- **Coach, don't just report** — name the principle so it can be reused. Add a
+  short **For future reference:** line when a concrete command or fact comes up.
+- **Aim below developer level, above beginner.** Case works help desk and
+  sysadmin with some security, about a year in, and learned app development
+  entirely by building this app. He will ask for more technical depth when he
+  wants it.
+- **Justify the work.** He challenges fixes that cannot say who is harmed and
+  how — and he is usually right. Lead with why something matters; drop anything
+  that cannot answer that.
+
 ## Explaining the work
 
 Occasionally explain what the code does and why — **architecture level first, detail

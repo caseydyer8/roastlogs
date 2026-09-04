@@ -25,6 +25,31 @@ test("roast tab: starting settings ordered Fan, Heat, Temp", async ({ page }) =>
   await fullPageShot(page, "roast-tab.png");
 });
 
+test("equipment: selector offers the three setups and persists across a reload", async ({ page }) => {
+  const select = page.getByLabel("Roaster Setup");
+  await expect(select).toBeVisible();
+
+  const options = await select.locator("option").allInnerTexts();
+  expect(options).toEqual([
+    "SR540 + Razzo V5T",
+    "SR540 + OEM Extension Tube",
+    "Standard SR540",
+  ]);
+
+  // Equipment is hardware, not per-roast scratch -- it is stored under a
+  // `roastlogs_` key precisely so it survives when live_* state does not.
+  await select.selectOption("sr540");
+  await page.reload();
+  await expect(page.getByLabel("Roaster Setup")).toHaveValue("sr540");
+});
+
+test("equipment: a roast logged before v3.7.0 reads 'Not recorded', never a guess", async ({ page }) => {
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  // The fixture predates the equipment field, exactly like the 26 real roasts.
+  await expect(page.getByText("Not recorded")).toBeVisible();
+});
+
 test("app shell: bottom nav stays pinned to the viewport bottom while content scrolls", async ({ page }) => {
   // Guards the v3 app-shell fix directly, in place of the full-page pixel
   // diff that used to (accidentally) cover it. The old bug: the bar rendered

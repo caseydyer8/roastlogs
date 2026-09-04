@@ -37,6 +37,17 @@ trapped in agent config.
   presentation attributes don't resolve bare `var()`, but do resolve a
   properly-wrapped `rgb()` function). The theme toggle lives in Settings and
   persists to `localStorage.roastlogs_theme`.
+- **Equipment** (`roast.equipment`, v3.7.0) records the hardware a roast used:
+  `{ setup: "razzo-v5t" | "oem-tube" | "sr540", probe: "k-type" | null }`, in a
+  nullable `equipment jsonb` column. Roasts logged before v3.7.0 are null and
+  render "Not recorded" — never inferred. The selection persists between roasts
+  under `localStorage.roastlogs_equipment` (a DEVICE preference like theme, NOT
+  a `live_` key, so `clearLiveSession` and the sign-in purge leave it alone).
+  A bridge on the channel auto-selects the Razzo, since only it has a probe —
+  but never over an explicit pick and never once a roast is under way.
+  **Phase 2, deliberately deferred:** the capability gate (hide live mode when
+  the setup has no probe), the 315°F preheat screen, and cross-equipment flags
+  in the comparison tool. See `docs/equipment-field-plan.md`.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.

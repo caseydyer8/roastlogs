@@ -906,6 +906,18 @@ function App() {
     "Italian (Darkest)",
   ];
 
+  // Roaster hardware. Ordered most-used first. Only the Razzo carries a probe,
+  // which is why `probe` is stored on the roast rather than re-derived later --
+  // the Phase 2 capability gate (no probe => no live mode) reads this one field.
+  const EQUIPMENT_OPTIONS = [
+    { id: "razzo-v5t", label: "SR540 + Razzo V5T", probe: "k-type" },
+    { id: "oem-tube", label: "SR540 + OEM Extension Tube", probe: null },
+    { id: "sr540", label: "Standard SR540", probe: null },
+  ];
+
+  const equipmentLabel = (setup) =>
+    EQUIPMENT_OPTIONS.find((o) => o.id === setup)?.label || "Not recorded";
+
   const formatTime = (totalSeconds) => {
     const s = Math.max(0, Math.floor(totalSeconds));
     const mm = String(Math.floor(s / 60)).padStart(2, "0");
@@ -921,6 +933,15 @@ function App() {
   const [startingHeat, setStartingHeat] = React.useState(() => localStorage.getItem("live_startingHeat") || "");
   const [startingFan, setStartingFan] = React.useState(() => localStorage.getItem("live_startingFan") || "");
   const [startingTemp, setStartingTemp] = React.useState(() => localStorage.getItem("live_startingTemp") || "");
+
+  // Equipment is hardware, not a per-roast value -- it persists between roasts
+  // under a `roastlogs_` key so neither clearLiveSession nor the live_* purge
+  // clears it. "oem-tube" is only the never-chosen-before fallback; the bridge
+  // effect below can upgrade it.
+  const [equipmentSetup, setEquipmentSetup] = React.useState(
+    () => localStorage.getItem("roastlogs_equipment") || "oem-tube"
+  );
+  const equipmentChosenRef = React.useRef(false);
 
   const [isTimerRunning, setIsTimerRunning] = React.useState(false);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(() => Number(localStorage.getItem("live_elapsedSeconds")) || 0);
@@ -1249,6 +1270,11 @@ function App() {
   React.useEffect(() => {
     localStorage.setItem("live_targetRoastLevel", targetRoastLevel);
   }, [targetRoastLevel]);
+
+  React.useEffect(() => {
+    localStorage.setItem("roastlogs_equipment", equipmentSetup);
+  }, [equipmentSetup]);
+
 
   React.useEffect(() => {
     localStorage.setItem("live_startingHeat", startingHeat);
@@ -1593,6 +1619,10 @@ function App() {
         temp: startingTemp
       },
       curve: curveRef.current.slice(),
+      equipment: {
+        setup: equipmentSetup,
+        probe: EQUIPMENT_OPTIONS.find((o) => o.id === equipmentSetup)?.probe ?? null,
+      },
     };
     curveRef.current = [];
     setCurvePointCount(0);
@@ -1665,6 +1695,24 @@ function App() {
   // ticked. Pausing within the first second (elapsedSeconds still 0) must not look like
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
+
+  // The bridge only ever publishes chamber temperature from the K-type probe,
+  // and only the Razzo has one -- so a bridge on the channel is strong evidence
+  // of what is physically on the roaster. Adopt it, under three limits:
+  //   - "live" OR "bridge-only": both mean a bridge IS present. bridge-only
+  //     just means no sample landed yet (device warming, probe fault), which
+  //     says nothing about which tube is fitted.
+  //   - never once a roast is under way, or the record would change mid-roast
+  //     to describe hardware the roast did not start on.
+  //   - never over an explicit pick. The app may guess; it does not argue.
+  React.useEffect(() => {
+    if (equipmentChosenRef.current || roastStarted) return;
+    const bridgePresent =
+      liveRoast.status === "live" || liveRoast.status === "bridge-only";
+    if (bridgePresent && equipmentSetup !== "razzo-v5t") {
+      setEquipmentSetup("razzo-v5t");
+    }
+  }, [liveRoast.status, equipmentSetup, roastStarted]);
 
   // Ends at the drop once it is marked, otherwise tracks the live clock.
   const devSeconds = firstCrackTime == null
@@ -2139,7 +2187,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.6.1",
+        appVersion: "3.7.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -2275,6 +2323,31 @@ function App() {
                       {ROAST_LEVEL_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {/* Equipment lives in its own card: it is a property of the
+                  roaster, not of the bean, and it persists between roasts. */}
+              <div className="mt-3 rounded-2xl border border-border/60 bg-primary/20 p-4">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Equipment</div>
+                <div className="mt-3">
+                  <label className="block">
+                    <div className="text-xs font-medium text-ink">Roaster Setup</div>
+                    <select
+                      value={equipmentSetup}
+                      onChange={(e) => {
+                        equipmentChosenRef.current = true;
+                        setEquipmentSetup(e.target.value);
+                      }}
+                      className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
+                    >
+                      {EQUIPMENT_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
                         </option>
                       ))}
                     </select>
@@ -3602,6 +3675,17 @@ function App() {
                             ))}
                           </select>
                         )}
+                      </div>
+                      {/* Read-only: every roast before v3.7.0 has no equipment,
+                          and there is no honest way to infer one, so it says so
+                          rather than defaulting to something untrue. */}
+                      <div className="col-span-2">
+                        <div className="text-[10px] uppercase tracking-widest text-ink-muted">Equipment</div>
+                        <div className={`text-sm font-medium ${selectedRoast.equipment?.setup ? "text-ink" : "text-ink-muted italic"}`}>
+                          {selectedRoast.equipment?.setup
+                            ? equipmentLabel(selectedRoast.equipment.setup)
+                            : "Not recorded"}
+                        </div>
                       </div>
                     </div>
 
@@ -5183,7 +5267,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.6.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.7.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />

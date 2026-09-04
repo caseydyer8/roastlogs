@@ -140,12 +140,24 @@ Realistic scope: tag `e2e/login.spec.js` "login screen renders" as `@smoke`,
 and add one shell check (app mounts, no console errors, correct version in the
 About badge). That genuinely proves the deploy is alive without needing a login.
 
-## 3. Equipment field — still unbuilt
+## 3. Equipment field — Phase 1 SHIPPED in v3.7.0 (2026-09-03)
 
-A roaster/tube selector in session setup: SR540 bare, OEM extension tube, V5T
-Razzo. Specified in `docs/roastlink-live-data-plan.md`. It drives the 315F
-preheat warning and records which tube a roast used, without which History
-comparisons mislead. Deliberately NOT wired to rail-versus-curve visibility.
+A roaster setup selector on the Roast tab: `SR540 + Razzo V5T`, `SR540 + OEM
+Extension Tube`, `Standard SR540`. Saved per roast, synced to Supabase in a new
+nullable `equipment jsonb` column, shown in History detail. Roasts logged before
+v3.7.0 read "Not recorded" — never inferred. The choice persists between roasts
+under `roastlogs_equipment` (a device preference, not a `live_` key), and a
+connected bridge auto-selects the Razzo since only it carries the K-type probe.
+
+Plan and decisions: `docs/equipment-field-plan.md`.
+Migration: `docs/2026-09-03_add_equipment_to_roasts.sql` (applied live).
+
+**Phase 2, still unbuilt and deliberately deferred:**
+- The **capability gate** — hide live mode when the selected setup has no probe.
+  Deferred because it lets the dropdown switch live temps off; safer to build
+  once real roasts carry equipment values.
+- The **315°F preheat screen** (full-bleed state, live BT against target).
+- **Cross-equipment flags** in the comparison tool.
 
 ## Standing notes
 
