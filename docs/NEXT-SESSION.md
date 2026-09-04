@@ -9,16 +9,14 @@
 
 Equipment Phase 2 shipped and verified 2026-09-04 (gate, preheat screen,
 comparison flag — real bridge + mock device, on Case's Windows machine, not
-his usual Mac; see the standing constraint below). Nothing else is
-half-finished.
+his usual Mac; see the standing constraint below). The `is_admin` REST oracle
+closed the same day (`docs/2026-09-04_revoke_is_admin_execute.sql`). Nothing
+else is half-finished.
 
 | # | What | Blocked on |
 |---|---|---|
 | 1 | **App logo** — `public/favicon.ico` does not exist though `manifest.json` references it, `index.html` has no icon links at all, and `theme_color` is still the retired amber `#f59e0b` | **Case's source art. Do not invent a logo.** |
-| 2 | **Close the `is_admin` REST oracle** — `REVOKE EXECUTE ON FUNCTION public.is_admin(uuid) FROM authenticated;` Policies call it as definer and keep working | Case's go-ahead |
-| 3 | **Harden the superseded-migration guards against `psql`** — they stop the Supabase SQL editor but `psql -f` defaults to `ON_ERROR_STOP=0`. Fix is `/*` after each `$guard$;` and `*/` at EOF | Case's call; optional |
-
-**Fastest win: #2** — one statement in the SQL editor.
+| 2 | **Harden the superseded-migration guards against `psql`** — they stop the Supabase SQL editor but `psql -f` defaults to `ON_ERROR_STOP=0`. Fix is `/*` after each `$guard$;` and `*/` at EOF | Case's call; optional |
 
 ## Standing constraints
 

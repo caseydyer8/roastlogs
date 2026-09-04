@@ -120,7 +120,11 @@ trapped in agent config.
 - **Admin infra:** `public.admins` (RLS-on, no policies, grants revoked →
   default-deny) + `public.is_admin(uuid)` SECURITY DEFINER (`search_path=''`).
   Both of Casey's accounts are seeded by an explicit EMAIL ALLOWLIST — never
-  blanket-promote `auth.users`.
+  blanket-promote `auth.users`. **The direct REST oracle is closed
+  (2026-09-04):** `authenticated` no longer has `EXECUTE` on `is_admin(uuid)`
+  (`docs/2026-09-04_revoke_is_admin_execute.sql`), so a logged-in non-admin
+  can no longer probe an arbitrary UUID for admin status. Policies still call
+  it fine — that happens during policy evaluation, unaffected by the grant.
 - **Verified live 2026-07-27:** 16/16 policies require `aal2`; `anon` has 0 grants
   on all four tables (cannot SELECT). Earlier (2026-07-23) admin-only pen-test:
   simulated non-admin saw 0 rows across all four tables; ownership-spoof insert
