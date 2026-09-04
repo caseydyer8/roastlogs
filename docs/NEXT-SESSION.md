@@ -1,52 +1,101 @@
 # Open actions — read at session start
 
 > Surfaced automatically by the `SessionStart` hook in `.claude/settings.json`.
-> **Delete this file once the sequence below is done** — a stale open-action
-> file is worse than none.
+> **Delete this file once these are done.**
 
-## Where PR #13 stands (updated 2026-09-03)
+## Where things stand
 
-Case answered the (a)/(b) question: **(b) — build the History work onto this
-branch first**, so PR #13 is a real change rather than a docs pin. That is done.
-It now carries:
+**v3.6.0 is shipped and verified live** (2026-09-04): bundle
+`main.929346fc.js` -> `main.b52fce7d.js`, `3.6.0` in the shipped JS, `3.5.0`
+gone, gh-pages `e414a14`, edge byte-identical to gh-pages. PR #13 merged.
+Playwright 38/38 green on Case's machine. Nothing is half-finished.
 
-1. The v3.5.0 session pin and the History plan (docs).
-2. Three defects Case found across two live roasts on 2026-09-02: the drifting
-   dev timer, the duplicate `00:00` row, and missing temperatures on markers,
-   moments and profile rows.
-3. The shared phase vocabulary extracted to `src/lib/roastPhases.js`.
-4. The History roast-detail chart mirroring the live instrument.
+That release carried: the History chart mirroring the live instrument, the
+shared phase vocabulary in `src/lib/roastPhases.js`, dev time derived from the
+two marks instead of a drifting interval, no duplicate `00:00` row, time and
+temperature on every timeline row, ladder crossings marked AT their threshold,
+and Discard clearing the curve it used to leave behind.
 
-## What is left, in order
+## 1. App logo — phone and desktop (Case's request, 2026-09-04)
 
-1. **Case reviews on localhost.** Not yet done. `git pull` the branch, then
-   `npm start`; the bridge mock is `bridge/ npm run mock` with the bridge app
-   pointed at `127.0.0.1:8081`.
-2. **Run the `security-auditor` agent** — Case asked for this pass explicitly.
-   Note honestly what it did and did not cover: this branch touches charts,
-   timers and timeline rendering, not auth, sync, RLS or Supabase, so treat it
-   as a periodic audit rather than a gate on this diff.
-3. **Regenerate the Playwright baselines on Case's machine**:
-   `npx playwright test --update-snapshots`. The History chart and roast tab
-   genuinely look different now. Never regenerate from a cloud container.
-4. **Merge, then `/release`, then deploy.** The deploy runs on Case's machine
-   only: his gitignored `.env` holds the Supabase keys, and a build without them
-   publishes a keyless bundle that locks both accounts out of the live site.
-   Guard before deploying: `node -p "require('./package.json').version"` and
-   confirm the deploy log reads `roastlogs@<expected> deploy`.
+He wants a new app logo for both. This is bigger than swapping a PNG, because
+the icon wiring is currently incomplete:
 
-## Things Case should be told, not left to discover
+- `public/favicon.ico` **does not exist**, yet `public/manifest.json` lists it
+  as an icon source. Broken reference.
+- `public/index.html` contains **no icon links at all** — no `favicon`, no
+  `apple-touch-icon`. So iOS "Add to Home Screen" has nothing to use, and
+  desktop browsers fall back to a default.
+- Only `public/logo192.png` and `public/logo512.png` exist (512 is marked
+  `any maskable`).
+- `manifest.json` still sets `theme_color: "#f59e0b"` — the old amber, one of
+  the hardcoded hexes retired from the charts in v3.6.0. It no longer matches
+  the ember accent (`#d97d3d` dark / `#c2601f` light).
+- The bridge Electron app has its own icon: `bridge/assets/icon.icns`.
 
-- **Dev time now freezes on a pause** rather than counting on. That is what
-  makes the Roast tab and History agree, but beans keep roasting through a
-  pause.
-- **Two e2e assertions were changed, not dropped.** Both asserted the in-plot
-  "FC" divider pill that the ribbon retires; they now assert the ribbon, so the
-  intent — the chart NAMES its phases — is preserved.
-- The duplicate `00:00` fix is **forward-only** by Case's decision. The two
-  roasts from 2026-09-02 keep their duplicate row.
+So the work is: get the artwork from Case, then generate the full set
+(favicon.ico, 192, 512 maskable, apple-touch-icon 180), wire them properly in
+`index.html` and `manifest.json`, fix the theme_color, and decide whether the
+bridge `.icns` changes too. `sharp` is already a devDependency, so resizing can
+be scripted rather than done by hand.
 
-## Still unbuilt after this
+Ask Case for the source art first, and what he wants it to be — do not invent a
+logo for him.
 
-The equipment field (SR540 bare / OEM extension tube / V5T Razzo), specified in
-`docs/roastlink-live-data-plan.md`.
+## 2. Two security findings from the pre-merge audit, deliberately not shipped
+
+**Superseded migrations are still runnable — this is the one with teeth.**
+`docs/enable_rls.sql` (6 x `USING (true)`), `docs/2026-07-18_beans_table.sql`
+(4), and `docs/2026-07-21_multiuser_rls.sql` (2) carry no "do not run" marker.
+Postgres ORs permissive policies, so re-running any of them does not replace the
+admin+`aal2` policies — it adds a parallel path around them, granting every
+authenticated session full CRUD at `aal1`, including the bridge machine
+identity whose password sits in plaintext in `~/.roastlogs-bridge.json`. One
+"let me just re-apply the schema" moment silently undoes the 2026-07-25
+lockdown. Fix is a `SUPERSEDED - DO NOT RUN` banner at the top of each file, or
+moving all three to `docs/archive/`.
+
+**Sign-out does not clear the device cache.** `AuthContext.signOut` drops the
+session but leaves `roasts`, `beans`, `global_profiles` and every `live_*` key
+in localStorage, so anyone with the unlocked Mac afterwards reads all roast data
+with no credential. `enforceLocalDataOwner` only fires when a DIFFERENT account
+signs in. The fix is to call `purgeCachedUserData(USER_DATA_KEYS, { includeLive:
+true })` in `signOut` — but that discards an IN-PROGRESS ROAST on sign-out, so
+Case has to decide whether that trade is right before it goes in.
+
+Lower priority from the same audit: a legacy anon JWT sits in git history (blob
+`5da1ce70`, `.env.save`, unreachable from HEAD, valid to 2036) — public by
+design and there are zero `anon` grants, so the action is simply to disable
+legacy JWT keys in the Supabase dashboard, no history rewrite. And
+`bridge/main.js` writes `~/.roastlogs-bridge.json` at 0644 with the bridge
+password in plaintext; add `{ mode: 0o600 }` and `chmod 600` the existing file.
+
+**One thing Case still needs to run himself** — the audit could not reach the
+database. In the Supabase SQL editor:
+
+```sql
+SELECT tablename, policyname FROM pg_policies
+WHERE schemaname='public' AND (qual = 'true' OR with_check = 'true');
+```
+
+Expect **zero rows**. Anything returned means a permissive policy is live.
+
+## 3. Equipment field — still unbuilt
+
+A roaster/tube selector in session setup: SR540 bare, OEM extension tube, V5T
+Razzo. Specified in `docs/roastlink-live-data-plan.md`. It drives the 315F
+preheat warning and records which tube a roast used, without which History
+comparisons mislead. Deliberately NOT wired to rail-versus-curve visibility.
+
+## Standing notes
+
+- Deploys run on Case's machine ONLY. His gitignored `.env` holds the Supabase
+  keys; a build without them publishes a keyless bundle that locks both accounts
+  out of the live site. Guard before deploying:
+  `node -p "require('./package.json').version"` and confirm the deploy log reads
+  `roastlogs@<expected> deploy`.
+- Playwright baselines must be regenerated on Case's machine, never in a cloud
+  container — container font rendering differs by ~2px and Playwright rejects on
+  size mismatch before `maxDiffPixelRatio` applies.
+- Case's preference, stated 2026-09-03: when a bug-prone area is found, tell him
+  what happened, what the fix is, and show the diff. Be concise.
