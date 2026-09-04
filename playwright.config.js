@@ -1,5 +1,7 @@
 const { defineConfig } = require("@playwright/test");
 
+const SMOKE_URL = process.env.SMOKE_URL;
+
 // UI refinement loop for RoastLogs. Tests run against the CRA dev server
 // with the E2E auth bypass (src/index.js) + all Supabase traffic blocked
 // (see e2e/*.spec.js beforeEach) — real data can never be touched.
@@ -13,14 +15,20 @@ module.exports = defineConfig({
       animations: "disabled",
     },
   },
-  webServer: {
-    command: "BROWSER=none npm start",
-    url: "http://localhost:3000",
-    reuseExistingServer: true,
-    timeout: 180_000,
-  },
+  // Live smoke runs point at the DEPLOYED site instead of a dev server:
+  //   SMOKE_URL=https://caseydyer8.github.io/roastlogs/ npx playwright test -g @smoke
+  // Starting a local dev server for those would prove nothing about the deploy,
+  // so webServer is dropped entirely when SMOKE_URL is set.
+  webServer: SMOKE_URL
+    ? undefined
+    : {
+        command: "BROWSER=none npm start",
+        url: "http://localhost:3000",
+        reuseExistingServer: true,
+        timeout: 180_000,
+      },
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: SMOKE_URL || "http://localhost:3000",
   },
   projects: [
     {

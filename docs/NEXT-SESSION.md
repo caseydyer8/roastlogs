@@ -141,22 +141,34 @@ Neither is urgent; both were surfaced 2026-09-03 and consciously left.
   comment early. Not applied: it makes each file read as entirely commented-out,
   and the SQL editor is the documented path.
 
-## 2b. No test is tagged `@smoke` — post-deploy step 6 always skips
+## 2b. Post-deploy smoke tests — BUILT 2026-09-03
 
-`deploy-verifier` has a step 6 that runs `@smoke`-tagged Playwright tests
-against the LIVE site. No test carries the tag, so it has silently skipped
-after every deploy. Case asked (2026-09-03) that it actually run next time.
+`deploy-verifier` step 6 had silently skipped after every deploy because no test
+carried the `@smoke` tag. Two now do, in `e2e/smoke.spec.js`, and they run
+against the LIVE site:
 
-**The catch that has to be designed around:** every existing test uses the E2E
-auth bypass, which is compiled out of production builds (`NODE_ENV ===
-"development"` in `src/index.js`). So the current tests CANNOT run against the
-live URL — they would land on the login screen. A live smoke test can only
-cover unauthenticated surface unless real credentials plus an MFA code get
-involved, which is not worth automating.
+```
+SMOKE_URL=https://caseydyer8.github.io/roastlogs/ npx playwright test -g @smoke
+```
 
-Realistic scope: tag `e2e/login.spec.js` "login screen renders" as `@smoke`,
-and add one shell check (app mounts, no console errors, correct version in the
-About badge). That genuinely proves the deploy is alive without needing a login.
+`playwright.config.js` drops its `webServer` when `SMOKE_URL` is set — starting a
+local dev server would prove nothing about a deploy. With no `SMOKE_URL` they run
+against localhost as part of the normal suite, so they cannot silently rot.
+
+**What they prove that `HTTP 200` does not:** the shipped bundle parses, React
+mounts, and the app reaches the login gate; the served bundle carries the
+expected `appVersion`; and the Supabase URL and publishable key are present. A
+keyless build — one made without the gitignored `.env` — returns 200 for the HTML
+while locking both accounts out, and would fail here.
+
+They are unauthenticated by design. Every other test relies on the E2E auth
+bypass in `src/index.js`, which is gated on `NODE_ENV === "development"` and does
+not exist in a production build.
+
+Ran green against v3.7.0 live on 2026-09-03. **Gotcha worth remembering:** the
+live site is served from a subpath (`/roastlogs/`), so tests must use
+`page.goto("./")` — a leading `/` resolves against the domain root and silently
+tests the wrong page. That bug was caught on the first run.
 
 ## 3. Equipment field — Phase 1 SHIPPED in v3.7.0 (2026-09-03)
 
