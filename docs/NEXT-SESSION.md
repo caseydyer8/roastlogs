@@ -5,7 +5,10 @@
 
 ## Where things stand
 
-**v3.6.0 is shipped and verified live** (2026-09-04): bundle
+**v3.6.1 is shipped and verified live** (2026-09-03): bundle
+`main.a97b8934.js`, gh-pages `ebac1760`, Supabase keys confirmed present in the
+live bundle. It carried the security cleanup below. Prior release:
+
 `main.929346fc.js` -> `main.b52fce7d.js`, `3.6.0` in the shipped JS, `3.5.0`
 gone, gh-pages `e414a14`, edge byte-identical to gh-pages. PR #13 merged.
 Playwright 38/38 green on Case's machine. Nothing is half-finished.
@@ -119,6 +122,23 @@ WHERE schemaname='public' AND (qual = 'true' OR with_check = 'true');
 is intact. Sessions carry no timeout (`not_after` is null) and survive for weeks
 on one MFA challenge — verified: a session created 2026-08-08 was still
 refreshing 2026-09-04.
+
+## 2b. No test is tagged `@smoke` — post-deploy step 6 always skips
+
+`deploy-verifier` has a step 6 that runs `@smoke`-tagged Playwright tests
+against the LIVE site. No test carries the tag, so it has silently skipped
+after every deploy. Case asked (2026-09-03) that it actually run next time.
+
+**The catch that has to be designed around:** every existing test uses the E2E
+auth bypass, which is compiled out of production builds (`NODE_ENV ===
+"development"` in `src/index.js`). So the current tests CANNOT run against the
+live URL — they would land on the login screen. A live smoke test can only
+cover unauthenticated surface unless real credentials plus an MFA code get
+involved, which is not worth automating.
+
+Realistic scope: tag `e2e/login.spec.js` "login screen renders" as `@smoke`,
+and add one shell check (app mounts, no console errors, correct version in the
+About badge). That genuinely proves the deploy is alive without needing a login.
 
 ## 3. Equipment field — still unbuilt
 
