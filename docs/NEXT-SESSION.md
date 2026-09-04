@@ -123,6 +123,24 @@ is intact. Sessions carry no timeout (`not_after` is null) and survive for weeks
 on one MFA challenge — verified: a session created 2026-08-08 was still
 refreshing 2026-09-04.
 
+### Two low-priority items from the audit, not done
+
+Neither is urgent; both were surfaced 2026-09-03 and consciously left.
+
+- **`is_admin` is callable over REST.** `public.is_admin(uuid)` is
+  `SECURITY DEFINER` and `EXECUTE`-able by `authenticated`, so any authenticated
+  caller can ask `/rest/v1/rpc/is_admin` whether a UUID they already hold is an
+  admin. Near-zero impact with two accounts, both admins. To close it:
+  `REVOKE EXECUTE ON FUNCTION public.is_admin(uuid) FROM authenticated;` — the
+  RLS policies call it as the definer and keep working.
+- **The superseded-migration guards assume the Supabase SQL editor**, which runs
+  a file as one transaction so `raise exception` aborts everything. `psql -f`
+  defaults to `ON_ERROR_STOP=0` and would print the error then run the rest of
+  the file anyway. To close it, add `/*` right after each `$guard$;` and `*/` at
+  EOF — checked, none of the four files contains a `*/` that would end the
+  comment early. Not applied: it makes each file read as entirely commented-out,
+  and the SQL editor is the documented path.
+
 ## 2b. No test is tagged `@smoke` — post-deploy step 6 always skips
 
 `deploy-verifier` has a step 6 that runs `@smoke`-tagged Playwright tests
