@@ -1354,9 +1354,23 @@ function App() {
       "live_coolingStartTime",
       "live_roastLog",
       "live_profileFollowing",
-      "live_currentProfileStepIdx"
+      "live_currentProfileStepIdx",
+      // The curve was persisted so a mid-roast reload keeps its trace, but
+      // Discard never cleared it. startRoast masked that by resetting curveRef
+      // on a fresh roast -- until the timeline gained a curve fallback for
+      // missing temperatures, which would then paint a DISCARDED roast's
+      // readings onto the next one after a reload. Same-account bleed, not a
+      // cross-account leak: the "live_" prefix purge already covers sign-in.
+      LIVE_CURVE_KEY,
+      // Vestigial: read at startup but never written since an old version.
+      // Purged so a stale copy on a long-lived install cannot hydrate.
+      "live_adjustments"
     ];
     keys.forEach(k => localStorage.removeItem(k));
+    curveRef.current = [];
+    setCurvePointCount(0);
+    turnaroundLowRef.current = null;
+    prevSampleRef.current = null;
     
     setBeanName("");
     setGreenWeightGrams("");
