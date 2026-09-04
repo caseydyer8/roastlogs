@@ -1,28 +1,58 @@
 # Open actions — read at session start
 
 > Surfaced automatically by the `SessionStart` hook in `.claude/settings.json`.
-> **Delete this file once these are done.**
+> **Delete this file once the Pick up here list is empty.**
+
+## Pick up here
+
+Nothing is half-finished. Working tree clean, `main` pushed, live site verified.
+These are the next things to start, in the order I'd take them.
+
+| # | What | Blocked on | Detail |
+|---|---|---|---|
+| 1 | **Equipment Phase 2** — capability gate, 315°F preheat screen, cross-equipment comparison flags | Nothing | § 3 |
+| 2 | **App logo** — favicon + apple-touch icons, wire `index.html` and `manifest.json`, fix `theme_color` | **Your source art.** Do not invent a logo | § 1 |
+| 3 | **Close the `is_admin` REST oracle** — one `REVOKE`, near-zero impact | Your go-ahead | § 2 |
+| 4 | **Harden the migration guards against `psql`** — optional | Your call | § 2 |
+
+**Biggest-value next step: #1.** It is unblocked, and the equipment values it
+depends on start accumulating with the very next roast.
+
+**Fastest win: #3.** A single SQL statement in the Supabase dashboard.
 
 ## Where things stand
 
-**v3.6.1 is shipped and verified live** (2026-09-03): bundle
-`main.a97b8934.js`, gh-pages `ebac1760`, Supabase keys confirmed present in the
-live bundle. It carried the security cleanup below. Prior release:
+**v3.7.0 is shipped and deploy-verified live** (2026-09-03): commit `b56afed3`,
+bundle `main.09fd5605.js`, gh-pages `475d1bcc`, `appVersion:"3.7.0"` confirmed
+in the served bundle, Supabase keys present (not a keyless build). The CDN
+served a stale bundle on the first verification pass and matched after one
+60-second retry — which is exactly why the bundle-hash check exists.
 
-`main.929346fc.js` -> `main.b52fce7d.js`, `3.6.0` in the shipped JS, `3.5.0`
-gone, gh-pages `e414a14`, edge byte-identical to gh-pages. PR #13 merged.
-Playwright 38/38 green on Case's machine. Nothing is half-finished.
+Since then, `45c607d3` added the post-deploy smoke tests (§ 2b). Not deployed —
+tests do not ship to the site.
 
-That release carried: the History chart mirroring the live instrument, the
-shared phase vocabulary in `src/lib/roastPhases.js`, dev time derived from the
-two marks instead of a drifting interval, no duplicate `00:00` row, time and
-temperature on every timeline row, ladder crossings marked AT their threshold,
-and Discard clearing the curve it used to leave behind.
+**Three releases on 2026-09-03:**
 
-**Security cleanup shipped 2026-09-03** (section 2). Four superseded migrations
-can no longer be run by accident, the audit tooling was rewritten to match the
-live model, and the bridge password file is owner-only. Build clean, Playwright
-38/38.
+1. **v3.6.1** — security cleanup: `raise exception` guards on four superseded
+   migrations, rewritten `rls-audit` skill and `security-auditor` /
+   `deploy-verifier` agents (all three had drifted into being actively wrong),
+   bridge settings file locked to `0600`. Detail in § 2.
+2. **v3.7.0** — equipment field Phase 1: which roaster setup each roast used.
+   Detail in § 3.
+3. Plus the smoke tests in § 2b, and the bridge account password rotated (old
+   password verified rejected). Legacy Supabase JWT API keys were already
+   disabled back on 2026-08-08 — confirmed live, nothing to do.
+
+**Verified live 2026-09-03:** zero permissive RLS policies; all 16 require
+`is_admin(auth.uid()) AND aal = 'aal2'`. Supabase sessions carry no timeout, so
+one MFA challenge lasts weeks — a session created 2026-08-08 was still
+refreshing on 2026-09-04.
+
+**Prior release, v3.6.0**, carried: the History chart mirroring the live
+instrument, the shared phase vocabulary in `src/lib/roastPhases.js`, dev time
+derived from the two marks instead of a drifting interval, no duplicate `00:00`
+row, time and temperature on every timeline row, ladder crossings marked AT
+their threshold, and Discard clearing the curve it used to leave behind.
 
 ## 1. App logo — phone and desktop (Case's request, 2026-09-04)
 
