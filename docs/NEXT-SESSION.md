@@ -16,6 +16,11 @@ two marks instead of a drifting interval, no duplicate `00:00` row, time and
 temperature on every timeline row, ladder crossings marked AT their threshold,
 and Discard clearing the curve it used to leave behind.
 
+**Security cleanup shipped 2026-09-03** (section 2). Four superseded migrations
+can no longer be run by accident, the audit tooling was rewritten to match the
+live model, and the bridge password file is owner-only. Build clean, Playwright
+38/38.
+
 ## 1. App logo — phone and desktop (Case's request, 2026-09-04)
 
 He wants a new app logo for both. This is bigger than swapping a PNG, because
@@ -42,43 +47,78 @@ be scripted rather than done by hand.
 Ask Case for the source art first, and what he wants it to be — do not invent a
 logo for him.
 
-## 2. Two security findings from the pre-merge audit, deliberately not shipped
+## 2. Security findings from the pre-merge audit — CLOSED 2026-09-03
 
-**Superseded migrations are still runnable — this is the one with teeth.**
-`docs/enable_rls.sql` (6 x `USING (true)`), `docs/2026-07-18_beans_table.sql`
-(4), and `docs/2026-07-21_multiuser_rls.sql` (2) carry no "do not run" marker.
-Postgres ORs permissive policies, so re-running any of them does not replace the
-admin+`aal2` policies — it adds a parallel path around them, granting every
-authenticated session full CRUD at `aal1`, including the bridge machine
-identity whose password sits in plaintext in `~/.roastlogs-bridge.json`. One
-"let me just re-apply the schema" moment silently undoes the 2026-07-25
-lockdown. Fix is a `SUPERSEDED - DO NOT RUN` banner at the top of each file, or
-moving all three to `docs/archive/`.
+**Superseded migrations can no longer be run by accident.** Four files, not the
+three originally listed — `docs/2026-07-21_roast_profiles_table.sql` has the
+same defect (4 owner-or-admin policies, no `aal2`) and had been missed. Each now
+opens with a `SUPERSEDED — DO NOT RUN` banner *and* a `do $guard$ ... raise
+exception` block placed ahead of every executable statement, so pasting the file
+into the SQL editor aborts the whole transaction instead of quietly adding a
+parallel policy path. Re-applying one on purpose now means deleting the guard
+first, which is the intended friction. The guard was executed against the live
+database to confirm it actually raises.
 
-**Sign-out does not clear the device cache.** `AuthContext.signOut` drops the
-session but leaves `roasts`, `beans`, `global_profiles` and every `live_*` key
-in localStorage, so anyone with the unlocked Mac afterwards reads all roast data
-with no credential. `enforceLocalDataOwner` only fires when a DIFFERENT account
-signs in. The fix is to call `purgeCachedUserData(USER_DATA_KEYS, { includeLive:
-true })` in `signOut` — but that discards an IN-PROGRESS ROAST on sign-out, so
-Case has to decide whether that trade is right before it goes in.
+Correction to the previous note: `docs/2026-07-21_multiuser_rls.sql` does not
+contain 2 `USING (true)` policies — those two hits are comments describing the
+older files. Its real hazard is the missing `aal2` clause (an MFA bypass), not a
+wide-open grant. The genuinely permissive files are `docs/enable_rls.sql`
+(8 clauses) and `docs/2026-07-18_beans_table.sql` (4).
 
-Lower priority from the same audit: a legacy anon JWT sits in git history (blob
-`5da1ce70`, `.env.save`, unreachable from HEAD, valid to 2036) — public by
-design and there are zero `anon` grants, so the action is simply to disable
-legacy JWT keys in the Supabase dashboard, no history rewrite. And
-`bridge/main.js` writes `~/.roastlogs-bridge.json` at 0644 with the bridge
-password in plaintext; add `{ mode: 0o600 }` and `chmod 600` the existing file.
+**The audit tooling itself was stale enough to invert its own findings** and has
+been rewritten. `.claude/skills/rls-audit/SKILL.md` had been telling the auditor
+to read `enable_rls.sql` as the current policy set, assume RLS was probably off,
+and treat "owner reads their own rows → allowed" as correct — under admin-only +
+`aal2` that would pass a permissive policy and flag the correct ones as broken.
+`.claude/agents/security-auditor.md` called advisor warnings on `USING(true)`
+"expected" and pointed at `/Users/casey/Documents/roastlogs`, a stale clone.
+Both now describe the live model, and the permissive-policy check is step 1.
 
-**One thing Case still needs to run himself** — the audit could not reach the
-database. In the Supabase SQL editor:
+**Bridge settings file is no longer world-readable.** `bridge/main.js` writes
+with `{ mode: 0o600 }` *and* an explicit `fs.chmodSync` — `mode` alone would
+have been a no-op, since it only applies when `writeFileSync` creates the file
+and the existing one was already at 0644. The live `~/.roastlogs-bridge.json`
+was chmod'd to `600`.
+
+**One pre-existing app bug fixed along the way.** React StrictMode
+double-invokes effects in development with refs preserved, so the profiles
+reconcile hook at `src/App.js:1281` set `profilesDirtyRef` on mount with no user
+edit, and the mount-sync merge then skipped re-hydrating `global_profiles`.
+Latent today (the key is always present locally, so the merge has nothing to
+add) but it would surface as apparent data loss the moment that key is ever
+cleared. Guard is now `if (prev === null || prev === profiles) return;`.
+
+### Deliberately NOT done: purging the device cache on sign-out
+
+The audit proposed clearing cached roast data from localStorage on sign-out.
+**Case declined it 2026-09-03, and the reasoning is worth keeping.**
+
+It defends against one scenario only: someone reading the cache on a device that
+is already unlocked, after a sign-out. Signing out requires opening Settings and
+scrolling to the bottom — it is never a fat-finger action, so a roast is only
+ever abandoned on purpose. Against that, the fix meant a behaviour change in auth
+code, which is the highest-risk area in the app.
+
+Worth noting the fix as originally specified would not have worked anyway:
+`purgeCachedUserData` quarantines rather than deletes, copying each value to
+`roasts__quarantine` and removing the original — just as readable to anyone
+holding the device.
+
+**Do not re-propose this without a genuinely new reason.**
+
+**The database check the audit could not reach came back clean.** Run live
+2026-09-03 via Supabase MCP:
 
 ```sql
 SELECT tablename, policyname FROM pg_policies
 WHERE schemaname='public' AND (qual = 'true' OR with_check = 'true');
 ```
 
-Expect **zero rows**. Anything returned means a permissive policy is live.
+**Zero rows.** All 16 policies are `admin+mfa`, each requiring
+`is_admin(auth.uid()) AND auth.jwt()->>'aal' = 'aal2'`. The 2026-07-25 lockdown
+is intact. Sessions carry no timeout (`not_after` is null) and survive for weeks
+on one MFA challenge — verified: a session created 2026-08-08 was still
+refreshing 2026-09-04.
 
 ## 3. Equipment field — still unbuilt
 

@@ -1,3 +1,30 @@
+-- ============================================================================
+-- ⛔  SUPERSEDED — DO NOT RUN  ⛔
+-- ----------------------------------------------------------------------------
+-- Retired 2026-09-03. The live policy set is admin-only + MFA, defined by:
+--     docs/2026-07-25_lock_to_admins_only.sql
+--     docs/2026-07-25_require_mfa_aal2.sql
+--     docs/2026-07-27_least_privilege_grants.sql
+--
+-- WHY RUNNING THIS IS DANGEROUS: Postgres ORs permissive policies together,
+-- so the policies below do NOT replace the live admin+aal2 policies -- they
+-- are added ALONGSIDE them as a second, wide-open path.
+-- Any authenticated session would get unrestricted read/write/delete on
+-- every row in roasts and tasting_notes.
+-- No admin check, no MFA requirement. The lockdown would still look intact in
+-- the dashboard while being fully bypassed.
+--
+-- Kept for history only. To genuinely re-apply it you must first delete the
+-- guard block below -- which is the point: that has to be a deliberate act,
+-- not a paste-and-run accident.
+-- ============================================================================
+do $guard$
+begin
+  raise exception 'SUPERSEDED MIGRATION -- refusing to run. See the banner '
+    'at the top of docs/enable_rls.sql.';
+end
+$guard$;
+
 -- RoastLogs RLS Migration
 -- Run this in Supabase SQL Editor AFTER:
 --   1. The auth-enabled app is deployed to GitHub Pages

@@ -4,24 +4,42 @@ description: Read-only security sweep of RoastLogs — RLS state, secrets/gitign
 tools: Bash, Read, Grep, Glob, WebFetch
 ---
 
-You audit RoastLogs (CRA PWA, /Users/casey/Documents/roastlogs) — Supabase
-auth + Postgres backend, deployed to GitHub Pages. You are READ-ONLY: report
-findings and provide fix SQL/diffs, but never edit files or run migrations.
+You audit RoastLogs (CRA PWA) — Supabase auth + Postgres backend, deployed to
+GitHub Pages. The active clone is the path in `~/.roastlogs-path` (currently
+`/Users/casey/Desktop/roastlogs`); other roastlogs directories on this machine
+are stale duplicates, so confirm the path before auditing. You are READ-ONLY:
+report findings and provide fix SQL/diffs, but never edit files or run
+migrations.
 
-## Project security context (verified 2026-07-10 — re-verify, don't assume)
+## Project security context (verified live 2026-09-03 — re-verify, don't assume)
 
 - Auth gate lives in `src/index.js` (LoginScreen when no session).
-- All Supabase table access is in `src/syncService.js` — tables `roasts` and
-  `tasting_notes` only. Photos are stripped before sync (`stripPhotoFields`).
-- `docs/enable_rls.sql` is the RLS migration — it is **single-user by
-  design**: policies grant any authenticated user full access (`USING true`),
-  and rows carry no `user_id`. This is acceptable for one user. **Flag it as
-  CRITICAL if strangers could sign up** (public signup lockdown was still an
-  open item at last audit).
-- Audited 2026-07-10: RLS ENABLED + enforced on both tables (anon read `[]`,
-  anon write 42501). Two accounts exist, both Casey's, sharing all data by
-  design. Advisors WARN on USING(true) policies — expected. A benign Supabase
-  event trigger `rls_auto_enable()` auto-enables RLS on new tables.
+- All Supabase table access is in `src/syncService.js` — tables `roasts`,
+  `tasting_notes`, `beans` and `roast_profiles`. Photos are stripped before
+  sync (`stripPhotoFields`).
+- **The live policy model is admin-only + MFA, not single-user and not
+  multi-user.** All 16 policies (4 tables x 4 commands) are granted to
+  `authenticated` and require `is_admin(auth.uid()) AND auth.jwt()->>'aal' =
+  'aal2'`. A password-only (aal1) session reaches nothing. The current source
+  of truth is:
+      docs/2026-07-25_lock_to_admins_only.sql
+      docs/2026-07-25_require_mfa_aal2.sql
+      docs/2026-07-27_least_privilege_grants.sql
+- **Four migrations are SUPERSEDED and carry a `raise exception` guard** —
+  `docs/enable_rls.sql`, `docs/2026-07-18_beans_table.sql`,
+  `docs/2026-07-21_multiuser_rls.sql`,
+  `docs/2026-07-21_roast_profiles_table.sql`. Do NOT read them as the current
+  policy set; they describe retired models. If any guard has been removed, or
+  a policy matching those files is live, that is a CRITICAL finding.
+- **Any permissive policy is now CRITICAL, never expected.** Postgres ORs
+  permissive policies, so a single `USING (true)` or aal2-less policy does not
+  replace the lockdown — it adds a parallel path around it. The check:
+  `SELECT tablename, policyname FROM pg_policies WHERE schemaname='public'
+  AND (qual = 'true' OR with_check = 'true');` must return zero rows.
+  (Verified zero 2026-09-03.)
+- Two accounts exist, both Casey's, both admins, sharing all data by design.
+  A benign Supabase event trigger `rls_auto_enable()` auto-enables RLS on new
+  tables.
 
 ## Audit domains (cover all four)
 
