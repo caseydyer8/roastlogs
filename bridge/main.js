@@ -24,7 +24,12 @@ function loadSettings() {
 function saveSettings(next) {
   const merged = { ...loadSettings(), ...next };
   try {
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2));
+    // This file holds the bridge's Supabase password in plaintext, so it must
+    // never be group/world readable. `mode` only applies when writeFileSync
+    // CREATES the file -- an existing 0644 file written by an earlier build
+    // keeps its old mode -- so the explicit chmod is what actually closes it.
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2), { mode: 0o600 });
+    fs.chmodSync(SETTINGS_PATH, 0o600);
   } catch (e) {
     console.error("failed to save settings:", e.message);
   }

@@ -124,6 +124,18 @@ trapped in agent config.
     HTTP 202 but is **dropped by RLS and never delivered**.
 - Device-cache isolation lives in `AuthContext.enforceLocalDataOwner()`: purges
   cached localStorage data when a *different* account signs in (RLS can't do this).
+  **Purging on sign-out was considered and deliberately declined (2026-09-03):**
+  it guards only against someone reading the cache on an already-unlocked device,
+  and sign-out is buried at the bottom of Settings, so it is never accidental.
+  Not worth a behaviour change in auth code. Don't re-propose it without a new
+  reason.
+- **Four migrations are SUPERSEDED and carry a `raise exception` guard** that
+  aborts the transaction if pasted into the SQL editor: `docs/enable_rls.sql`,
+  `docs/2026-07-18_beans_table.sql`, `docs/2026-07-21_multiuser_rls.sql`,
+  `docs/2026-07-21_roast_profiles_table.sql`. They describe retired policy
+  models. Postgres ORs permissive policies, so re-running one would not replace
+  the lockdown — it would add a path around it. Re-applying one on purpose
+  means deleting its guard first.
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
 ## Workflow

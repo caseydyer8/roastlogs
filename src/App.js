@@ -1285,7 +1285,16 @@ function App() {
     // set-default — so no individual call site can be missed.
     const prev = prevProfilesRef.current;
     prevProfilesRef.current = profiles;
-    if (prev === null) return; // initial mount; the mount-sync effect seeds the cloud
+    // `prev === null` is the initial mount; the mount-sync effect seeds the cloud.
+    // `prev === profiles` catches StrictMode's development-only double-invoke: it
+    // re-runs this effect with refs PRESERVED, so on the second pass `prev` is no
+    // longer null and the null check alone would set profilesDirtyRef with no user
+    // edit — which makes the mount-sync merge below skip re-hydrating profiles.
+    // Latent today because global_profiles is always present locally, so the
+    // merge has nothing to add anyway -- but it would surface as apparent data
+    // loss the moment that key is ever cleared. Reference equality is exact
+    // here: the re-invoke sees the identical array, any real edit a new one.
+    if (prev === null || prev === profiles) return;
 
     // From here on the user has actually changed something, so the initial
     // sync must not merge its (now stale) snapshot back in and resurrect rows.

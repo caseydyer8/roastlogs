@@ -1,3 +1,29 @@
+-- ============================================================================
+-- ⛔  SUPERSEDED — DO NOT RUN  ⛔
+-- ----------------------------------------------------------------------------
+-- Retired 2026-09-03. The live policy set is admin-only + MFA, defined by:
+--     docs/2026-07-25_lock_to_admins_only.sql
+--     docs/2026-07-25_require_mfa_aal2.sql
+--     docs/2026-07-27_least_privilege_grants.sql
+--
+-- WHY RUNNING THIS IS DANGEROUS: the policies below are owner-or-admin and
+-- carry NO aal2 requirement. Postgres ORs permissive policies together, so
+-- they would not replace the live admin+aal2 policies -- they would sit
+-- alongside them as a parallel path that skips MFA entirely.
+-- That covers roasts, tasting_notes and beans (12 policies).
+-- Any session holding a valid password-only (aal1) token would be back in.
+--
+-- Kept for history only. To genuinely re-apply it you must first delete the
+-- guard block below -- which is the point: that has to be a deliberate act,
+-- not a paste-and-run accident.
+-- ============================================================================
+do $guard$
+begin
+  raise exception 'SUPERSEDED MIGRATION -- refusing to run. See the banner '
+    'at the top of docs/2026-07-21_multiuser_rls.sql.';
+end
+$guard$;
+
 -- Migration: multi-user RLS — per-user ownership + admin co-ownership
 -- Date: 2026-07-21   (migration name for apply_migration: multiuser_rls)
 --
