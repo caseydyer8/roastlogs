@@ -1,3 +1,38 @@
+-- ============================================================================
+-- SUPERSEDED 2026-09-07 -- DO NOT RUN. This migration took the whole app down.
+--
+-- The reasoning below ("unaffected by revoking the direct EXECUTE grant") is
+-- WRONG. An RLS policy expression is evaluated with the privileges of the role
+-- running the query, not the definer of the function it calls. With EXECUTE
+-- revoked from `authenticated`, the seven policies that call is_admin() did not
+-- evaluate to false -- they raised `permission denied for function is_admin`,
+-- so every authenticated statement failed outright.
+--
+-- The 2026-09-04 verification missed it because it checked the grant and the
+-- Supabase advisors, but never ran a query AS the authenticated role. Measured
+-- on 2026-09-07, with the grant removed:
+--     beans / roasts / roast_profiles / tasting_notes
+--         -> ERROR: permission denied for function is_admin
+--     realtime join on roastlink-live
+--         -> "Unauthorized: You do not have permissions to read from this
+--             Channel topic: roastlink-live"   (bridge showed CHANNEL_ERROR)
+--
+-- Reverted by docs/2026-09-07_restore_is_admin_execute.sql.
+--
+-- The underlying REST-oracle concern is still valid and still open. The correct
+-- fix is to move the helper to a schema PostgREST does not expose
+-- (private.is_admin) and repoint all seven policies at it -- NOT to revoke
+-- EXECUTE from authenticated.
+--
+-- The guard block below is what stops a paste-and-run accident.
+-- ============================================================================
+do $guard$
+begin
+  raise exception 'SUPERSEDED MIGRATION -- refusing to run. See the banner '
+    'at the top of docs/2026-09-04_revoke_is_admin_execute.sql.';
+end
+$guard$;
+
 -- Close the is_admin(uuid) REST oracle.
 --
 -- Before this, `authenticated` (any logged-in account) could call

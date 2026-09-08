@@ -1,0 +1,42 @@
+-- Migration: restore EXECUTE on public.is_admin(uuid) to `authenticated`
+-- Date: 2026-09-07  (migration name for apply_migration: restore_is_admin_execute_to_authenticated)
+--
+-- REVERTS: docs/2026-09-04_revoke_is_admin_execute.sql (now guarded as superseded).
+--
+-- INCIDENT: Case found the RoastLink bridge dead mid-roast, showing
+--   cloud error: realtime CHANNEL_ERROR
+-- Realtime's underlying reason was "Unauthorized: You do not have permissions
+-- to read from this Channel topic: roastlink-live". The device side was fine --
+-- plain node on the same machine resolved roastlink.local and streamed samples.
+--
+-- ROOT CAUSE: the 2026-09-04 revoke. is_admin() is called from all seven
+-- policies in this project (beans, roasts, roast_profiles, tasting_notes, plus
+-- the three realtime.messages policies from 2026-08-28_lock_roastlink_live_channel.sql).
+-- An RLS policy expression is evaluated with the privileges of the role running
+-- the query, so with EXECUTE revoked the policies raised
+-- `permission denied for function is_admin` instead of returning false. Every
+-- authenticated read and write in the app failed, not just the live channel.
+--
+-- WHY THE GRANT IS REQUIRED, NOT A LOOSENING: is_admin is SECURITY DEFINER,
+-- STABLE, pinned to `SET search_path = ''`. It takes a uuid and returns only a
+-- boolean; it exposes no admin list and no row data. This is the standard
+-- Supabase pattern for an RLS helper. `anon` is deliberately NOT granted --
+-- every policy is scoped `to authenticated`, so anon never needs to call it.
+
+grant execute on function public.is_admin(uuid) to authenticated;
+
+-- VERIFIED 2026-09-07 as the `authenticated` role (the check the 2026-09-04
+-- pass was missing -- it verified the grant and the advisors, but never ran a
+-- query as authenticated):
+--   is_admin callable ............................... OK
+--   select on beans/roasts/roast_profiles/tasting_notes  OK
+--   bridge READ roastlink-live ...................... true
+--   bridge BROADCAST write .......................... true
+--   non-admin viewer READ roastlink-live ............ false  (still denied)
+--
+-- STILL OPEN: the REST-oracle concern the revoke was trying to address is real.
+-- Correct fix is private.is_admin in a schema PostgREST does not expose, with
+-- all seven policies repointed. Tracked in docs/NEXT-SESSION.md.
+--
+-- ROLLBACK (this re-breaks all RLS and the live channel -- do not run):
+--   revoke execute on function public.is_admin(uuid) from authenticated;
