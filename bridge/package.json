@@ -1,6 +1,6 @@
 {
   "name": "roastlogs-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "RoastLink TWO+ -> Supabase Realtime bridge for RoastLogs",
   "main": "main.js",
@@ -32,7 +32,14 @@
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
-      "icon": "assets/icon.icns"
+      "icon": "assets/icon.icns",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "RoastLogs Bridge connects to your RoastLink TWO+ roaster on this network to read live bean temperature during a roast.",
+        "NSBonjourServices": [
+          "_http._tcp",
+          "_roastlink._tcp"
+        ]
+      }
     }
   }
 }

@@ -25,6 +25,17 @@ begin
 end
 $guard$;
 
+-- ---------------------------------------------------------------------------
+-- psql hardening: the raise-exception guard above stops the Supabase SQL editor
+-- and anything running with ON_ERROR_STOP=on, but `psql -f` defaults to
+-- ON_ERROR_STOP=0 -- it would report the error and then cheerfully run every
+-- statement below it. Wrapping the remainder in a block comment makes the rest
+-- of this file inert to ANY client: psql never even sends it. To actually
+-- re-run this migration you must delete the guard block AND this comment
+-- wrapper, which is exactly the deliberate act the guard is meant to require.
+-- ---------------------------------------------------------------------------
+/*
+
 -- Migration: create public.roast_profiles table (Phase 2 — profile sync)
 -- Date: 2026-07-21   (migration name for apply_migration: roast_profiles_table)
 --
@@ -92,3 +103,5 @@ create policy "owner or admin can delete roast_profiles" on public.roast_profile
 
 -- Remove pre-login schema discoverability (RLS already returns 0 rows to anon).
 revoke all on public.roast_profiles from anon;
+*/
+-- end psql-hardening wrapper

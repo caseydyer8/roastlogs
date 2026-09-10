@@ -102,7 +102,7 @@ trapped in agent config.
   auth.uid()`, FK to `auth.users` ON DELETE CASCADE), but the RLS is now
   **admin-only** — no per-user/owner branch remains, **no `USING (true)` remains**.
   All 16 policies (4 tables × select/insert/update/delete) require BOTH:
-  - `(select public.is_admin((select auth.uid())))` — caller is one of the two admins
+  - `(select private.is_admin((select auth.uid())))` — caller is one of the two admins
   - `(select auth.jwt() ->> 'aal') = 'aal2'` — session completed MFA (2nd factor)
 - **`aal2` = server-side MFA enforcement** (`docs/2026-07-25_require_mfa_aal2.sql`,
   applied + verified live 2026-07-27). A password-only (`aal1`) session — e.g. a
@@ -118,13 +118,29 @@ trapped in agent config.
   `submitMfaChallenge`/`listMfaFactors`/`unenrollMfa`/`refreshMfaStatus`,
   `mfaRequired`). Supabase MFA is enabled (TOTP) in the dashboard.
 - **Admin infra:** `public.admins` (RLS-on, no policies, grants revoked →
-  default-deny) + `public.is_admin(uuid)` SECURITY DEFINER (`search_path=''`).
-  Both of Casey's accounts are seeded by an explicit EMAIL ALLOWLIST — never
-  blanket-promote `auth.users`. **The direct REST oracle is closed
-  (2026-09-04):** `authenticated` no longer has `EXECUTE` on `is_admin(uuid)`
-  (`docs/2026-09-04_revoke_is_admin_execute.sql`), so a logged-in non-admin
-  can no longer probe an arbitrary UUID for admin status. Policies still call
-  it fine — that happens during policy evaluation, unaffected by the grant.
+  default-deny) + **`private.is_admin(uuid)`** SECURITY DEFINER
+  (`search_path=''`). Both of Casey's accounts are seeded by an explicit EMAIL
+  ALLOWLIST — never blanket-promote `auth.users`.
+- **The direct REST oracle is closed (2026-09-10) by SCHEMA, not by grant**
+  (`docs/2026-09-10_move_is_admin_to_private.sql`). The helper lives in the
+  `private` schema, which PostgREST does not expose, so
+  `POST /rest/v1/rpc/is_admin` returns **HTTP 404 `PGRST202`** — a logged-in
+  non-admin cannot probe a UUID for admin status. `authenticated` still holds
+  `EXECUTE` on `private.is_admin`, and that is **required**.
+  > **Do NOT "harden" this by revoking EXECUTE from `authenticated`.** That was
+  > tried on 2026-09-04 and took the whole app down. A row-level security (RLS)
+  > policy expression is evaluated with the privileges of the role running the
+  > query — *not* the definer of a function it calls. With EXECUTE revoked, all
+  > 18 policies that call `is_admin()` raised `permission denied for function
+  > is_admin` instead of returning false, so every signed-in read and write
+  > failed and the RoastLink bridge died with `realtime CHANNEL_ERROR`.
+  > See `docs/2026-09-04_revoke_is_admin_execute.sql` (guarded as superseded)
+  > and the incident note in `docs/NEXT-SESSION.md`.
+- **Verifying anything that touches `is_admin` or a policy:** run it **as the
+  `authenticated` role** — `set local role authenticated` plus a real
+  SELECT/INSERT/UPDATE/DELETE against each RLS table. Checking that a grant
+  changed, or that the Supabase advisors are clean, is **not** sufficient —
+  that is exactly the check the 2026-09-04 pass did, and it shipped an outage.
 - **Verified live 2026-07-27:** 16/16 policies require `aal2`; `anon` has 0 grants
   on all four tables (cannot SELECT). Earlier (2026-07-23) admin-only pen-test:
   simulated non-admin saw 0 rows across all four tables; ownership-spoof insert
@@ -162,13 +178,17 @@ trapped in agent config.
   and sign-out is buried at the bottom of Settings, so it is never accidental.
   Not worth a behaviour change in auth code. Don't re-propose it without a new
   reason.
-- **Four migrations are SUPERSEDED and carry a `raise exception` guard** that
+- **Five migrations are SUPERSEDED and carry a `raise exception` guard** that
   aborts the transaction if pasted into the SQL editor: `docs/enable_rls.sql`,
   `docs/2026-07-18_beans_table.sql`, `docs/2026-07-21_multiuser_rls.sql`,
-  `docs/2026-07-21_roast_profiles_table.sql`. They describe retired policy
+  `docs/2026-07-21_roast_profiles_table.sql`, and
+  `docs/2026-09-04_revoke_is_admin_execute.sql`. They describe retired policy
   models. Postgres ORs permissive policies, so re-running one would not replace
-  the lockdown — it would add a path around it. Re-applying one on purpose
-  means deleting its guard first.
+  the lockdown — it would add a path around it. **As of 2026-09-10 each also
+  wraps everything after its guard in a `/* … */` block comment**, because
+  `psql -f` defaults to `ON_ERROR_STOP=0` and would otherwise report the guard's
+  error and then run the whole file anyway. Re-applying one on purpose means
+  deleting BOTH the guard and the comment wrapper.
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
 ## Workflow

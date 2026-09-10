@@ -11,7 +11,7 @@ are stale duplicates, so confirm the path before auditing. You are READ-ONLY:
 report findings and provide fix SQL/diffs, but never edit files or run
 migrations.
 
-## Project security context (verified live 2026-09-03 — re-verify, don't assume)
+## Project security context (verified live 2026-09-10 — re-verify, don't assume)
 
 - Auth gate lives in `src/index.js` (LoginScreen when no session).
 - All Supabase table access is in `src/syncService.js` — tables `roasts`,
@@ -19,18 +19,42 @@ migrations.
   sync (`stripPhotoFields`).
 - **The live policy model is admin-only + MFA, not single-user and not
   multi-user.** All 16 policies (4 tables x 4 commands) are granted to
-  `authenticated` and require `is_admin(auth.uid()) AND auth.jwt()->>'aal' =
-  'aal2'`. A password-only (aal1) session reaches nothing. The current source
-  of truth is:
+  `authenticated` and require `private.is_admin(auth.uid()) AND
+  auth.jwt()->>'aal' = 'aal2'`. A password-only (aal1) session reaches nothing.
+  Three further policies on `realtime.messages` cover the `roastlink-live`
+  channel (read = admin+aal2 or the bridge uid; broadcast write = bridge only;
+  presence write = admin+aal2 or bridge). 18 of those 19 policies call
+  `private.is_admin`. The current source of truth is:
       docs/2026-07-25_lock_to_admins_only.sql
       docs/2026-07-25_require_mfa_aal2.sql
       docs/2026-07-27_least_privilege_grants.sql
-- **Four migrations are SUPERSEDED and carry a `raise exception` guard** —
+      docs/2026-08-28_lock_roastlink_live_channel.sql
+      docs/2026-09-10_move_is_admin_to_private.sql
+- **The admin helper lives in the `private` schema as of 2026-09-10**, NOT in
+  `public` — that is what closes the `/rest/v1/rpc/is_admin` oracle (advisor
+  0029), since PostgREST does not expose `private`. `authenticated` MUST retain
+  `EXECUTE` on `private.is_admin` and `USAGE` on schema `private`.
+  **A finding that recommends revoking EXECUTE from `authenticated` is WRONG
+  and must not be raised.** It was tried on 2026-09-04 and took the whole app
+  down: RLS policy expressions evaluate with the privileges of the role running
+  the query, so every policy raised `permission denied for function is_admin`
+  rather than returning false. See docs/2026-09-04_revoke_is_admin_execute.sql
+  (guarded as superseded).
+- **Verification standard for anything touching is_admin or a policy:** run it
+  AS the authenticated role (`set local role authenticated` + real
+  SELECT/INSERT/UPDATE/DELETE per table). Confirming a grant changed, or that
+  the advisors are clean, is NOT sufficient — that is the check that missed the
+  2026-09-04 outage.
+- **Five migrations are SUPERSEDED and carry a `raise exception` guard** —
   `docs/enable_rls.sql`, `docs/2026-07-18_beans_table.sql`,
   `docs/2026-07-21_multiuser_rls.sql`,
-  `docs/2026-07-21_roast_profiles_table.sql`. Do NOT read them as the current
-  policy set; they describe retired models. If any guard has been removed, or
-  a policy matching those files is live, that is a CRITICAL finding.
+  `docs/2026-07-21_roast_profiles_table.sql`, and
+  `docs/2026-09-04_revoke_is_admin_execute.sql`. Do NOT read them as the
+  current policy set; they describe retired models. Each also wraps everything
+  after its guard in a `/* ... */` block comment (psql -f defaults to
+  ON_ERROR_STOP=0 and would otherwise run the file anyway). If any guard OR
+  comment wrapper has been removed, or a policy matching those files is live,
+  that is a CRITICAL finding.
 - **Any permissive policy is now CRITICAL, never expected.** Postgres ORs
   permissive policies, so a single `USING (true)` or aal2-less policy does not
   replace the lockdown — it adds a parallel path around it. The check:

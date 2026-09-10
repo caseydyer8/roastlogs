@@ -33,6 +33,17 @@ begin
 end
 $guard$;
 
+-- ---------------------------------------------------------------------------
+-- psql hardening: the raise-exception guard above stops the Supabase SQL editor
+-- and anything running with ON_ERROR_STOP=on, but `psql -f` defaults to
+-- ON_ERROR_STOP=0 -- it would report the error and then cheerfully run every
+-- statement below it. Wrapping the remainder in a block comment makes the rest
+-- of this file inert to ANY client: psql never even sends it. To actually
+-- re-run this migration you must delete the guard block AND this comment
+-- wrapper, which is exactly the deliberate act the guard is meant to require.
+-- ---------------------------------------------------------------------------
+/*
+
 -- Close the is_admin(uuid) REST oracle.
 --
 -- Before this, `authenticated` (any logged-in account) could call
@@ -53,3 +64,5 @@ $guard$;
 -- this file is the durable record alongside the other dated migrations here.
 
 REVOKE EXECUTE ON FUNCTION public.is_admin(uuid) FROM authenticated;
+*/
+-- end psql-hardening wrapper

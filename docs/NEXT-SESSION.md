@@ -7,20 +7,34 @@
 
 ## Pick up here
 
-Equipment Phase 2 shipped and verified 2026-09-04 (gate, preheat screen,
-comparison flag — real bridge + mock device, on Case's Windows machine, not
-his usual Mac; see the standing constraint below).
+Session 2026-09-10 closed three items. Live app untouched (**v3.8.1**, no
+app-code change); all work was database + docs + the Bridge desktop app.
 
-**The `is_admin` REST-oracle revoke from 2026-09-04 was reverted on 2026-09-07 —
-it had taken the entire app down. See the incident note at the bottom. That
-migration file is now guarded as superseded; the concern behind it is still open
-as item #2.** Live is at **v3.8.1** (the revert + docs, no app-code change).
+1. **`is_admin` REST oracle closed properly** — helper moved to the `private`
+   schema (`docs/2026-09-10_move_is_admin_to_private.sql`). Advisor 0029 cleared,
+   `POST /rest/v1/rpc/is_admin` now returns HTTP 404. Verified AS the
+   authenticated role across all four CRUD paths, and the bridge re-joins the
+   live channel (`SUBSCRIBED`).
+2. **Superseded-migration guards hardened against `psql`** — all five now wrap
+   everything after the guard in `/* … */`, so `ON_ERROR_STOP=0` has nothing
+   left to run.
+3. **Bridge rebuilt as v0.2.0** with the macOS Local Network purpose string.
+   **Not yet confirmed fixed — see item #2 below.**
+
+The **security-auditor** pass ran clean on the RLS change: all 18 policy
+expressions unchanged except the schema prefix, zero permissive policies,
+`private.is_admin` not executable by `anon`/`PUBLIC`, secrets history clean
+(no `service_role` token ever committed). Verdict: safe to ship. Its one
+actionable finding is item #5.
 
 | # | What | Blocked on |
 |---|---|---|
 | 1 | **App logo** — `public/favicon.ico` does not exist though `manifest.json` references it, `index.html` has no icon links at all, and `theme_color` is still the retired amber `#f59e0b` | **Case's source art. Do not invent a logo.** |
-| 2 | **Close the `is_admin` REST oracle properly** — move the helper to `private.is_admin` (a schema PostgREST does not expose) and repoint all seven policies, granting EXECUTE on the new one to `authenticated`. **Do NOT just revoke EXECUTE from `authenticated` — that was tried on 2026-09-04 and broke every policy.** | Case's go-ahead |
-| 3 | **Harden the superseded-migration guards against `psql`** — they stop the Supabase SQL editor but `psql -f` defaults to `ON_ERROR_STOP=0`. Fix is `/*` after each `$guard$;` and `*/` at EOF | Case's call; optional |
+| 2 | **Finish the Bridge `ENOTFOUND` fix** — install `bridge/dist/RoastLogs Bridge-0.2.0-arm64.dmg`, power the roaster ON, launch, and approve the macOS **Local Network** prompt. Then confirm the device lamp goes green. If it does not: System Settings → Privacy & Security → Local Network → toggle *RoastLogs Bridge* off and back on. **Baseline re-proven 2026-09-10 with the roaster ON:** `roastlink.local` resolves (192.168.1.120), port 81 open, and plain `node` ran the full bridge — `device OPEN`, live BT 75.6°F, **and `cloud status: joined`**. So the device, the network and the whole Supabase path are all proven good; the ONLY unproven leg is the Electron app itself. v0.2.0 was launched but the app has no auto-connect (`renderer/renderer.js:117` connects on a button click), so it needs a human to press **Connect**. | Case pressing Connect + approving the Local Network prompt |
+| 3 | **Delete the duplicate Bridge app** — `/Applications/RoastLogs Bridge.app` AND `/Users/casey/Desktop/RoastLogs Bridge.app` both exist with the same ad-hoc identity, which muddles the Local Network permission entry. Keep ONE (the `/Applications` copy). Also `/Applications/RoastLogs Bridge 0.1.0-arm64` is stray. | Case's call — deleting apps wasn't mine to do |
+| 4 | **Bridge code signing (root cause, optional)** — the app is ad-hoc signed with `Identifier=Electron`, `TeamIdentifier=not set`; electron-builder reports `0 valid identities` (the "Casey Dyer" cert is self-signed, `CSSMERR_TP_NOT_TRUSTED`). An ad-hoc identity changes on **every rebuild**, so macOS treats each build as a new app and any Local Network grant stops applying. A real Developer ID cert is the durable fix; without one, expect to re-approve the prompt after each rebuild. | Apple Developer account ($99/yr) — Case's call |
+
+| 5 | **Future tables in `public` ship wide open at the grant layer** — `pg_default_acl` still auto-grants full CRUD to BOTH `anon` and `authenticated` for any *newly created* table in `public` (standard Supabase default). Harmless today: all five existing tables were explicitly locked down by `least_privilege_authenticated_grants`, and none carries a stray `anon` grant. But the NEXT table created needs that same treatment manually or it lands open. One-time fix so it stops depending on memory:<br>`alter default privileges in schema public revoke all on tables from anon;`<br>`alter default privileges in schema public revoke all on tables from authenticated;`<br>(Schema `private` already has no such default ACL.) Found by the security-auditor pass 2026-09-10; pre-existing, NOT from that day's change. | Case's go-ahead — changes behaviour for future tables, so it was left unapplied |
 
 ## Standing constraints
 
