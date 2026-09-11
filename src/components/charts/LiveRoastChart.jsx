@@ -441,8 +441,16 @@ export default function LiveRoastChart({
             labelFormatter={tooltipLabel}
             formatter={(v, n) => [v, n]}
           />
-          <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} />
-          <Line yAxisId="temp" type="monotone" dataKey="temp" name="Temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.4} dot={false} connectNulls isAnimationActive={false} />
+          {/* connectNulls is deliberately OFF on these two. This model already
+              emits temp: null for a second with no reading (btAt is a per-second
+              Map, not an interpolation), so a signal dropout is genuinely absent
+              from the data -- connectNulls was drawing a straight line across it
+              and making the live view claim a measurement it never had. The
+              PLANNED profile lines below keep connectNulls: those steps are
+              sparse by design, and joining them is the whole point.
+              Leading nulls before the first reading are unaffected either way. */}
+          <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} isAnimationActive={false} />
+          <Line yAxisId="temp" type="monotone" dataKey="temp" name="Temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.4} dot={false} isAnimationActive={false} />
           <ReferenceLine x={now} yAxisId="temp" stroke="rgb(var(--accent-fill))" strokeOpacity={0.5} strokeDasharray="2 3" />
         </ComposedChart>
       </ResponsiveContainer>

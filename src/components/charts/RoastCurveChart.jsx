@@ -21,6 +21,7 @@ import {
   phaseKeyAt,
   phaseSpans,
 } from "../../lib/roastPhases";
+import { LIVE_GAP_S } from "../../lib/liveSample";
 
 // ---------------------------------------------------------------------------
 // RoastCurveChart — "Split Roast Story" History detail visualization (v1.1)
@@ -144,7 +145,33 @@ export default function RoastCurveChart({ roast }) {
     const manualTemps = events
       .filter((e) => e.temp !== "" && e.temp !== null && e.temp !== undefined && Number(e.temp) > 0)
       .map((e) => [Number(e.t), Number(e.temp)]);
-    const tempReadings = curvePts.length >= 2 ? curvePts : manualTemps;
+    const usingCurve = curvePts.length >= 2;
+    const tempReadings = usingCurve ? curvePts : manualTemps;
+
+    // Signal gaps. The recorder writes a point only while the feed is live, so
+    // a dropout leaves missing seconds rather than a flat repeated value. The
+    // interpolator happily draws through any spacing, so without this the gap
+    // would render as a smooth invented curve -- a quieter lie than the flat
+    // segment, but still data the probe never produced.
+    //
+    // Gaps are derived from point SPACING, so nothing about the stored shape
+    // changes and no migration is needed: a roast saved before this fix is
+    // dense at ~1Hz and yields no gaps at all.
+    //
+    // Only for probe curves. Manually typed temps are legitimately minutes
+    // apart, and treating that spacing as signal loss would blank the entire
+    // line on every pre-RoastLink roast.
+    const gaps = [];
+    if (usingCurve) {
+      const sorted = tempReadings.slice().sort((a, b) => a[0] - b[0]);
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i][0] - sorted[i - 1][0] > LIVE_GAP_S) gaps.push([sorted[i - 1][0], sorted[i][0]]);
+      }
+    }
+    const inGap = (t) => {
+      for (const [a, b] of gaps) if (t > a && t < b) return true;
+      return false;
+    };
 
     const tempAt = buildMonotoneInterpolator(tempReadings);
     const hasTemp = tempReadings.length >= 2;
@@ -163,7 +190,7 @@ export default function RoastCurveChart({ roast }) {
         if (e.fan) fan = Number(e.fan);
         eIdx++;
       }
-      const inRange = hasTemp && t >= firstTempT && t <= lastTempT;
+      const inRange = hasTemp && t >= firstTempT && t <= lastTempT && !inGap(t);
       const temp = inRange ? tempAt(t) : null;
       data.push({ t, temp: temp != null ? Math.round(temp * 10) / 10 : null, heat, fan, ror: null });
     }
@@ -500,11 +527,17 @@ export default function RoastCurveChart({ roast }) {
               <Tooltip content={<CustomTooltip variant="temp" />} />
               {phaseLines(true, "temp")}
               {momentDots("temp")}
+              {/* connectNulls is deliberately OFF on both lines: it bridges
+                  interior nulls, which would paint straight over exactly the
+                  signal gaps the null above exists to show. Leading nulls (RoR
+                  before its first full window) are unaffected either way, and a
+                  gapless dense curve has no interior nulls at all -- so roasts
+                  saved before gap handling render identically. */}
               {hasTemp && (
-                <Line yAxisId="ror" type="monotone" dataKey="ror" stroke="rgb(var(--chart-ror))" strokeWidth={1.75} dot={false} name="RoR" connectNulls isAnimationActive={false} />
+                <Line yAxisId="ror" type="monotone" dataKey="ror" stroke="rgb(var(--chart-ror))" strokeWidth={1.75} dot={false} name="RoR" isAnimationActive={false} />
               )}
               {hasTemp && (
-                <Line yAxisId="temp" type="monotone" dataKey="temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.5} dot={false} name="Temp" connectNulls isAnimationActive={false} />
+                <Line yAxisId="temp" type="monotone" dataKey="temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.5} dot={false} name="Temp" isAnimationActive={false} />
               )}
             </ComposedChart>
           </ResponsiveContainer>

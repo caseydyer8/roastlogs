@@ -142,10 +142,16 @@ export function AuthProvider({ children }) {
       let needMfa = false;
       if (newSession) {
         try {
-          const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          // The SDK reports failure TWO ways: a thrown exception, and a returned
+          // { data: null, error }. Only the throw reached the catch below, so a
+          // returned error left `!!data` false and quietly produced needMfa =
+          // false -- the fail-OPEN direction, dropping the session into the app
+          // shell. Treat both the same.
+          if (error || !data) throw error || new Error("assurance level unavailable");
           // nextLevel = aal2 means a verified factor exists; currentLevel < aal2
           // means this session hasn't entered a code yet.
-          needMfa = !!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2";
+          needMfa = data.nextLevel === "aal2" && data.currentLevel !== "aal2";
         } catch (e) {
           // Fail CLOSED: a session that can't prove it reached aal2 is treated as
           // still owing the second factor, so an AAL-read error routes to the code
@@ -240,8 +246,13 @@ export function AuthProvider({ children }) {
   // Recompute the step-up requirement from the current session's assurance level.
   const refreshMfaStatus = React.useCallback(async () => {
     try {
-      const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      setMfaRequired(!!data && data.nextLevel === "aal2" && data.currentLevel !== "aal2");
+      const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      // Same two-shaped failure as applySession. Here the safe direction is the
+      // opposite one: this is a re-sync helper, so on ANY failure -- thrown or
+      // returned -- leave the existing requirement alone rather than computing
+      // one from missing data, which would have cleared the flag.
+      if (error || !data) return;
+      setMfaRequired(data.nextLevel === "aal2" && data.currentLevel !== "aal2");
     } catch (e) {
       // This is a re-sync helper (runs after enroll/unenroll), NOT the login
       // gate. On a read error, leave the current requirement untouched rather
