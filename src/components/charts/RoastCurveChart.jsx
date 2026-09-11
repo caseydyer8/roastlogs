@@ -229,10 +229,16 @@ export default function RoastCurveChart({ roast }) {
     const avgTemp = temps.length ? temps.reduce((s, d) => s + d.temp, 0) / temps.length : null;
     const avgRor = rors.length ? rors.reduce((s, d) => s + d.ror, 0) / rors.length : null;
     const dropT = coolingStart != null ? coolingStart : total;
-    const dropTemp = hasTemp ? tempAt(Math.min(dropT, lastTempT)) : null;
+    // Same honesty rule as the line, applied to the numbers. Blanking the curve
+    // but still printing an interpolated "FC Temp" would just relocate the false
+    // claim from the chart to the tile people actually write down. Both render
+    // "—" for null already, as they do for a roast with no temps at all.
+    const dropTAt = hasTemp ? Math.min(dropT, lastTempT) : null;
+    const dropTemp = hasTemp && !inGap(dropTAt) ? tempAt(dropTAt) : null;
     const dtr = firstCrack != null && total > 0 ? ((dropT - firstCrack) / total) * 100 : null;
     // FC Temp = bean temp at first crack; Wt Loss = green→roasted mass lost.
-    const fcTemp = hasTemp && firstCrack != null ? tempAt(Math.min(firstCrack, lastTempT)) : null;
+    const fcTAt = hasTemp && firstCrack != null ? Math.min(firstCrack, lastTempT) : null;
+    const fcTemp = fcTAt != null && !inGap(fcTAt) ? tempAt(fcTAt) : null;
     const gw = Number(roast.greenWeight);
     const rw = Number(roast.roastedWeight);
     const weightLoss = gw > 0 && rw > 0 && rw < gw ? ((gw - rw) / gw) * 100 : null;

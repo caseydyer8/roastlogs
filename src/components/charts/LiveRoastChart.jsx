@@ -20,6 +20,7 @@ import {
   phaseKeyAt,
   phaseSpans,
 } from "../../lib/roastPhases";
+import { LIVE_GAP_S } from "../../lib/liveSample";
 
 // ---------------------------------------------------------------------------
 // LiveRoastChart — the in-progress roast, drawn while it happens.
@@ -99,10 +100,36 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       if (p && Number.isFinite(p.t) && Number.isFinite(p.bt)) btAt.set(Math.round(p.t), p.bt);
     }
 
+    // TRUE signal gaps, by the same LIVE_GAP_S rule History uses, so the two
+    // views cannot disagree about what counts as a dropout.
+    //
+    // This matters because the device clock is a FIXED 1Hz
+    // (docs/roastlink-live-data-plan.md) and does not phase-lock to our own 1Hz
+    // elapsedSeconds clock. They drift, so on a perfectly healthy feed a whole
+    // second occasionally receives no sample. Those one-second holes are NOT
+    // dropouts -- LIVE_GAP_S explicitly says so -- but this model indexes bean
+    // temp per second and never interpolates, so an unhandled hole would render
+    // as a break in the line and, because RoR needs t and t-ROR_LOOKBACK, as
+    // TWO breaks in RoR. The result would be a fault-looking fragmented curve
+    // on a roast where nothing was wrong.
+    const curveTs = curve
+      .filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.bt))
+      .map((p) => Math.round(p.t))
+      .sort((a, b) => a - b);
+    const gaps = [];
+    for (let i = 1; i < curveTs.length; i++) {
+      if (curveTs[i] - curveTs[i - 1] > LIVE_GAP_S) gaps.push([curveTs[i - 1], curveTs[i]]);
+    }
+    const inGap = (t) => {
+      for (const [a, b] of gaps) if (t > a && t < b) return true;
+      return false;
+    };
+
     const data = [];
     let heat = null, fan = null, eIdx = 0;
     let pHeat = null, pFan = null, sIdx = 0;
     let lastBt = null;
+    let lastBtT = null;
 
     for (let t = 0; t <= total; t++) {
       while (eIdx < events.length && Number(events[eIdx].t) <= t) {
@@ -117,10 +144,21 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
         sIdx++;
       }
       const bt = btAt.has(t) ? btAt.get(t) : null;
-      if (bt != null) lastBt = bt;
+      if (bt != null) { lastBt = bt; lastBtT = t; }
+      // Carry the last reading across a clock-drift hole, but NEVER into a real
+      // gap and NEVER past the freshness window. The two conditions cover
+      // different shapes: inGap rules out the interior of a dropout, and the age
+      // check rules out the trailing edge after the feed dies (where there is no
+      // later sample, so no gap interval exists to test against). Outside both,
+      // this is one measurement held a fraction of a second -- the same latitude
+      // the app already grants everywhere else via STALE_MS -- not a fabricated
+      // flat segment.
+      const carried =
+        bt == null && lastBt != null && !inGap(t) && t - lastBtT <= LIVE_GAP_S ? lastBt : null;
+      const shown = bt != null ? bt : carried;
       data.push({
         t,
-        temp: bt != null ? Math.round(bt * 10) / 10 : null,
+        temp: shown != null ? Math.round(shown * 10) / 10 : null,
         heat,
         fan,
         profHeat: pHeat,

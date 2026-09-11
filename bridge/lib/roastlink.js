@@ -16,6 +16,12 @@
 //
 // Events: state(str) · open · sample(obj) · health(obj) · event(obj) ·
 //         stale · close · error(Error)
+//
+// NOTE for any new caller: _onFrame now reports an unexpected frame shape via
+// emit("error") rather than swallowing it. Node's EventEmitter THROWS on an
+// unhandled "error" event, so a caller constructing this client directly must
+// attach an error listener. Every shipped path already does (lib/bridge.js,
+// test/harness.js).
 
 const EventEmitter = require("events");
 

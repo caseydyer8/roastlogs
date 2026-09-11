@@ -1767,8 +1767,17 @@ function App() {
 
   // Recording gate: capture live bean temp into the curve ONLY between START
   // and COOLING START. RoastLogs owns the window; the bridge merely streams,
-  // and nothing is persisted until the roast is saved. Bucketing by whole
-  // second downsamples the ~5Hz live feed to ~1Hz (latest reading wins).
+  // and nothing is persisted until the roast is saved. Bucketing by whole second
+  // means the latest reading in a second wins.
+  //
+  // The device streams a FIXED 1Hz (docs/roastlink-live-data-plan.md: "Sample
+  // rate | 1 per second", "1Hz is fixed in Roast mode"). This comment used to
+  // say ~5Hz, which confused `eventsPerSecond: 5` in bridge/lib/publisher.js --
+  // a Realtime rate LIMIT -- for the device's rate. The distinction matters: at
+  // 1Hz, the device clock and our own 1Hz elapsedSeconds clock drift against
+  // each other, so a healthy feed occasionally leaves a second with no sample.
+  // Both charts carry a reading across holes that short and break only on a
+  // gap wider than LIVE_GAP_S, so drift never reads as a dropout.
   //
   // Two conditions beyond the window, both about honesty of the saved curve:
   //
@@ -1826,6 +1835,12 @@ function App() {
     // crossing is measured between two readings that actually bracket it.
     if (!roastStarted || coolingStartTime || !isTimerRunning || !gatedLiveRoast.isLive) {
       prevSampleRef.current = null;
+      // The running low needs discarding for the same reason, and it is the one
+      // path that does not go through `prev`. A minimum measured before a dead
+      // window cannot be trusted as THE minimum, because the real one may have
+      // occurred inside the gap -- and turnaround anchors the whole drying-phase
+      // read, so a wrong one is quietly misleading rather than obviously absent.
+      turnaroundLowRef.current = null;
       return;
     }
     const sample = gatedLiveRoast.latest;
