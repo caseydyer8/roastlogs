@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { computeRoR } from "../lib/ror";
+import { STALE_MS, normalizeLiveSample } from "../lib/liveSample";
 
 // Subscribes to the RoastLink bridge's Supabase Realtime broadcast and exposes
 // the live bean temp, a smoothed RoR, and a connection status. Read-only and
@@ -21,7 +22,6 @@ import { computeRoR } from "../lib/ror";
 //   live        -> a fresh sample arrived within the last STALE_MS
 
 const CHANNEL = "roastlink-live";
-const STALE_MS = 6000;
 const BUFFER_MS = 40000;
 
 export function useLiveRoast() {
@@ -64,13 +64,19 @@ export function useLiveRoast() {
     };
 
     channel.on("broadcast", { event: "sample" }, ({ payload }) => {
-      if (!payload || typeof payload.bt !== "number") return;
+      // A malformed or faulted frame is DROPPED, not shown and not recorded:
+      // `typeof bt === "number"` was true for NaN and Infinity, so a probe
+      // fault could previously reach the curve as a real reading. Dropping it
+      // also leaves lastAtRef alone, so the status correctly decays to
+      // "bridge-only" -- the bridge is up, the measurement is not trustworthy.
+      const sample = normalizeLiveSample(payload);
+      if (!sample) return;
       const now = Date.now();
       lastAtRef.current = now;
-      setLatest(payload);
+      setLatest(sample);
 
       const buf = bufferRef.current;
-      buf.push({ t: now, bt: payload.bt });
+      buf.push({ t: now, bt: sample.bt });
       const cutoff = now - BUFFER_MS;
       while (buf.length && buf[0].t < cutoff) buf.shift();
       setRor(computeRoR(buf));

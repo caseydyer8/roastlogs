@@ -16,6 +16,12 @@
 //
 // Events: state(str) · open · sample(obj) · health(obj) · event(obj) ·
 //         stale · close · error(Error)
+//
+// NOTE for any new caller: _onFrame now reports an unexpected frame shape via
+// emit("error") rather than swallowing it. Node's EventEmitter THROWS on an
+// unhandled "error" event, so a caller constructing this client directly must
+// attach an error listener. Every shipped path already does (lib/bridge.js,
+// test/harness.js).
 
 const EventEmitter = require("events");
 
@@ -33,6 +39,21 @@ const DEFAULTS = {
   reconnectBaseMs: 1000,
   reconnectMaxMs: 15000,
 };
+
+// FAULT-DETECTION bounds, not a calibration claim. Deliberately far outside any
+// real roast (ambient ~60F, drop ~430F) so they can never reject a genuine
+// reading -- their only job is to catch non-finite values and the known
+// open-thermocouple sentinels. Mirrors src/lib/liveSample.js.
+const TEMP_MIN_F = -50;
+const TEMP_MAX_F = 1000;
+
+// A finite number inside [min, max], else null. Number.isFinite is the point:
+// NaN and +/-Infinity both satisfy `typeof x === "number"`.
+function num(value, min, max) {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
+    ? value
+    : null;
+}
 
 class RoastLinkClient extends EventEmitter {
   constructor(host, opts = {}) {
@@ -127,34 +148,61 @@ class RoastLinkClient extends EventEmitter {
     }
   }
 
+  // Largest device frame worth parsing. The real ones are a couple of hundred
+  // bytes; anything vastly bigger is a malfunction or a hostile feed, and
+  // parsing it first is the expensive way to find out.
+  static get MAX_FRAME_CHARS() { return 8192; }
+
   _onFrame(text) {
-    const t = text.trim();
-    if (t === "pong") { this._alive(); return; }
+    // Nothing in here may throw. This runs inside the WebSocket onmessage
+    // callback, where an exception escapes into the socket's error path rather
+    // than being handled -- a single malformed frame could take the bridge down
+    // mid-roast. `JSON.parse("null")` SUCCEEDS and returns null, so the old
+    // `msg.type` read raised a TypeError on a frame containing just `null`.
+    try {
+      if (typeof text !== "string" || text.length > RoastLinkClient.MAX_FRAME_CHARS) return;
+      const t = text.trim();
+      if (t === "pong") { this._alive(); return; }
 
-    let msg;
-    try { msg = JSON.parse(t); } catch (_) { return; }
+      let msg;
+      try { msg = JSON.parse(t); } catch (_) { return; }
+      if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
 
-    if (msg.type === "sensorHealth") {
-      this.health = msg;
-      this.emit("health", msg);
-      return;
-    }
-    if (msg.type === "ev") {
-      this.emit("event", { label: msg.label, tDevice: msg.t });
-      return;
-    }
-    if (typeof msg.bt === "number") {
+      if (msg.type === "sensorHealth") {
+        this.health = msg;
+        this.emit("health", msg);
+        return;
+      }
+      if (msg.type === "ev") {
+        this.emit("event", { label: msg.label, tDevice: num(msg.t, 0, Number.MAX_SAFE_INTEGER) });
+        return;
+      }
+      // Bean temp is the one required measure. REJECT rather than clamp: a
+      // clamped value would arrive looking like a plausible temperature and
+      // quietly corrupt the curve. `typeof x === "number"` was true for NaN and
+      // for Infinity -- a frame with `bt: 1e309` parses to Infinity -- and a
+      // k-type thermocouple that loses its junction reports a large negative
+      // sentinel like -9999. Both used to be published as real readings.
+      //
+      // The browser re-validates identically in src/lib/liveSample.js; the two
+      // packages have separate module graphs, so the check cannot be shared.
+      const bt = num(msg.bt, TEMP_MIN_F, TEMP_MAX_F);
+      if (bt === null) return;
       const sample = {
-        tDevice: typeof msg.t === "number" ? msg.t : null,
-        bt: msg.bt,
-        et: typeof msg.et === "number" ? msg.et : null,
-        at: typeof msg.at === "number" ? msg.at : null,
-        ah: typeof msg.ah === "number" ? msg.ah : null,
+        tDevice: num(msg.t, 0, Number.MAX_SAFE_INTEGER),
+        bt,
+        et: num(msg.et, TEMP_MIN_F, TEMP_MAX_F),
+        at: num(msg.at, TEMP_MIN_F, TEMP_MAX_F),
+        ah: num(msg.ah, 0, 100),
         receivedAt: Date.now(),
       };
       this.lastSample = sample;
       this._alive(); // fresh telemetry proves the link, same as a pong
       this.emit("sample", sample);
+    } catch (err) {
+      // Surface it as a bridge error rather than letting it escape the socket
+      // callback, so an unexpected frame shape is visible but never fatal.
+      this.emit("error", err instanceof Error ? err : new Error(String(err)));
     }
   }
 

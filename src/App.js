@@ -11,6 +11,7 @@ import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 import LiveRoastChart from "./components/charts/LiveRoastChart";
 import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
+import { LIVE_GAP_S } from "./lib/liveSample";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -1766,10 +1767,39 @@ function App() {
 
   // Recording gate: capture live bean temp into the curve ONLY between START
   // and COOLING START. RoastLogs owns the window; the bridge merely streams,
-  // and nothing is persisted until the roast is saved. Bucketing by whole
-  // second downsamples the ~5Hz live feed to ~1Hz (latest reading wins).
+  // and nothing is persisted until the roast is saved. Bucketing by whole second
+  // means the latest reading in a second wins.
+  //
+  // The device streams a FIXED 1Hz (docs/roastlink-live-data-plan.md: "Sample
+  // rate | 1 per second", "1Hz is fixed in Roast mode"). This comment used to
+  // say ~5Hz, which confused `eventsPerSecond: 5` in bridge/lib/publisher.js --
+  // a Realtime rate LIMIT -- for the device's rate. The distinction matters: at
+  // 1Hz, the device clock and our own 1Hz elapsedSeconds clock drift against
+  // each other, so a healthy feed occasionally leaves a second with no sample.
+  // Both charts carry a reading across holes that short and break only on a
+  // gap wider than LIVE_GAP_S, so drift never reads as a dropout.
+  //
+  // Two conditions beyond the window, both about honesty of the saved curve:
+  //
+  //   isLive -- `bt` is the LAST reading the hook saw and it is retained after
+  //   the feed goes stale. This effect also re-runs every second (elapsedSeconds
+  //   is a dependency), so without this gate a dropout wrote that same retained
+  //   value once per second and painted a flat segment the roaster never held.
+  //
+  //   a NEW sample -- identity of the `latest` object, not its value. A second
+  //   ticking by is not a new measurement, and two consecutive readings can
+  //   legitimately be the same temperature, so value comparison would drop real
+  //   data. A gap is left as a gap: missing seconds carry no point at all, and
+  //   RoastCurveChart refuses to interpolate across spacing wider than
+  //   LIVE_GAP_S rather than inventing a line through the dead window.
+  const lastCurveSampleRef = React.useRef(null);
   React.useEffect(() => {
     if (!roastStarted || coolingStartTime) return;
+    if (!gatedLiveRoast.isLive) return;
+    const sample = gatedLiveRoast.latest;
+    if (!sample) return;
+    if (lastCurveSampleRef.current === sample) return;
+    lastCurveSampleRef.current = sample;
     const bt = gatedLiveRoast.bt;
     if (typeof bt !== "number") return;
     const sec = elapsedSeconds;
@@ -1785,7 +1815,7 @@ function App() {
       // path during a roast. The unload handler below covers the tail.
       if (buf.length % 5 === 0) writeStoredCurve(buf);
     }
-  }, [gatedLiveRoast.latest, roastStarted, coolingStartTime, elapsedSeconds]);
+  }, [gatedLiveRoast.latest, gatedLiveRoast.isLive, roastStarted, coolingStartTime, elapsedSeconds]);
 
   // Temperature ladder: auto-log threshold crossings from live BT. Gated to a
   // running roast between START and DROP, same window as curve recording -- a
@@ -1793,14 +1823,37 @@ function App() {
   // logged then would carry a misleading t.
   const turnaroundLowRef = React.useRef(null);
   const prevSampleRef = React.useRef(null); // { bt, t } of the previous sample
+  const lastLadderSampleRef = React.useRef(null);
   React.useEffect(() => {
-    if (!roastStarted || coolingStartTime || !isTimerRunning) {
+    // Losing the feed DISCARDS the previous sample. A flat retained reading
+    // cannot fabricate a crossing on its own -- a crossing needs prev below and
+    // current at-or-above, and a constant value crosses nothing. The real fault
+    // is the far side of a dropout: with prev left over from before the gap, a
+    // genuine crossing gets interpolated across the whole dead window and
+    // stamped at a time the roast never passed through. Forgetting prev means
+    // the first sample after a gap re-seeds and fires nothing, so the next
+    // crossing is measured between two readings that actually bracket it.
+    if (!roastStarted || coolingStartTime || !isTimerRunning || !gatedLiveRoast.isLive) {
       prevSampleRef.current = null;
+      // The running low needs discarding for the same reason, and it is the one
+      // path that does not go through `prev`. A minimum measured before a dead
+      // window cannot be trusted as THE minimum, because the real one may have
+      // occurred inside the gap -- and turnaround anchors the whole drying-phase
+      // read, so a wrong one is quietly misleading rather than obviously absent.
+      turnaroundLowRef.current = null;
       return;
     }
+    const sample = gatedLiveRoast.latest;
+    if (!sample) return;
+    if (lastLadderSampleRef.current === sample) return;
+    lastLadderSampleRef.current = sample;
     const bt = gatedLiveRoast.bt;
     if (typeof bt !== "number") return;
-    const prev = prevSampleRef.current;
+    let prev = prevSampleRef.current;
+    // Belt and braces on the above: even while the hook still calls the feed
+    // live, two readings further apart than the stale threshold do not bracket
+    // anything usefully, so re-seed rather than interpolate across them.
+    if (prev != null && elapsedSeconds - prev.t > LIVE_GAP_S) prev = null;
     prevSampleRef.current = { bt, t: elapsedSeconds };
 
     // A threshold fires only on a genuine RISING crossing -- previous sample
@@ -1840,7 +1893,7 @@ function App() {
         logMilestoneAt("TURNAROUND", low.t, String(Math.round(low.bt * 10) / 10));
       }
     }
-  }, [gatedLiveRoast.latest, gatedLiveRoast.bt, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
+  }, [gatedLiveRoast.latest, gatedLiveRoast.bt, gatedLiveRoast.isLive, roastStarted, coolingStartTime, isTimerRunning, elapsedSeconds]);
 
   // Flush the tail of the curve when the page is going away. pagehide is the
   // event that actually fires on mobile Safari (beforeunload does not), and
@@ -2142,15 +2195,22 @@ function App() {
   };
 
   const gatherExportData = async () => {
-    const [remoteRoasts, remoteBrews, remoteBeans] = await Promise.all([
+    // Roast profiles sync to `roast_profiles` like everything else, but this
+    // export used to read them from localStorage ONLY -- so a profile that had
+    // synced up from another device was absent from a file labelled a full
+    // backup. Profiles are React state hydrated once by the launch sync, unlike
+    // beans which are re-read from localStorage on demand, which is exactly how
+    // a device ends up holding fewer profiles than the cloud does.
+    const [remoteRoasts, remoteBrews, remoteBeans, remoteProfiles] = await Promise.all([
       fetchRoastsFromSupabase().catch(() => null),
       fetchBrewsFromSupabase().catch(() => null),
       fetchBeansFromSupabase().catch(() => null),
+      fetchProfilesFromSupabase().catch(() => null),
     ]);
     // A logical JSON export is the ONLY backup story on the free plan (no PITR),
     // so a partial file labelled as a full backup is worse than no file. Fail
     // loudly instead of silently treating an unreachable table as empty.
-    if (remoteRoasts === null || remoteBrews === null || remoteBeans === null) {
+    if (remoteRoasts === null || remoteBrews === null || remoteBeans === null || remoteProfiles === null) {
       throw new Error(
         "Couldn't reach the cloud — this backup would be incomplete. Reconnect and try again."
       );
@@ -2159,7 +2219,7 @@ function App() {
       roasts: mergeById(readLocalJSON("roasts"), remoteRoasts),
       brews: mergeById(readLocalJSON("tastingNotes"), remoteBrews),
       beans: mergeById(readLocalJSON("beans"), remoteBeans),
-      roastProfiles: readLocalJSON("global_profiles"),
+      roastProfiles: mergeById(readLocalJSON("global_profiles"), remoteProfiles),
     };
   };
 
@@ -2214,7 +2274,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.8.1",
+        appVersion: "3.8.2",
         roastSessions,
         beans,
         roastProfiles,
@@ -5310,7 +5370,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.8.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.8.2</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
