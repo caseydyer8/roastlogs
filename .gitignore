@@ -17,3 +17,14 @@ playwright-report/
 
 # Electron bridge build output (macOS alias to the DMG volume)
 RoastLogs Bridge *
+
+# Per-machine verification state for the stop gate. Must never travel
+# between the Mac and the HP — a hash proven on one machine says nothing
+# about the other.
+.session/
+
+# Untriaged security findings. This repo is PUBLIC: a queue describing where
+# the gaps are, before they are fixed, is a roadmap for someone else. The
+# ledger (docs/ledger.json) is the durable record and it travels; the raw
+# finding does not need to.
+findings/
