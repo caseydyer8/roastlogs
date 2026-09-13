@@ -25,4 +25,16 @@ fi
           -o -name '*.html' -o -name '*.json' \) 2>/dev/null \
     | LC_ALL=C sort | tr '\n' '\0' | xargs -0 "$H" 2>/dev/null
   "$H" package.json playwright.config.js 2>/dev/null
+  # docs/ledger.json is in scope because verify.sh now VALIDATES it, and a gate
+  # step only bites if changing its input invalidates the proof. Without this
+  # line an invalid ledger sails through both gates untouched — the hash would
+  # be unchanged, so the commit guard and the stop gate would both see a state
+  # they had already approved, and validate would not run again until something
+  # in src/ happened to change.
+  #
+  # .claude/ is deliberately NOT hashed. Hook and tool edits do not change app
+  # behaviour, and including them would cost a 45s re-verify for every comment
+  # fix in a hook. That is a real gap, consciously left: a broken HOOK is
+  # caught by running it, not by the hash.
+  "$H" docs/ledger.json 2>/dev/null
 } | "$H" | cut -d' ' -f1
