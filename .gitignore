@@ -17,3 +17,8 @@ playwright-report/
 
 # Electron bridge build output (macOS alias to the DMG volume)
 RoastLogs Bridge *
+
+# Per-machine verification state for the stop gate. Must never travel
+# between the Mac and the HP — a hash proven on one machine says nothing
+# about the other.
+.session/

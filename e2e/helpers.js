@@ -1,4 +1,4 @@
-const { expect } = require("@playwright/test");
+const { expect, test } = require("@playwright/test");
 
 // Why this exists
 // ---------------
@@ -33,6 +33,20 @@ function syncDot(page) {
 }
 
 async function fullPageShot(page, name, options = {}) {
+  // Visual assertions are skippable where a container cannot produce the
+  // single -linux.png baseline set, but NEVER silently. The annotation is the
+  // whole point: a bypassed screenshot check that still reports green is a
+  // test covering nothing, which is precisely the failure the UNSHELL_CSS
+  // note above records from the v3 shell change — baselines kept passing
+  // while quietly capturing nothing below the fold. Annotated, the report
+  // names every check that did not actually run.
+  //
+  // This function is the suite's ONLY caller of toHaveScreenshot, so this one
+  // guard covers all 44 baselines.
+  if (process.env.RL_SKIP_VISUAL === "1") {
+    test.info().annotations.push({ type: "visual-skipped", description: name });
+    return;
+  }
   const { mask = [], ...rest } = options;
   const styleTag = await page.addStyleTag({ content: UNSHELL_CSS });
   try {

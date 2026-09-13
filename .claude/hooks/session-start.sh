@@ -16,6 +16,21 @@
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Session baseline, recorded before any work happens. Without it the stop gate
+# cannot distinguish "nothing was touched this session" from "changes were made
+# and never verified", so it would block on a session that was pure
+# conversation. .session/ is gitignored — this state is per-machine and must
+# never travel between the Mac and the HP.
+mkdir -p .session
+[ -x "$HOOK_DIR/state-hash.sh" ] && "$HOOK_DIR/state-hash.sh" > .session/baseline-hash 2>/dev/null
+
+# Prune the stop gate's per-session block counters. stop-gate.sh writes
+# .session/stop-blocks-<session_id> and never removes it, so without this the
+# directory grows by one file for every session that gets blocked at least once
+# — unbounded, forever. 7 days is well past any session's usable life: the
+# counter only needs to survive repeated Stop fires within one session.
+find .session -maxdepth 1 -name 'stop-blocks-*' -type f -mtime +7 -delete 2>/dev/null
+
 emit() {
   if command -v jq >/dev/null 2>&1; then
     jq -cn --arg c "$1" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$c}}'
