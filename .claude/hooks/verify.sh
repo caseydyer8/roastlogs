@@ -18,7 +18,7 @@ echo "verify: ${RL_PROFILE_LINE:-machine=unknown}"
 #    because an item marked done with no acceptance criterion means the record
 #    of what was proven is already wrong. A failing ledger stops the gate as
 #    surely as a failing test: completeness has to be data, not prose.
-echo "  [1/3] ledger"
+echo "  [1/4] ledger"
 if [ -f .claude/tools/ledger.js ]; then
   if ! node .claude/tools/ledger.js validate; then
     echo "FAIL: ledger validation. Fix docs/ledger.json, then re-run."
@@ -36,29 +36,45 @@ else
   echo "    (no ledger tool present, skipping)"
 fi
 
-# 2. Build. CI=false because CRA promotes warnings to errors under CI=true,
+# 2. Secrets. Before the build, and before anything slow: a leaked credential
+#    makes the rest of the gate irrelevant. This is the compensating control
+#    for pre-commit-guard.sh no longer blanket-blocking git add — that guard
+#    watches filenames, this watches CONTENT, so a secret pasted into a
+#    source file or a fixture is caught too.
+echo "  [2/4] secret scan"
+if [ -x "$HOOK_DIR/secret-scan.sh" ]; then
+  if ! "$HOOK_DIR/secret-scan.sh"; then
+    echo "FAIL: secret scan. A ledger item was opened at critical severity."
+    echo "      Do not commit. Remove or ignore the value, and rotate it if it was ever real."
+    exit 1
+  fi
+else
+  echo "    (no secret-scan.sh present, skipping)"
+fi
+
+# 3. Build. CI=false because CRA promotes warnings to errors under CI=true,
 #    which fails the build for lint noise rather than anything real.
-echo "  [2/3] build"
+echo "  [3/4] build"
 if ! CI=false npm run build >/tmp/rl-build.log 2>&1; then
   echo "FAIL: build. Last 30 lines:"
   tail -30 /tmp/rl-build.log
   exit 1
 fi
 
-# 3. Tests. Visual assertions only run where a container can produce the
+# 4. Tests. Visual assertions only run where a container can produce the
 #    single -linux.png baseline set; everywhere else they are skipped and
 #    recorded as pending, never silently dropped.
 if [ "$RL_VISUAL" = "container" ]; then
-  echo "  [3/3] full suite (functional + visual)"
+  echo "  [4/4] full suite (functional + visual)"
   npm test || { echo "FAIL: test suite"; exit 1; }
   VISUAL=covered
 else
-  echo "  [3/3] functional only (visual unavailable: docker=${RL_DOCKER})"
+  echo "  [4/4] functional only (visual unavailable: docker=${RL_DOCKER})"
   npm run test:functional || { echo "FAIL: functional tests"; exit 1; }
   VISUAL=pending
 fi
 
-# 4. Record what was proven, and on which machine.
+# 5. Record what was proven, and on which machine.
 "$HOOK_DIR/state-hash.sh" > .session/verified-hash
 {
   echo "verified_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

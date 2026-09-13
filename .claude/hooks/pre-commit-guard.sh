@@ -1,134 +1,181 @@
 #!/usr/bin/env bash
-# PreToolUse guard on the Bash tool. Refuses three specific commands.
+# PreToolUse guard on the Bash tool. Denies three specific git INVOCATIONS.
 #
-# SCHEMA NOTE — this is NOT the shape stop-gate.sh uses, and the difference is
-# real rather than stylistic. Verified against the Claude Code 2.1.270 hooks
-# documentation on 2026-09-13:
+# SCHEMA — PreToolUse does NOT share a shape with Stop. Verified against the
+# Claude Code 2.1.270 docs:
+#   Stop        {"decision":"block","reason":"..."}
+#   PreToolUse  {"hookSpecificOutput":{"hookEventName":"PreToolUse",
+#                 "permissionDecision":"deny",            # allow | deny | ask
+#                 "permissionDecisionReason":"..."}}
+# permissionDecisionReason has a capital R and is a different key from Stop's
+# plain "reason". A top-level "decision" is not documented for PreToolUse, so
+# emitting the Stop shape here parses as no decision and the command proceeds.
 #
-#   Stop        -> {"decision":"block","reason":"..."}
-#   PreToolUse  -> {"hookSpecificOutput":{"hookEventName":"PreToolUse",
-#                    "permissionDecision":"deny",
-#                    "permissionDecisionReason":"..."}}
+# PARSING, not substring matching. The previous version matched the whole
+# command string, which denied any command whose TEXT contained a pattern —
+# it blocked its own test harness and a commit whose MESSAGE mentioned .env,
+# while being unable to prevent the actual harm. Now the command is split on
+# ; && || | and newlines, leading VAR=val assignments are stripped, and only
+# the resulting first token plus its subcommand are inspected. So:
+#     echo "git add -f .env"   -> allowed, it is a string
+#     git add -f .env          -> denied, it is an invocation
 #
-# permissionDecision takes "allow" | "deny" | "ask". The reason key is
-# permissionDecisionReason — capital R, and a different name from the Stop
-# event's plain "reason". A top-level "decision" field is not documented for
-# PreToolUse at all, so emitting the Stop shape here would parse as no decision
-# and the command would sail through. That is why this file does not share a
-# helper with stop-gate.sh.
+# Note plain `git add .env` is a NO-OP: .env is gitignored, so git refuses it
+# without -f. That is why the old blanket rule was noisiest exactly where it
+# could not prevent harm. The force flag is the thing worth gating.
 #
-# SCOPE — this only ever sees explicit Bash TOOL CALLS. PreToolUse fires on
-# tool invocations and matches on tool_name, so Claude Code's own internal git
-# work and git run from inside other hooks do not pass through here. It cannot
-# gate those, and it does not try to.
+# LIMITS, stated rather than implied. This parser does NOT evaluate $() or
+# backticks, and cannot resolve a command name hidden behind a variable
+# ($TOOL push). The Claude Code docs say the same of their own `if` filter:
+# "Because the `if` filter is best-effort, use the permission system rather
+# than a hook to enforce a hard allow or deny." Treat this as a guard against
+# mistakes, not as a control against a determined bypass.
 #
-# Fails CLOSED, same as stop-gate.sh: if it cannot read its input or hash the
-# tree, it denies and says why. A guard that vanishes when a dependency is
-# missing is worse than no guard, because you still believe you have one.
+# Fails CLOSED: if it cannot parse its input or hash the tree, it denies.
 
 INPUT="$(cat)"
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Emit a deny. The reason arrives as $1; it is JSON-escaped rather than
-# interpolated raw, because a reason containing a quote or newline would
-# otherwise produce malformed JSON and the deny would be silently lost.
-deny() {
-  if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg r "$1" \
-      '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  elif command -v python3 >/dev/null 2>&1; then
-    R="$1" python3 -c 'import json,os;print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":os.environ["R"]}}))'
-  else
-    # No escaper available. Still deny — with a fixed, literal payload that
-    # needs no escaping — rather than letting the command through.
-    cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"The pre-commit guard cannot run: neither jq nor python3 is on PATH, so it cannot read its own input. Tell Case the guard is non-functional on this machine. Do not work around it."}}
+FORBIDDEN_BRANCH="feature/v1.1-history-chart"
+
+emit_deny() {
+  R="$1" python3 -c 'import json,os;print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":os.environ["R"]}}))' 2>/dev/null && exit 0
+  # python3 gone mid-flight: still deny, with a literal payload needing no escaping.
+  cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"The pre-commit guard could not emit its decision. Treat this state as unverified and tell Case the guard is non-functional on this machine."}}
 JSON
-  fi
   exit 0
 }
 
-# --- Read the command out of tool_input -------------------------------------
-if command -v jq >/dev/null 2>&1; then
-  CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
-  TOOL="$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)"
-elif command -v python3 >/dev/null 2>&1; then
-  READ="$(printf '%s' "$INPUT" | python3 -c 'import sys,json
+# python3 carries both the JSON read and the command parse. shlex handles
+# quoting correctly, which hand-rolled shell word splitting does not.
+if ! command -v python3 >/dev/null 2>&1; then
+  emit_deny "The pre-commit guard requires python3 to parse the command safely and it is not on PATH. Rather than guess at the command, it is denying. Tell Case the guard is non-functional on this machine."
+fi
+
+# Emits one line per git invocation found: "<subcommand>\t<space-joined args>"
+# shellcheck disable=SC2016
+# The single quotes are deliberate: this is a Python program, and the shell
+# must NOT expand $() or $VAR inside it — those belong to Python's own syntax
+# and to the command text being analysed.
+VERDICT="$(printf '%s' "$INPUT" | python3 -c '
+import json, re, shlex, sys
+
 try:
     d = json.load(sys.stdin)
 except Exception:
-    d = {}
-print(d.get("tool_name") or "")
-print((d.get("tool_input") or {}).get("command") or "")' 2>/dev/null)"
-  TOOL="$(printf '%s' "$READ" | sed -n 1p)"
-  CMD="$(printf '%s' "$READ" | sed -n '2,$p')"
-else
-  deny "unreachable: no JSON reader"
-fi
+    print("PARSE_ERROR")
+    sys.exit(0)
 
-# Only Bash is in scope. Anything else is allowed through untouched — silence
-# plus exit 0 is "no opinion", which is the correct default for a guard.
-[ "$TOOL" = "Bash" ] || exit 0
-[ -n "$CMD" ] || exit 0
+if (d.get("tool_name") or "") != "Bash":
+    sys.exit(0)
+cmd = (d.get("tool_input") or {}).get("command") or ""
+if not cmd.strip():
+    sys.exit(0)
 
-# --- 1. git merge of the forbidden branch -----------------------------------
-# Checked FIRST: it is unconditional, and it must not be reachable by first
-# satisfying some other condition.
-case "$CMD" in
-  *git*merge*feature/v1.1-history-chart*)
-    deny "BLOCKED: feature/v1.1-history-chart must never be merged. It is a retired branch kept for reference only. If you believe this specific merge is correct, stop and ask Case — do not rephrase the command to get around this guard."
+# Split into segments on the shell operators that start a new command.
+segments = re.split(r"(?:\|\||&&|;|\||\n)", cmd)
+
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+for seg in segments:
+    seg = seg.strip()
+    if not seg:
+        continue
+    try:
+        toks = shlex.split(seg)
+    except ValueError:
+        # Unparseable segment — usually a heredoc body carrying an apostrophe,
+        # which is entirely normal and has nothing to do with git. Denying the
+        # whole command here was wrong: it rejected ordinary scripting while
+        # adding no safety. So narrow it: if the segment does not even mention
+        # git there is nothing this guard governs, and it is skipped. If it
+        # DOES mention git, fall back to a crude whitespace split — good enough
+        # to spot `git <subcommand>` — and if even that is ambiguous, deny.
+        if not re.search(r"\bgit\b", seg):
+            continue
+        toks = seg.split()
+        if not toks:
+            continue
+    # Strip leading VAR=val assignments, matching how Claude Code itself
+    # evaluates Bash patterns ("leading assignments are stripped").
+    while toks and ASSIGN.match(toks[0]):
+        toks.pop(0)
+    if not toks:
+        continue
+    exe = toks[0].rsplit("/", 1)[-1]
+    if exe != "git":
+        continue
+    # First token after git that is not a global flag is the subcommand.
+    rest = toks[1:]
+    sub = None
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        if t in ("-C", "--git-dir", "--work-tree", "-c"):
+            i += 2
+            continue
+        if t.startswith("-"):
+            i += 1
+            continue
+        sub = t
+        i += 1
+        break
+    if sub is None:
+        continue
+    print(sub + "\t" + " ".join(rest[i:]))
+' 2>/dev/null)"
+
+case "$VERDICT" in
+  PARSE_ERROR*)
+    emit_deny "The pre-commit guard could not parse this command (unbalanced quotes or malformed hook input), so it cannot tell what it would run. Denying rather than guessing. Simplify the command into separate calls."
     ;;
 esac
 
-# --- 2. git add of secrets ---------------------------------------------------
-case "$CMD" in
-  *git*add*)
-    # .env is refused outright. It holds the Supabase config a build bakes
-    # into the published bundle; it is gitignored, and naming it explicitly is
-    # the only way it reaches a commit.
-    case "$CMD" in
-      *.env*)
-        deny "BLOCKED: refusing to stage .env. It holds the Supabase config that a build bakes into the published bundle, and it is gitignored by design. If you need to change what the app ships with, edit .env.example instead."
-        ;;
-    esac
+[ -n "$VERDICT" ] || exit 0
 
-    # findings/ is refused only when it ACTUALLY contains credentials, which is
-    # the condition worth gating — a finding with no secret in it is ordinary
-    # reviewable text. Checked whenever the command names findings/ OR is a
-    # broad add that would sweep it without naming it (-A, -u, ., :/).
-    SWEEPS=no
-    case "$CMD" in
-      *findings/*) SWEEPS=yes ;;
-      *"git add -A"*|*"git add --all"*|*"git add -u"*|*"git add ."*|*"git add :/"*) SWEEPS=yes ;;
-    esac
-    if [ "$SWEEPS" = yes ] && [ -d findings ]; then
-      if ! command -v grep >/dev/null 2>&1; then
-        deny "BLOCKED: cannot scan findings/ for credentials because grep is unavailable, so it is not possible to tell whether this add would commit a secret. Stage specific files by name instead."
+# --- Walk each git invocation found -----------------------------------------
+while IFS="$(printf '\t')" read -r SUB ARGS; do
+  [ -n "$SUB" ] || continue
+  case "$SUB" in
+
+    # 1. Forbidden merge. Unconditional, and checked on the parsed subcommand
+    #    so a commit message mentioning the branch cannot trigger it.
+    merge)
+      case " $ARGS " in
+        *" $FORBIDDEN_BRANCH "*|*"/$FORBIDDEN_BRANCH "*|*" $FORBIDDEN_BRANCH")
+          emit_deny "BLOCKED: $FORBIDDEN_BRANCH must never be merged. It is retired and kept for reference only. If you believe this specific merge is correct, stop and ask Case — do not rephrase to evade this guard."
+          ;;
+      esac
+      ;;
+
+    # 2. Forced add. Plain `git add .env` already fails on its own because
+    #    .env is gitignored; -f is what overrides that, so -f is the gate.
+    add)
+      for a in $ARGS; do
+        case "$a" in
+          -f|--force|-f*)
+            emit_deny "BLOCKED: refusing a forced git add. -f overrides .gitignore, which is the only way .env or anything under findings/ reaches a commit. Both are ignored deliberately: .env holds the Supabase config a build bakes into the published bundle, and findings/ is a queue of untriaged security findings in a PUBLIC repo. Stage the specific files you mean without -f."
+            ;;
+        esac
+      done
+      ;;
+
+    # 3. Commit on unverified state.
+    commit)
+      NOW="$("$HOOK_DIR/state-hash.sh" 2>/dev/null)"
+      if [ -z "$NOW" ] || [ "$NOW" = "no-hasher-available" ]; then
+        emit_deny "BLOCKED: the guard could not hash the working tree, so it cannot tell whether this state was verified. Nothing has been proven. Tell Case the guard is non-functional rather than committing."
       fi
-      # Patterns that mean a real credential rather than a mention of one:
-      # a Supabase secret key, a service_role token, a JWT header, a private
-      # key block, or an assigned password/secret value.
-      HIT="$(grep -rlaE 'sb_secret_[A-Za-z0-9_-]|eyJhbGciOi|BEGIN [A-Z ]*PRIVATE KEY|"(password|secret|service_role_key)"[[:space:]]*:[[:space:]]*"[^"]+"' findings 2>/dev/null | head -3)"
-      if [ -n "$HIT" ]; then
-        deny "BLOCKED: this would stage credential material under findings/. Matches in: $(printf '%s' "$HIT" | tr '\n' ' '). Findings are agent output awaiting human promotion into docs/ledger.json — the ledger is the durable record and it travels; the raw finding does not need to. Strip the credential from the file, or stage only the specific files you mean by name."
+      VERIFIED="$(cat .session/verified-hash 2>/dev/null)"
+      if [ "$NOW" != "$VERIFIED" ]; then
+        emit_deny "BLOCKED: this state has not passed verification. Run .claude/hooks/verify.sh first (about 45-55s: ledger, secret scan, build, tests). If it exits non-zero, read the failure, fix the cause, run it again, and only commit once it exits 0. Committing moves HEAD and therefore invalidates the proof, so the Stop gate will ask for one more verify.sh afterwards — that is designed, not a loop."
       fi
-    fi
-    ;;
-esac
-
-# --- 3. git commit on unverified state --------------------------------------
-case "$CMD" in
-  *git*commit*)
-    NOW="$("$HOOK_DIR/state-hash.sh" 2>/dev/null)"
-    if [ -z "$NOW" ] || [ "$NOW" = "no-hasher-available" ]; then
-      deny "BLOCKED: the pre-commit guard could not hash the working tree, so it cannot tell whether this state was verified. Nothing has been proven. Tell Case the guard is non-functional rather than committing."
-    fi
-    VERIFIED="$(cat .session/verified-hash 2>/dev/null)"
-    if [ "$NOW" != "$VERIFIED" ]; then
-      deny "BLOCKED: this state has not passed verification, so there is nothing to commit against. Run .claude/hooks/verify.sh first — it takes about 45 seconds (ledger, build, tests). If it exits non-zero, read the failure, fix the cause, and run it again. Only commit once it exits 0. Note that committing changes HEAD and therefore invalidates this proof, so the Stop gate will ask for one more verify.sh afterwards; that is expected, not a loop."
-    fi
-    ;;
-esac
+      ;;
+  esac
+done <<EOF
+$VERDICT
+EOF
 
 exit 0
