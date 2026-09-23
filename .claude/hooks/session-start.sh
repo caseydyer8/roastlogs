@@ -76,6 +76,32 @@ if [ "$RL_NO_NET" != "1" ]; then
   fi
 fi
 
+# --- 2b. The private ops repo is a SECOND drift point ------------------------
+# docs/private/ is its own git repository (caseydyer8/roastlogs-ops), so the
+# check above cannot see it. A stale ledger is the same 2026-09-07 failure
+# mode as a stale app clone, just in a different place.
+if [ ! -d docs/private ]; then
+  OUT="${OUT}  docs/private/: NOT CLONED. First run on this machine — from the repo root:"$'\n'
+  OUT="${OUT}    git clone git@github.com:caseydyer8/roastlogs-ops.git docs/private"$'\n'
+elif [ -d docs/private/.git ] && [ "$RL_NO_NET" != "1" ]; then
+  git -C docs/private fetch --quiet 2>/dev/null
+  # Exit status, not output: with no upstream (or no commits yet) rev-parse
+  # can echo the literal "@{u}" back while failing.
+  PUP="$(git -C docs/private rev-parse --abbrev-ref '@{u}' 2>/dev/null)" || PUP=""
+  if [ -z "$PUP" ]; then
+    OUT="${OUT}  docs/private/: no upstream branch — cannot tell whether it is current."$'\n'
+  else
+    PAHEAD="$(git -C docs/private rev-list --count "$PUP"..HEAD 2>/dev/null)"
+    PBEHIND="$(git -C docs/private rev-list --count HEAD.."$PUP" 2>/dev/null)"
+    if [ "${PBEHIND:-0}" -gt 0 ]; then
+      OUT="${OUT}  STOP: docs/private/ is ${PBEHIND} commit(s) behind ${PUP}. Pull it before doing anything."$'\n'
+      OUT="${OUT}  This is the 2026-09-07 failure mode — a stale clone deployed over newer work."$'\n'
+    fi
+    [ "${PAHEAD:-0}" -gt 0 ] && OUT="${OUT}  docs/private/: ${PAHEAD} commit(s) ahead of ${PUP} (unpushed)."$'\n'
+    [ "${PBEHIND:-0}" -eq 0 ] && [ "${PAHEAD:-0}" -eq 0 ] && OUT="${OUT}  docs/private/: in sync with ${PUP}"$'\n'
+  fi
+fi
+
 DIRTY="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 [ "${DIRTY:-0}" -gt 0 ] && OUT="${OUT}  ${DIRTY} uncommitted change(s) in the working tree."$'\n'
 
@@ -107,7 +133,10 @@ if [ "$RL_NO_NET" != "1" ] && [ -n "$HOMEPAGE" ]; then
 fi
 
 # --- 4. Open actions --------------------------------------------------------
-if [ -f docs/NEXT-SESSION.md ]; then
+if [ ! -d docs/private ]; then
+  # The clone instruction is printed once, in the repo-position block above.
+  OUT="${OUT}"$'\n'"open actions: UNAVAILABLE until docs/private/ is cloned (instruction above)."$'\n'
+elif [ -f docs/private/NEXT-SESSION.md ]; then
   # Open actions live in the "| # | What | Blocked on |" TABLE, not in the
   # numbered prose. This originally grepped numbered items out of "Pick up
   # here" -- but that section has always been a summary of what the LAST
@@ -123,9 +152,9 @@ if [ -f docs/NEXT-SESSION.md ]; then
              gsub(/^[ \t]+|[ \t]+$/, "", d);
              gsub(/\*\*|`/, "", d);
              printf "  %s. %s\n", n, substr(d, 1, 150);
-           }' docs/NEXT-SESSION.md | head -10)"
+           }' docs/private/NEXT-SESSION.md | head -10)"
   if [ -n "$ITEMS" ]; then
-    OUT="${OUT}"$'\n'"open actions (docs/NEXT-SESSION.md → open-items table):"$'\n'"${ITEMS}"$'\n'
+    OUT="${OUT}"$'\n'"open actions (docs/private/NEXT-SESSION.md → open-items table):"$'\n'"${ITEMS}"$'\n'
   fi
 fi
 

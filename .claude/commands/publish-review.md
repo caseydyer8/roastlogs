@@ -58,7 +58,7 @@ deliberately as its own reviewed change.
 
 ## 4. Record it
 
-Note the check-in in `docs/ledger.json` terms: the reviewer's source tier is
+Note the check-in in `docs/private/ledger.json` terms: the reviewer's source tier is
 `external-review`, so `ledger.js add` routes its findings to `findings/pending/`
 for human promotion rather than writing them directly. `findings/` is
 gitignored — an untriaged queue describing where the gaps are must not be

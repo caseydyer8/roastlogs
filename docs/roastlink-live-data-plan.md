@@ -502,7 +502,7 @@ makes roasts before and after non-comparable — the same hazard as changing equ
 A static LAN address was set on the device, but **the risk is the router's DHCP pool**
 — if the chosen address sits inside it, the router can lease it to another client.
 
-**Resolution: a DHCP reservation on the Linksys router, device set back to Dynamic.**
+**Resolution: a DHCP reservation on the router, device set back to Dynamic.**
 One source of truth; the router owns the assignment and will never hand it out twice.
 The bridge still targets `roastlink.local` (mDNS) with the IP as fallback.
 
@@ -1025,4 +1025,5 @@ into the repo.
   Worth a visible "E2E BYPASS ACTIVE" banner so it can never masquerade as a
   normal session.
 - ~~**`CLAUDE.md` still imports `@.claude/case-profile/00-04`**~~ FIXED -- it
-  now imports `.claude/working-agreement.md`.
+  now imports `.claude/working-agreement.md` (moved to
+  `docs/private/working-agreement.md` on 2026-09-23).

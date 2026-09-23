@@ -57,9 +57,11 @@ function name and schema is a map.
 someone else.** This is the sharpest category and the easiest to miss. An OPEN
 item that names the gap, the affected component, and the conditions to reach it
 is a working exploit recipe published before the fix. A CLOSED item described
-in the past tense is ordinary engineering history. Check `docs/ledger.json` and
-`docs/NEXT-SESSION.md` in the diff specifically: their whole purpose is to
-describe what is not yet fixed.
+in the past tense is ordinary engineering history. The ledger, `NEXT-SESSION.md`
+and the security triage moved to `docs/private/` (the private `roastlogs-ops`
+repo, gitignored here) on 2026-09-23, precisely because their whole purpose is
+to describe what is not yet fixed. Any of them reappearing as a tracked file
+anywhere in this repo — at its old `docs/` path or otherwise — is a `hold`.
 
 **4. Personal information.** Real-world identity beyond the git handle,
 physical location, employer or work systems, family members, health, personal

@@ -11,9 +11,14 @@
 //   node .claude/tools/ledger.js render [--check]
 //   node .claude/tools/ledger.js validate
 //
-// docs/ledger.json is TRACKED and travels between the Mac and the HP. It is not
+// docs/private/ledger.json travels between the Mac and the HP. It is not
 // .session/ state: a hash proven on one machine says nothing about the other,
 // but an open action is an open action everywhere.
+//
+// docs/private/ is a clone of the PRIVATE repo caseydyer8/roastlogs-ops, and is
+// gitignored here. Moved out 2026-09-23: this repo is public, and a ledger of
+// open security items is a roadmap for someone else. A machine that has not
+// cloned it yet gets a clear instruction, not a stack trace.
 //
 // `id` is assigned once from next_id and NEVER reused, including after an item
 // is deleted. Table row numbers renumber when a row is removed, which is
@@ -23,8 +28,9 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const LEDGER = path.join(ROOT, "docs", "ledger.json");
-const NEXT_SESSION = path.join(ROOT, "docs", "NEXT-SESSION.md");
+const PRIVATE_DIR = path.join(ROOT, "docs", "private");
+const LEDGER = path.join(PRIVATE_DIR, "ledger.json");
+const NEXT_SESSION = path.join(PRIVATE_DIR, "NEXT-SESSION.md");
 const PENDING_DIR = path.join(ROOT, "findings", "pending");
 
 const TYPES = ["bug", "security", "feature", "idea", "chore"];
@@ -64,7 +70,17 @@ function die(msg, code = 1) {
   process.exit(code);
 }
 
+function requirePrivate() {
+  if (!fs.existsSync(PRIVATE_DIR))
+    die(
+      "docs/private/ is missing. The ledger lives in the private repo\n" +
+        "        caseydyer8/roastlogs-ops. From the roastlogs root, run:\n" +
+        "          git clone git@github.com:caseydyer8/roastlogs-ops.git docs/private"
+    );
+}
+
 function load() {
+  requirePrivate();
   let raw;
   try {
     raw = fs.readFileSync(LEDGER, "utf8");
@@ -156,7 +172,7 @@ function renderCmd(flags) {
   if (flags.check) {
     if (next !== md) {
       process.stderr.write(
-        "ledger: NEXT-SESSION.md table is out of date with docs/ledger.json.\n" +
+        "ledger: NEXT-SESSION.md table is out of date with docs/private/ledger.json.\n" +
           "        The table is generated output — run `node .claude/tools/ledger.js render`\n" +
           "        rather than editing it by hand.\n"
       );

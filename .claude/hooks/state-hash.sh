@@ -25,7 +25,7 @@ fi
           -o -name '*.html' -o -name '*.json' \) 2>/dev/null \
     | LC_ALL=C sort | tr '\n' '\0' | xargs -0 "$H" 2>/dev/null
   "$H" package.json playwright.config.js 2>/dev/null
-  # docs/ledger.json is in scope because verify.sh now VALIDATES it, and a gate
+  # docs/private/ledger.json is in scope because verify.sh now VALIDATES it, and a gate
   # step only bites if changing its input invalidates the proof. Without this
   # line an invalid ledger sails through both gates untouched — the hash would
   # be unchanged, so the commit guard and the stop gate would both see a state
@@ -36,5 +36,12 @@ fi
   # behaviour, and including them would cost a 45s re-verify for every comment
   # fix in a hook. That is a real gap, consciously left: a broken HOOK is
   # caught by running it, not by the hash.
-  "$H" docs/ledger.json 2>/dev/null
+  # It lives in the private roastlogs-ops clone. If that clone is missing the
+  # hash records the absence explicitly, so cloning it later still changes the
+  # hash and forces a fresh verify.
+  if [ -f docs/private/ledger.json ]; then
+    "$H" docs/private/ledger.json 2>/dev/null
+  else
+    echo "no-private-ledger"
+  fi
 } | "$H" | cut -d' ' -f1

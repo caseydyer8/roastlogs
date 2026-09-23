@@ -19,9 +19,15 @@ echo "verify: ${RL_PROFILE_LINE:-machine=unknown}"
 #    of what was proven is already wrong. A failing ledger stops the gate as
 #    surely as a failing test: completeness has to be data, not prose.
 echo "  [1/4] ledger"
-if [ -f .claude/tools/ledger.js ]; then
+if [ -f .claude/tools/ledger.js ] && [ ! -d docs/private ]; then
+  # Fail, do not skip: a gate that quietly passes without its ledger is not a
+  # gate. The ledger moved to the private repo on 2026-09-23.
+  echo "FAIL: docs/private/ is missing, so the ledger cannot be validated."
+  echo "      From the repo root: git clone git@github.com:caseydyer8/roastlogs-ops.git docs/private"
+  exit 1
+elif [ -f .claude/tools/ledger.js ]; then
   if ! node .claude/tools/ledger.js validate; then
-    echo "FAIL: ledger validation. Fix docs/ledger.json, then re-run."
+    echo "FAIL: ledger validation. Fix docs/private/ledger.json, then re-run."
     exit 1
   fi
   # The NEXT-SESSION.md table is generated output. If it has drifted from the
