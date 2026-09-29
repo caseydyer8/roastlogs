@@ -51,6 +51,26 @@ outage. Each carries a `raise exception` guard AND wraps everything after it in
 a `/* … */` block comment (`psql -f` would otherwise run past the guard). A
 missing guard or wrapper is itself a finding.
 
+## Every live query opens read-only — structurally, not by care
+
+Every `execute_sql` call in this audit, catalog reads included, is wrapped:
+
+```sql
+begin;
+set transaction read only;   -- MUST be the first statement after begin
+-- ... set local role / set_config / SELECTs ...
+rollback;
+```
+
+`set transaction read only` makes Postgres itself refuse any write or schema
+change for the rest of the transaction, so a slip errors out instead of
+depending on the rollback. Proven live 2026-09-29: inside it, reads as
+`authenticated` still work, and `create temp view` fails with
+`ERROR 25006: cannot execute CREATE VIEW in a read-only transaction`.
+`set local role` and `set_config(..., true)` are allowed. Never drop the line
+to "just check something quickly": that is exactly the 2026-09-23 slip, where a
+stray `create temp view` ran and only the rollback kept it from persisting.
+
 ## Steps
 
 1. **The permissive check — run this first.** Postgres ORs permissive policies
@@ -76,8 +96,8 @@ missing guard or wrapper is itself a finding.
    Also run `get_advisors`. If MCP isn't connected, say so explicitly and mark
    live state UNVERIFIED rather than inferring it from the .sql files.
 
-3. **Walk the scenarios AS THE ROLE** — `begin; set local role authenticated;`
-   then SELECT counts, then `rollback;`. Simulate a session with
+3. **Walk the scenarios AS THE ROLE** — `begin; set transaction read only;
+   set local role authenticated;` then SELECT counts, then `rollback;`. Simulate a session with
    `select set_config('request.jwt.claims', '{"sub":"…","role":"authenticated","aal":"aal2"}', true);`.
    Read-only: SELECT only. An ERROR (rather than 0 rows) is the outage
    signature. For each table:

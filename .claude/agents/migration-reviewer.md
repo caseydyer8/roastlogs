@@ -33,13 +33,21 @@ matches is not verification either — that inference is exactly what failed.
    `select:mcp__Supabase__execute_sql,mcp__Supabase__list_tables`. If that
    finds nothing, the Supabase server has a different name on this machine:
    stop and report it — do not guess, and do not fall back to reading files.
-2. Read current state from the catalogs (`pg_policies`, `pg_proc` with
+2. **Every `execute_sql` call opens read-only.** Wrap each one — catalog reads
+   included — in `begin; set transaction read only; … rollback;`, with
+   `set transaction read only` as the FIRST statement after `begin`. Postgres
+   then refuses any write or schema change itself (`ERROR 25006`), so a slip
+   errors instead of relying on the rollback. Proven live 2026-09-29. This is
+   structural, not a matter of care: a query without it is a defect in your
+   run, even if it only reads.
+3. Read current state from the catalogs (`pg_policies`, `pg_proc` with
    `prosecdef`, `information_schema.role_table_grants`,
    `has_function_privilege('authenticated', 'private.is_admin(uuid)',
    'EXECUTE')`, `pg_default_acl`).
-3. Exercise it **as the role**, inside a transaction you roll back:
+4. Exercise it **as the role**, inside a read-only transaction you roll back:
    ```sql
    begin;
+   set transaction read only;
    set local role authenticated;
    select count(*) from public.roasts;  -- and each RLS table
    rollback;
@@ -48,11 +56,11 @@ matches is not verification either — that inference is exactly what failed.
    `is_admin` false). **An ERROR is the outage signature.** Repeat with
    `select set_config('request.jwt.claims', '{"sub":"<admin uuid>","aal":"aal2","role":"authenticated"}', true);`
    before the SELECT to confirm an admin+aal2 session still reads rows.
-4. **READ-ONLY.** SELECT and catalog reads only. Never INSERT/UPDATE/DELETE,
+5. **READ-ONLY.** SELECT and catalog reads only. Never INSERT/UPDATE/DELETE,
    never DDL, never a GRANT/REVOKE — not even inside a rolled-back transaction.
    Predict the proposed change's effect by reasoning from what you observed, and
    state that the prediction is unproven until Case applies it and you re-run
-   step 3.
+   step 4.
 
 ## Standing facts (re-verify each time; do not trust this list)
 

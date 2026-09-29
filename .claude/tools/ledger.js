@@ -7,6 +7,7 @@
 //   node .claude/tools/ledger.js add --title=... --type=... --severity=... \
 //                                   --source=... [--body=...] [--acceptance=...] \
 //                                   [--blocked-on=...] [--status=...] [--visual-pending]
+//                                   [--requires-human]
 //   node .claude/tools/ledger.js close RL-00N [--acceptance=...]
 //   node .claude/tools/ledger.js render [--check]
 //   node .claude/tools/ledger.js validate
@@ -338,7 +339,11 @@ function addCmd(flags) {
     draft.severity = "info";
   }
 
-  draft.requires_human = needsHuman(draft);
+  // --requires-human lets a person mark an item human-only when the text alone
+  // would not trip HUMAN_PATTERNS (e.g. a fix that lives in another repo, or a
+  // per-machine setting). It can only ADD the flag: the derived rule still
+  // applies, so an item naming a grant or policy is human-only regardless.
+  draft.requires_human = !!flags["requires-human"] || needsHuman(draft);
 
   const d = load();
   const id = `RL-${String(d.next_id).padStart(3, "0")}`;
@@ -392,6 +397,7 @@ switch (cmd) {
         "  list     [--all] [--status=open] [--json]\n" +
         "  add      --title= --source= [--type=] [--severity=] [--body=]\n" +
         "           [--acceptance=] [--blocked-on=] [--status=] [--visual-pending]\n" +
+        "           [--requires-human]\n" +
         "  close    RL-00N [--acceptance=]\n" +
         "  render   [--check]   regenerate the NEXT-SESSION.md table from the ledger\n" +
         "  validate             non-zero if any done item has no acceptance\n"
