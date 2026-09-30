@@ -1,6 +1,7 @@
 import React from "react";
 import { EQUIPMENT_OPTIONS, equipmentHasProbe } from "../lib/equipment";
 import { beanStock } from "../lib/inventory";
+import { formatMMSS } from "../lib/profileFromRoast";
 
 // The Roast tab's front door. Everything a roast needs decided BEFORE the beans
 // go in -- bean, weight, level, profile, hardware, preheat target -- on one
@@ -30,6 +31,14 @@ function stepSeconds(step) {
 // The 0:00 step is what a profile wants the dials at when the beans go in.
 export function profileStartStep(profile) {
   return (profile?.steps || []).find((s) => stepSeconds(s) === 0) || null;
+}
+
+// "FC 8:00 · drop 10:00" -- the milestones a profile carries from its source roast.
+function milestoneSummary(profile) {
+  const at = (label) => (profile.milestones || []).find((m) => m.label === label);
+  const fc = at("FIRST CRACK");
+  const drop = at("COOLING START");
+  return [fc && `FC ${formatMMSS(fc.t)}`, drop && `drop ${formatMMSS(drop.t)}`].filter(Boolean).join(" · ");
 }
 
 function SectionLabel({ children, aside }) {
@@ -271,6 +280,7 @@ export default function RoastSetupScreen({
                 <div className="mt-0.5 font-mono text-[11px] text-ink-muted">
                   {(p.steps || []).length} {(p.steps || []).length === 1 ? "step" : "steps"}
                   {start && ` · starts F:${start.fan} · H:${start.heat}`}
+                  {milestoneSummary(p) && ` · ${milestoneSummary(p)}`}
                   {p.beanName ? ` · ${p.beanName}` : ""}
                 </div>
               </button>

@@ -43,6 +43,32 @@ import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 
+// A profile saved from a roast lets you roast against that roast: its bean-temp
+// curve is drawn as a dashed ghost, its milestones as markers, and the chart
+// looks LOOKAHEAD seconds past "now" so the next planned step and milestone are
+// visible before you reach them.
+const LOOKAHEAD = 30;
+const PLAN_MARK = { YELLOWING: "Y", "FIRST CRACK": "FC", "COOLING START": "DROP", MAILLARD: "MAI", CARAMELIZATION: "CAR" };
+
+// Bridge holes of a few seconds in the ghost with a straight line; anything
+// longer stays a gap -- the ghost is a reference, but it should not invent a
+// stretch the source roast's probe never measured.
+function fillShortHoles(arr, maxRun) {
+  const out = arr.slice();
+  let i = 0;
+  while (i < out.length) {
+    if (out[i] != null) { i++; continue; }
+    let j = i;
+    while (j < out.length && out[j] == null) j++;
+    if (i > 0 && j < out.length && j - i <= maxRun) {
+      const a = out[i - 1], b = out[j];
+      for (let k = i; k < j; k++) out[k] = a + ((b - a) * (k - i + 1)) / (j - i + 1);
+    }
+    i = j;
+  }
+  return out;
+}
+
 // Temp and RoR display smoothing lives in src/lib/curveSmoothing.js, shared with
 // the History chart. The old 12 s difference / +/-4 s average recipe made RoR
 // read as mountain peaks on a real roast.
@@ -65,7 +91,7 @@ const stepSeconds = (step) =>
 // Pure model builder -- exported so the series maths (RoR smoothing, profile
 // overlay, carry-forward dials, phase boundaries) can be verified headlessly
 // rather than only by eyeballing a chart.
-export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, elapsedSeconds = 0 }) {
+export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, plan = null, elapsedSeconds = 0 }) {
     // Drop ends the tracked roast. The SR540 runs its own 3-minute cool cycle
     // afterwards and there is nothing worth charting in it, so once DROP is
     // logged the chart stops growing instead of trailing a flat empty tail
@@ -181,13 +207,52 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;
     }
 
-    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0 };
+    // The ghost. Only while the roast is still running: after DROP the chart stops
+    // growing, and there is nothing left to steer by.
+    let planMarkers = [];
+    let planEnd = 0;
+    let lookahead = 0;
+    if (plan && drop == null) {
+      const planCurve = Array.isArray(plan.curve) ? plan.curve : [];
+      const byT = new Map();
+      for (const p of planCurve) {
+        if (p && Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.bt))) byT.set(Math.round(Number(p.t)), Number(p.bt));
+      }
+      const lastCurveT = byT.size ? Math.max(...byT.keys()) : -1;
+      planMarkers = (plan.milestones || [])
+        .filter((m) => PLAN_MARK[m.label] && Number.isFinite(Number(m.t)))
+        .map((m) => ({ t: Math.round(Number(m.t)), tag: PLAN_MARK[m.label], label: m.label, temp: m.temp }));
+      planEnd = Math.max(lastCurveT, ...planMarkers.map((m) => m.t), 0);
+      lookahead = LOOKAHEAD;
+
+      const rowsEnd = Math.max(total + lookahead, planEnd);
+      const ghost = smoothSeries(
+        fillShortHoles(Array.from({ length: lastCurveT + 1 }, (_, t) => (byT.has(t) ? byT.get(t) : null)), LIVE_GAP_S),
+        2
+      );
+      for (let t = 0; t <= rowsEnd; t++) {
+        const planTemp = ghost[t] != null ? Math.round(ghost[t] * 10) / 10 : null;
+        if (t < data.length) {
+          data[t].planTemp = planTemp;
+        } else {
+          while (sIdx < steps.length && steps[sIdx].t <= t) {
+            pHeat = steps[sIdx].heat;
+            pFan = steps[sIdx].fan;
+            sIdx++;
+          }
+          data.push({ t, temp: null, heat: null, fan: null, profHeat: pHeat, profFan: pFan, ror: null, planTemp });
+        }
+      }
+    }
+
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead, hasPlanCurve: planMarkers.length > 0 || planEnd > 0 };
 }
 
 export default function LiveRoastChart({
   curve = [],
   roastLog = [],
   profile = null,
+  plan = null, // { curve, milestones } from the profile's source roast
   elapsedSeconds = 0,
   windowMode = "scroll", // "scroll" (last 3 min, pannable) | "expand" (whole roast)
   onWindowModeChange,
@@ -226,18 +291,18 @@ export default function LiveRoastChart({
   });
 
   const model = React.useMemo(
-    () => buildLiveChartModel({ curve, roastLog, profile, elapsedSeconds }),
-    [curve, roastLog, profile, elapsedSeconds]
+    () => buildLiveChartModel({ curve, roastLog, profile, plan, elapsedSeconds }),
+    [curve, roastLog, profile, plan, elapsedSeconds]
   );
 
-  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead } = model;
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
-    if (windowMode === "expand") return [0, Math.max(total, 60)];
-    const end = Math.max(WINDOW_SECONDS, total) - panOffset;
+    if (windowMode === "expand") return [0, Math.max(total, 60, planEnd)];
+    const end = Math.max(WINDOW_SECONDS, total + lookahead) - panOffset;
     return [Math.max(0, end - WINDOW_SECONDS), Math.max(WINDOW_SECONDS, end)];
-  }, [windowMode, total, panOffset]);
+  }, [windowMode, total, panOffset, planEnd, lookahead]);
 
   // Phase bands shade the plot to show each phase's real DURATION, which four
   // evenly spaced rail nodes never could. They carry no text: the name lives in
@@ -484,6 +549,22 @@ export default function LiveRoastChart({
               PLANNED profile lines below keep connectNulls: those steps are
               sparse by design, and joining them is the whole point.
               Leading nulls before the first reading are unaffected either way. */}
+          {planMarkers.map((m) => (
+            <ReferenceLine
+              key={`plan-${m.label}`}
+              x={m.t}
+              yAxisId="temp"
+              stroke="rgb(var(--chart-tick))"
+              strokeOpacity={0.55}
+              strokeDasharray="2 3"
+              label={{ value: m.tag, position: "insideTopRight", fontSize: 8, fill: "rgb(var(--chart-tick))" }}
+            />
+          ))}
+          {/* The source roast's bean-temp curve: drawn first so the live curve
+              sits on top of what it is being steered against. */}
+          {planEnd > 0 && (
+            <Line yAxisId="temp" type="monotone" dataKey="planTemp" name="Temp (plan)" stroke="rgb(var(--chart-temp))" strokeWidth={1.4} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} connectNulls isAnimationActive={false} />
+          )}
           <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} isAnimationActive={false} />
           <Line yAxisId="temp" type="monotone" dataKey="temp" name="Temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.4} dot={false} isAnimationActive={false} />
           <ReferenceLine x={now} yAxisId="temp" stroke="rgb(var(--accent-fill))" strokeOpacity={0.5} strokeDasharray="2 3" />

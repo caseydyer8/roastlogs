@@ -12,6 +12,8 @@ import LiveRoastChart from "./components/charts/LiveRoastChart";
 import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
 import RoastSetupScreen, { profileStartStep } from "./components/RoastSetupScreen";
 import { beanStock } from "./lib/inventory";
+import ProfileFromRoastSheet from "./components/ProfileFromRoastSheet";
+import { profileFromRoast, planFromRoast, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
 
@@ -978,6 +980,32 @@ function App() {
   // Roast Profile Logic
   const [profileFollowing, setProfileFollowing] = React.useState(null);
   const [currentProfileStepIdx, setCurrentProfileStepIdx] = React.useState(-1);
+  // The "save as profile" / "update the profile" sheet: null, or
+  // { mode: "saved", roast, followedId } right after a save, or
+  // { mode: "history", roast, profileId } after editing a roast a profile came from.
+  const [profileSheet, setProfileSheet] = React.useState(null);
+
+  // Ghost to roast against: the source roast's bean-temp curve (referenced, not
+  // copied into the profile) and the profile's milestone markers. Read once per
+  // profile, not per tick -- the source roast cannot change mid-roast.
+  const livePlan = React.useMemo(() => {
+    if (!profileFollowing) return null;
+    let src = null;
+    if (profileFollowing.sourceRoastId != null) {
+      try {
+        const all = JSON.parse(localStorage.getItem("roasts") || "[]");
+        src = (Array.isArray(all) ? all : []).find((r) => r && String(r.id) === String(profileFollowing.sourceRoastId)) || null;
+      } catch (e) {
+        src = null;
+      }
+    }
+    const milestones = (profileFollowing.milestones && profileFollowing.milestones.length)
+      ? profileFollowing.milestones
+      : src ? milestonesFromRoast(src) : [];
+    const curve = src && Array.isArray(src.curve) ? src.curve : [];
+    if (curve.length < 2 && milestones.length === 0) return null;
+    return { curve, milestones };
+  }, [profileFollowing]);
   const [profiles, setProfiles] = React.useState(() => {
     try {
       return JSON.parse(localStorage.getItem("global_profiles") || "[]");
@@ -1644,6 +1672,17 @@ function App() {
       setSyncStatus(success ? 'success' : 'error');
     });
 
+    // The roast is already written above; this only ever ADDS a profile, so
+    // dismissing the sheet can never lose anything. Offered when there is a plan
+    // to save, and -- for a roast that followed a profile -- only if the hands
+    // actually departed from it (milestones drift run to run and would nag).
+    if (stepsFromRoast(newRoast).length > 0 && (!profileFollowing || roastDeviatedFromPlan(newRoast, profileFollowing))) {
+      const followed = profileFollowing
+        ? (profiles || []).find((p) => String(p.id) === String(profileFollowing.id))
+        : null;
+      setProfileSheet({ mode: "saved", roast: newRoast, followedId: followed ? followed.id : null });
+    }
+
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
@@ -1958,6 +1997,14 @@ function App() {
 
     setSelectedRoast(roastToSave);
     setHasChanges(false);
+
+    // A profile saved from this roast follows its History edits -- but only
+    // with a yes, so fixing a typo'd fan value can never silently rewrite a
+    // profile that has since been hand-tuned.
+    const linked = (profiles || []).find((p) => p.sourceRoastId != null && String(p.sourceRoastId) === String(roastToSave.id));
+    if (linked && planDiffers(roastToSave, linked)) {
+      setProfileSheet({ mode: "history", roast: roastToSave, profileId: linked.id });
+    }
   };
 
   const updateEditedRoast = (field, value) => {
@@ -2283,6 +2330,23 @@ function App() {
       }}
     />
   );
+
+  const saveProfileFromSheet = (name) => {
+    if (!profileSheet) return;
+    const roast = profileSheet.roast;
+    const bean = roast.beanName && roast.beanName !== "Unnamed Bean" ? roast.beanName : "";
+    setProfiles((prev) => [...prev, profileFromRoast(roast, { id: Date.now(), name, beanName: bean })]);
+    setProfileSheet(null);
+    showToast(`Profile "${name}" saved.`);
+  };
+  const updateProfileFromSheet = () => {
+    if (!profileSheet) return;
+    const targetId = profileSheet.mode === "saved" ? profileSheet.followedId : profileSheet.profileId;
+    const plan = planFromRoast(profileSheet.roast);
+    setProfiles((prev) => prev.map((p) => (String(p.id) === String(targetId) ? { ...p, ...plan } : p)));
+    setProfileSheet(null);
+    showToast("Profile updated.");
+  };
 
   // Profile chosen on Setup: arm it and fill the starting dials from its 0:00
   // step (Fan before Heat). The bean's default is shown, never pre-selected.
@@ -2610,6 +2674,7 @@ function App() {
                   curve={curveRef.current}
                   roastLog={roastLog}
                   profile={profileFollowing}
+                  plan={livePlan}
                   elapsedSeconds={elapsedSeconds}
                   windowMode={liveChartWindow}
                   onWindowModeChange={setLiveChartWindow}
@@ -5277,6 +5342,24 @@ function App() {
           </div>
         )}
       </main>
+
+      {profileSheet && (
+        <ProfileFromRoastSheet
+          mode={profileSheet.mode}
+          roast={profileSheet.roast}
+          followedProfile={profileSheet.mode === "saved" ? (profiles || []).find((p) => String(p.id) === String(profileSheet.followedId)) || null : null}
+          linkedProfile={profileSheet.mode === "history" ? (profiles || []).find((p) => String(p.id) === String(profileSheet.profileId)) || null : null}
+          defaultName={(() => {
+            const followed = profileSheet.mode === "saved" ? (profiles || []).find((p) => String(p.id) === String(profileSheet.followedId)) : null;
+            if (followed) return `${followed.name} (new)`;
+            const bean = profileSheet.roast.beanName && profileSheet.roast.beanName !== "Unnamed Bean" ? profileSheet.roast.beanName : "Roast";
+            return `${bean} · ${new Date(profileSheet.roast.id).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+          })()}
+          onSaveNew={saveProfileFromSheet}
+          onUpdate={updateProfileFromSheet}
+          onDismiss={() => setProfileSheet(null)}
+        />
+      )}
 
       <nav className="shrink-0 z-50 border-t border-border/60 bg-primary">
         <div className="mx-auto max-w-md px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">

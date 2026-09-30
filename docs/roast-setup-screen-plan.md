@@ -292,3 +292,50 @@ admin + `aal2`.
 - **Version lives in three places** — `package.json`, the About modal badge,
   and the backup export `appVersion`.
 - **Never commit `build/`.**
+
+---
+
+## 9. Addendum (2026-09-30): save a roast as a profile, and roast against it
+
+Raised by Case after the Setup build. Decisions, with the alternative he passed on:
+
+| Call | Decision |
+|---|---|
+| When the prompt appears | **After** the roast is saved, so it can only ever add a profile. (Not a modal in front of `handleStop`.) |
+| What is offered | Manual roast → **Save profile** / No thanks. A roast that followed a profile **and changed it** → **Update *name*** / **Save as new** / No thanks. Followed and unchanged → no prompt |
+| Link back from History | **Live link with a heads-up.** A profile remembers its `sourceRoastId`; saving an edit to that roast asks *Update the profile too?* — never silent |
+| Log → steps | Every Fan/Heat change (temp ignored, blanks carry forward, temp-only entries collapse). **All milestones** are stored, with bean temp |
+| Live chart | **Ghost temp curve + milestone markers** from the source roast, plus a 30 s lookahead that also shows the next planned Fan/Heat steps |
+| Where the curve lives | **Referenced from the source roast**, not copied into the profile |
+| Scope | Everything today |
+
+### Data
+
+- `roast_profiles` gains `source_roast_id bigint` and `milestones jsonb`
+  (`docs/2026-09-30_add_source_and_milestones_to_profiles.sql`, additive; **apply
+  before deploying**, alongside the `bean_id` migration).
+- Profile shape: `{ …existing, sourceRoastId, milestones: [{ label, t, temp }] }`.
+- Deleting the source roast is safe: the profile keeps its steps and milestones
+  and loses only the ghost curve (no foreign key, on purpose).
+
+### Code
+
+| File | Job |
+|---|---|
+| `src/lib/profileFromRoast.js` | Pure: `stepsFromRoast`, `milestonesFromRoast`, `planFromRoast`, `roastDeviatedFromPlan`, `planDiffers` |
+| `src/components/ProfileFromRoastSheet.jsx` | The sheet, both modes (`saved`, `history`) |
+| `src/components/charts/LiveRoastChart.jsx` | `plan` prop → `planTemp` ghost line, milestone `ReferenceLine`s, `lookahead` |
+| `src/App.js` | `handleStop` offers the sheet; `handleSaveEdit` offers the History update; `livePlan` reads the source roast once per profile |
+
+### Also fixed in the same session — jagged curves
+
+The 2026-08-27 RoR retune (30 s / ±10 s → 12 s / ±4 s, so a 2-minute test roast
+would show RoR sooner) made RoR ~5× rougher on a real roast. Both charts now share
+`src/lib/curveSmoothing.js`: temp ±2 s moving average (display only); RoR a centred
+±15 s least-squares slope. Gaps stay gaps; FC/Drop temp and the average still read
+the raw readings.
+
+### Not verified (needs real hardware)
+
+The ghost overlay was rendered against synthetic data only. Run one real roast
+with a profile saved from an earlier roast and watch the live chart.

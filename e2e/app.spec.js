@@ -492,3 +492,119 @@ test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile 
   await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Start roast" })).toBeEnabled();
 });
+
+// ---------------------------------------------------------------------------
+// Save a roast as a profile (v3.9.0). The prompt comes AFTER the roast is
+// written, so every test also asserts the roast is already in storage.
+// ---------------------------------------------------------------------------
+
+async function runQuickRoast(page, { fan = "5", heat = "6" } = {}) {
+  const dials = page.locator("div.grid.grid-cols-3 input");
+  await dials.nth(0).fill(fan);
+  await dials.nth(1).fill(heat);
+  await page.getByRole("button", { name: "Start roast" }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+}
+
+test("save as profile: a manual roast offers a new profile with its steps, milestones and source roast", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await runQuickRoast(page);
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText("Keep this as a profile?")).toBeVisible();
+  // The roast is already saved -- the sheet only ever adds.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("roasts")).length)).toBe(2);
+
+  await sheet.getByLabel("Profile name").fill("Saved From Roast");
+  await sheet.getByRole("button", { name: "Save profile" }).click();
+  await expect(sheet).toHaveCount(0);
+
+  const { profile, roastId } = await page.evaluate(() => ({
+    profile: JSON.parse(localStorage.getItem("global_profiles")).find((p) => p.name === "Saved From Roast"),
+    roastId: JSON.parse(localStorage.getItem("roasts"))[0].id,
+  }));
+  expect(profile.sourceRoastId).toBe(roastId);
+  expect(profile.steps).toEqual([{ time: "00:00", totalSeconds: 0, heat: "6", fan: "5" }]);
+  expect(profile.milestones.map((m) => m.label)).toEqual(["YELLOWING", "FIRST CRACK", "COOLING START"]);
+});
+
+test("save as profile: 'No thanks' leaves the roast saved and creates nothing", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await runQuickRoast(page);
+  await page.getByTestId("profile-from-roast").getByRole("button", { name: "No thanks" }).click();
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+  const counts = await page.evaluate(() => ({
+    roasts: JSON.parse(localStorage.getItem("roasts")).length,
+    profiles: JSON.parse(localStorage.getItem("global_profiles")).length,
+  }));
+  expect(counts).toEqual({ roasts: 2, profiles: 1 }); // fixture roast + new one; the one seeded profile
+});
+
+test("save as profile: following a profile without changing it does not nag", async ({ page }) => {
+  const single = { ...fixtureProfile, steps: [{ time: "00:00", totalSeconds: 0, fan: "5", heat: "6" }] };
+  await seedSetup(page, { profiles: [single] });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6" });
+  // Give the sheet a moment to (wrongly) appear before asserting it never does.
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+});
+
+test("save as profile: a roast that departed from its profile offers Update / Save as new, and Update rewrites the plan", async ({ page }) => {
+  await seedSetup(page); // two-step profile; the quick roast only logs one step
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "3", heat: "8" });
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet.getByRole("button", { name: "Update E2E Profile" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Save as new profile" })).toBeVisible();
+  await sheet.getByRole("button", { name: "Update E2E Profile" }).click();
+
+  const { profiles, roastId } = await page.evaluate(() => ({
+    profiles: JSON.parse(localStorage.getItem("global_profiles")),
+    roastId: JSON.parse(localStorage.getItem("roasts"))[0].id,
+  }));
+  expect(profiles).toHaveLength(1); // updated in place, not duplicated
+  expect(profiles[0].name).toBe("E2E Profile");
+  expect(profiles[0].steps).toEqual([{ time: "00:00", totalSeconds: 0, heat: "8", fan: "3" }]);
+  expect(profiles[0].sourceRoastId).toBe(roastId);
+});
+
+test("history: editing a roast a profile was saved from offers to update the profile, and never does it silently", async ({ page }) => {
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "From Fixture", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  await page.getByPlaceholder("0").first().fill("191");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet.getByText("Update the profile too?")).toBeVisible();
+  // Nothing has changed yet: the profile is only touched on a yes.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0].steps)).toEqual([]);
+
+  await sheet.getByRole("button", { name: "Update profile" }).click();
+  const updated = await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0]);
+  expect(updated.steps.length).toBeGreaterThan(0);
+  expect(updated.steps[0]).toMatchObject({ totalSeconds: 0, fan: "9", heat: "7" }); // fixture's start settings
+  expect(updated.milestones.map((m) => m.label)).toContain("FIRST CRACK");
+});
+
+test("history: 'Not now' leaves the linked profile exactly as it was", async ({ page }) => {
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "From Fixture", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  await page.getByPlaceholder("0").first().fill("192");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  await page.getByTestId("profile-from-roast").getByRole("button", { name: "Not now" }).click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0].steps)).toEqual([]);
+});
