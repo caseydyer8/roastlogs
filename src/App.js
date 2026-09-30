@@ -1587,6 +1587,7 @@ function App() {
   };
 
   const startRoast = (profile) => {
+    setSaveSuccess(false);
     setIsTimerRunning(true);
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
@@ -1683,11 +1684,11 @@ function App() {
       setProfileSheet({ mode: "saved", roast: newRoast, followedId: followed ? followed.id : null });
     }
 
+    // saveSuccess outlives the clear: at +2s the tab flips to Setup, which shows
+    // "saved -- setup carried forward" until +6s.
     setSaveSuccess(true);
-    setTimeout(() => {
-      setSaveSuccess(false);
-      clearLiveSession({ keepSetup: true });
-    }, 2000);
+    setTimeout(() => clearLiveSession({ keepSetup: true }), 2000);
+    setTimeout(() => setSaveSuccess(false), 6000);
   };
 
   const handleLogAdjustment = () => {
@@ -2001,14 +2002,20 @@ function App() {
     // A profile saved from this roast follows its History edits -- but only
     // with a yes, so fixing a typo'd fan value can never silently rewrite a
     // profile that has since been hand-tuned.
+    // Only when THIS edit changed the roast's plan: a weight or notes edit must not
+    // offer to overwrite a profile that has since been hand-tuned.
+    const before = (existingRoasts || []).find((r) => r.id === roastToSave.id);
+    const editChangedPlan = !before || planDiffers(roastToSave, { steps: stepsFromRoast(before), milestones: milestonesFromRoast(before) });
     const linked = (profiles || []).find((p) => p.sourceRoastId != null && String(p.sourceRoastId) === String(roastToSave.id));
-    if (linked && planDiffers(roastToSave, linked)) {
+    if (linked && editChangedPlan && planDiffers(roastToSave, linked)) {
       setProfileSheet({ mode: "history", roast: roastToSave, profileId: linked.id });
     }
   };
 
   const updateEditedRoast = (field, value) => {
-    setEditedRoast(prev => ({ ...prev, [field]: value }));
+    // Renaming the bean relinks it (see beanIdForName), or the stock deduction
+    // would keep following the old bag.
+    setEditedRoast(prev => ({ ...prev, [field]: value, ...(field === 'beanName' ? { beanId: beanIdForName(value) } : {}) }));
     setHasChanges(true);
   };
 
@@ -2348,6 +2355,27 @@ function App() {
     showToast("Profile updated.");
   };
 
+  // A bean NAME typed by hand (mid-roast card, History edit) relinks to the
+  // inventory bean of exactly that name, else to none -- so a roast's beanId and
+  // beanName can never disagree and stock is charged to the bag the name says.
+  const beanIdForName = (name) => {
+    try {
+      const all = JSON.parse(localStorage.getItem("beans") || "[]");
+      const hit = (Array.isArray(all) ? all : []).find((b) => b && b.name === name);
+      return hit && hit.id != null ? hit.id : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // A profile built for one bean shouldn't ride along to another.
+  const dropMismatchedProfile = (nextName) => {
+    if (profileFollowing?.beanName && profileFollowing.beanName !== nextName) {
+      setProfileFollowing(null);
+      setCurrentProfileStepIdx(-1);
+    }
+  };
+
   // Profile chosen on Setup: arm it and fill the starting dials from its 0:00
   // step (Fan before Heat). The bean's default is shown, never pre-selected.
   const chooseProfile = (profile) => {
@@ -2368,11 +2396,7 @@ function App() {
   const pickBean = (bean) => {
     setBeanId(bean ? bean.id : null);
     setBeanName(bean ? bean.name : "");
-    // A profile built for another bean shouldn't ride along to this one.
-    if (profileFollowing?.beanName && profileFollowing.beanName !== (bean ? bean.name : "")) {
-      setProfileFollowing(null);
-      setCurrentProfileStepIdx(-1);
-    }
+    dropMismatchedProfile(bean ? bean.name : "");
   };
 
   let ActiveIcon = null;
@@ -2420,7 +2444,8 @@ function App() {
               beanName={beanName}
               beanId={beanId}
               onPickBean={pickBean}
-              onBeanNameChange={(v) => { setBeanName(v); setBeanId(null); }}
+              onBeanNameChange={(v) => { setBeanName(v); setBeanId(null); dropMismatchedProfile(v); }}
+              dataVersion={syncStatus}
               greenWeightGrams={greenWeightGrams}
               onWeightChange={setGreenWeightGrams}
               targetRoastLevel={targetRoastLevel}
@@ -2471,37 +2496,15 @@ function App() {
                 )}
               </div>
 
-              {/* Starting Settings — editable cockpit tiles, hidden once the session has begun */}
-              {!roastStarted && !isTimerRunning && (
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  <CockpitTile
-                    label="Fan (1-9)"
-                    value={startingFan}
-                    onChange={(e) => setStartingFan(dialDigit(e.target.value))}
-                  />
-                  <CockpitTile
-                    label="Heat (1-9)"
-                    value={startingHeat}
-                    onChange={(e) => setStartingHeat(dialDigit(e.target.value))}
-                  />
-                  <CockpitTile
-                    label="Temp"
-                    accent
-                    value={startingTemp}
-                    onChange={(e) => setStartingTemp(e.target.value)}
-                  />
-                </div>
-              )}
-
               {/* Bean fields grouped under one labeled card */}
-              <div className={`${!roastStarted && !isTimerRunning ? "mt-4" : "mt-2"} rounded-2xl border border-border/60 bg-primary/20 p-4`}>
+              <div className="mt-2 rounded-2xl border border-border/60 bg-primary/20 p-4">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">Bean</div>
                 <div className="mt-3 grid grid-cols-1 gap-3">
                   <label className="block">
                     <div className="text-xs font-medium text-ink">Bean Name</div>
                     <input
                       value={beanName}
-                      onChange={(e) => setBeanName(e.target.value)}
+                      onChange={(e) => { setBeanName(e.target.value); setBeanId(beanIdForName(e.target.value)); }}
                       type="text"
                       placeholder="e.g., Ethiopia Yirgacheffe"
                       className="mt-2 w-full rounded-2xl border border-border/70 bg-primary/40 px-4 py-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"

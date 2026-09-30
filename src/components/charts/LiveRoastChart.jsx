@@ -245,7 +245,7 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       }
     }
 
-    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead, hasPlanCurve: planMarkers.length > 0 || planEnd > 0 };
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead };
 }
 
 export default function LiveRoastChart({

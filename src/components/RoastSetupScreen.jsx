@@ -76,10 +76,13 @@ export default function RoastSetupScreen({
   onPreheatTargetChange,
   probeLive,
   saveSuccess,
+  dataVersion,         // changes when the launch sync (re)hydrates beans / roasts
   onPrimary,
 }) {
-  const beans = React.useMemo(() => readJSON("beans"), []);
-  const roasts = React.useMemo(() => readJSON("roasts"), []);
+  // Setup is the cold-launch screen, and the cloud sync writes beans and roasts
+  // to localStorage AFTER it mounts -- so re-read whenever the sync state moves.
+  const beans = React.useMemo(() => readJSON("beans"), [dataVersion]);
+  const roasts = React.useMemo(() => readJSON("roasts"), [dataVersion]);
   const hasProbe = equipmentHasProbe(equipmentSetup);
 
   // A bean with a link is "picked"; typed text with no link is free-hand.
@@ -95,7 +98,7 @@ export default function RoastSetupScreen({
       onPickBean(matches[0]);
       setFreeHand(false);
     }
-  }, []);
+  }, [beans]);
 
   const rows = beans
     .map((b) => ({ bean: b, stock: beanStock(b, roasts) }))

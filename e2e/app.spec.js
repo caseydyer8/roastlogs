@@ -475,6 +475,7 @@ test("setup -> save: the roast records beanId, stock deducts, and the setup carr
   // -- but the profile choice is NOT (chosen on purpose, every roast).
   await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByLabel("Green weight in grams")).toHaveValue("250");
+  await expect(page.getByText(/last setup carried forward/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start roast" })).toBeDisabled();
 
   // Stock: 1000 - 250 on the bean's own detail page.
@@ -582,7 +583,8 @@ test("history: editing a roast a profile was saved from offers to update the pro
   await page.getByRole("button", { name: "History" }).click();
   await page.getByText("E2E Ethiopia Test").first().click();
   await page.getByRole("button", { name: "EDIT ROAST" }).click();
-  await page.getByPlaceholder("0").first().fill("191");
+  // Change the start fan 9 -> 8: an edit to the PLAN, which is what earns the prompt.
+  await page.locator('input.w-6[value="9"]').first().fill("8");
   await page.getByRole("button", { name: "SAVE CHANGES" }).click();
 
   const sheet = page.getByTestId("profile-from-roast");
@@ -593,7 +595,7 @@ test("history: editing a roast a profile was saved from offers to update the pro
   await sheet.getByRole("button", { name: "Update profile" }).click();
   const updated = await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0]);
   expect(updated.steps.length).toBeGreaterThan(0);
-  expect(updated.steps[0]).toMatchObject({ totalSeconds: 0, fan: "9", heat: "7" }); // fixture's start settings
+  expect(updated.steps[0]).toMatchObject({ totalSeconds: 0, fan: "8", heat: "7" }); // the edited start settings
   expect(updated.milestones.map((m) => m.label)).toContain("FIRST CRACK");
 });
 
@@ -603,8 +605,40 @@ test("history: 'Not now' leaves the linked profile exactly as it was", async ({ 
   await page.getByRole("button", { name: "History" }).click();
   await page.getByText("E2E Ethiopia Test").first().click();
   await page.getByRole("button", { name: "EDIT ROAST" }).click();
-  await page.getByPlaceholder("0").first().fill("192");
+  await page.locator('input.w-6[value="9"]').first().fill("8");
   await page.getByRole("button", { name: "SAVE CHANGES" }).click();
   await page.getByTestId("profile-from-roast").getByRole("button", { name: "Not now" }).click();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0].steps)).toEqual([]);
+});
+
+test("history: a weight-only edit never offers to overwrite a profile, even one that differs from the roast", async ({ page }) => {
+  // The profile was hand-tuned since (its steps differ from the roast's log). An
+  // edit that doesn't touch the roast's plan must leave it completely alone.
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "Hand Tuned", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  await page.getByPlaceholder("0").first().fill("191");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  await page.waitForTimeout(600);
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+});
+
+test("history: renaming a roast's bean relinks its stock to the bag the name says", async ({ page }) => {
+  const linkedRoast = { ...fixtureRoast, id: 1750000000400, beanId: fixtureBean.id, beanName: fixtureBean.name };
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify([r])), linkedRoast);
+  await seedSetup(page, { profiles: [] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+
+  const nameInput = page.locator(`input[value="${fixtureBean.name}"]`).first();
+  await nameInput.fill("Some Other Bean");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem("roasts"))[0].beanId))).toBeNull();
+
+  await page.locator('input[value="Some Other Bean"]').first().fill(fixtureBean.name);
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem("roasts"))[0].beanId))).toBe(fixtureBean.id);
 });
