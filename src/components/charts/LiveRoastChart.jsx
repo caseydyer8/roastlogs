@@ -21,6 +21,7 @@ import {
   phaseSpans,
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
+import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
 // LiveRoastChart — the in-progress roast, drawn while it happens.
@@ -42,8 +43,9 @@ import { LIVE_GAP_S } from "../../lib/liveSample";
 
 const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 
-const ROR_LOOKBACK = 12;    // seconds; matches the retuned live/History tuning
-const ROR_SMOOTH = 4;       // +/- seconds of moving average
+// Temp and RoR display smoothing lives in src/lib/curveSmoothing.js, shared with
+// the History chart. The old 12 s difference / +/-4 s average recipe made RoR
+// read as mountain peaks on a real roast.
 
 const fmt = (s) => {
   const v = Math.max(0, Math.round(Number(s) || 0));
@@ -109,7 +111,7 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     // second occasionally receives no sample. Those one-second holes are NOT
     // dropouts -- LIVE_GAP_S explicitly says so -- but this model indexes bean
     // temp per second and never interpolates, so an unhandled hole would render
-    // as a break in the line and, because RoR needs t and t-ROR_LOOKBACK, as
+    // as a break in the line and, because RoR needs a full unbroken window, as
     // TWO breaks in RoR. The result would be a fault-looking fragmented curve
     // on a roast where nothing was wrong.
     const curveTs = curve
@@ -167,21 +169,16 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       });
     }
 
-    // RoR over a trailing window, then lightly smoothed -- a raw point-to-point
-    // slope on 1Hz thermocouple data reads as pure jitter.
-    const raw = new Array(data.length).fill(null);
-    for (let t = ROR_LOOKBACK; t < data.length; t++) {
-      const a = data[t - ROR_LOOKBACK].temp;
-      const b = data[t].temp;
-      if (a != null && b != null) raw[t] = (b - a) * (60 / ROR_LOOKBACK);
-    }
+    // Display smoothing, identical to the History chart: temp +/-2 s moving
+    // average, RoR a centred +/-15 s least-squares slope over lightly smoothed
+    // temps. The newest point uses a one-sided window, so the leading edge is
+    // slightly noisier than the settled curve behind it. Gaps stay gaps.
+    const rawTemps = data.map((d) => d.temp);
+    const shownTemps = smoothSeries(rawTemps, 2);
+    const rors = rorSeries(smoothSeries(rawTemps, 1), 15);
     for (let t = 0; t < data.length; t++) {
-      if (raw[t] == null) continue;
-      let sum = 0, n = 0;
-      for (let k = Math.max(0, t - ROR_SMOOTH); k <= Math.min(data.length - 1, t + ROR_SMOOTH); k++) {
-        if (raw[k] != null) { sum += raw[k]; n++; }
-      }
-      data[t].ror = n ? Math.round((sum / n) * 10) / 10 : null;
+      data[t].temp = shownTemps[t] != null ? Math.round(shownTemps[t] * 10) / 10 : null;
+      data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;
     }
 
     return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0 };
