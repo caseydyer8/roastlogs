@@ -1,6 +1,6 @@
 # Roast Setup Screen — implementation plan
 
-> **Status: DRAFT, awaiting Case's read-and-confirm.** No code written.
+> **Status: CONFIRMED 2026-09-30 — building steps 1–4.** Step 5 (drop-weight prompt) deferred to a second pass by Case's call on 3.3.
 > Target version **v3.9.0** (feature; current live is v3.8.2).
 > Answers captured 2026-09-19. Diagnosis in the same session.
 
@@ -69,46 +69,22 @@ against the bag permanently.
 
 ---
 
-## 3. Three calls that need Case's answer at the gate
+## 3. The three gate calls — answered (Case, 2026-09-30)
 
-### 3.1 Full-screen takeover *during* a roast is dangerous — recommend inline
+| # | Call | Case's answer | What it means for the build |
+|---|---|---|---|
+| 3.1 | Full-screen setup mid-roast | **Inline card mid-roast** (the recommendation) | Takeover **pre-roast only**. Once roasting, the summary bar expands to today's inline card, so the live chart and `Mark Yellowing / First crack / Cooling start` never leave the screen |
+| 3.2 | Stock overdraft | **Forgive on restock** — a bag 100g overdrawn that gets +500g shows **500g** (NOT the recommendation) | A render-edge `Math.max(0, …)` cannot produce 500g. Stock becomes a **chronological fold**: roasts and weight adjustments sorted by time, running balance clamped at 0 **at each step**. An overdraft is absorbed the moment it happens, so a later restock starts from zero |
+| 3.3 | Save-path restructure | **Build it, but hold the modal for last** | The drop-weight prompt (§4.4, build step 5) is **deferred to a second pass**. This pass ships steps 1–4 + tests; Case phone-tests a real SR540 roast first. `handleStop` is untouched apart from recording `beanId` |
 
-Decisions 3 and 4 are individually right but collide. If the collapsed summary
-bar reopens as a **full-screen takeover mid-roast**, it hides the live chart and
-the `Mark Yellowing / First crack / Cooling start` buttons at the exact moment
-those matter most. Reaching for "Mark First Crack" and landing in a form instead
-is a data-loss-shaped mistake.
+### 3.2 in detail — why a fold, not a clamp
 
-> **Recommendation: takeover pre-roast only.** Mid-roast, the summary bar
-> expands to an **inline card** — today's behaviour — so the milestone buttons
-> never leave the screen. Keeps what has saved him before without burying the
-> controls.
->
-> **Needs Case's yes/no.**
-
-### 3.2 Zeroing stock — clamp the display, keep the arithmetic true
-
-Stock is derived, so "zero it out" means `Math.max(0, remaining)` at the render
-edge. The underlying subtraction stays honest.
-
-Consequence: a bag truly at −100g that gets a +500g restock adjustment will show
-**400g, not 500g** — the overdraft is carried, not forgiven. That is arguably
-correct (the beans really were used) and it is the simplest reading of decision
-6, but it is a behaviour Case should see coming.
-
-> **Recommendation: clamp display only.** **Needs a nod, not a debate.**
-
-### 3.3 The save path is the highest-blast-radius change in this plan
-
-Decision 13 restructures `handleStop` — the function that writes roast data to
-`localStorage` and Supabase. Today it saves immediately and clears the session
-after 2s (`src/App.js:1670-1682`). With a drop-weight prompt, `handleStop`
-becomes "open the modal" and the actual save moves behind a confirm.
-
-> **Mitigation: `SKIP` saves exactly as today** — same object, same sync, same
-> clear. The prompt only ever *adds* `roastedWeight`. A roast can never be lost
-> by dismissing the modal, and there is no path where the modal must succeed for
-> the roast to persist.
+Both adjustments and roasts carry a time: adjustments a `date` (`YYYY-MM-DD`,
+`src/App.js:4777`), roasts an `id` that is `Date.now()` at save. Sorting on those
+and clamping each step is the only honest way to reach 500g — the total isn't
+lied about, the history is replayed with a floor. Same-day ties resolve
+naturally: an adjustment dated today parses to midnight, so a same-day restock
+lands before that afternoon's roast.
 
 ---
 
@@ -150,7 +126,7 @@ instead of `BEGIN PREHEAT`.
 Full-screen pre-roast, inline mid-roast (pending §3.1). Sections, in order:
 
 1. **Bean** — picker over `beans` from `localStorage`, each row showing
-   remaining stock. A `+ Not in my beans` row drops to today's free-text input
+   remaining stock. A `+ Not in my inventory` row drops to today's free-text input
    (decision 5). Picking a bean sets both `beanId` and `beanName`.
 2. **Green weight** — unchanged input, now showing `remaining after this roast`
    beneath it, clamped at 0 (decision 6).
@@ -217,7 +193,7 @@ mapping.
 | `src/components/RoastDropWeightModal.jsx` | **New** |
 | `src/App.js` | `roastStage`, Setup mount, `handleStart` / `handleStop` rework, stock calc, retire `RoastModeDialog` |
 | `src/syncService.js` | `bean_id` in upsert + read |
-| `docs/2026-09-20_add_bean_id_to_roasts.sql` | **New** migration |
+| `docs/2026-09-30_add_bean_id_to_roasts.sql` | **New** migration |
 | `e2e/fixtures.js` | `beanId` on the fixture roast — **must move in lockstep** |
 | `e2e/app.spec.js` | New Setup-screen test + baseline |
 | `package.json`, About badge, backup `appVersion` | **v3.9.0 — all three** |
@@ -288,8 +264,8 @@ Ordered so the riskiest change lands last, against a known-good base.
    every consumer moved.
 3. **`RoastSetupScreen.jsx`** — build the screen, mount it, retire
    `RoastModeDialog`, rewire Bean Detail's "Use in Roast".
-4. **Stock deduction** — `beanId` on save, ternary match, clamp at 0.
-5. **Drop-weight prompt** — last, because it touches the save path.
+4. **Stock deduction** — `beanId` on save, ternary match, clamped chronological fold (§3.2).
+5. **Drop-weight prompt** — **DEFERRED to a second pass** (§3.3). Case phone-tests steps 1–4 first.
 6. **`e2e/fixtures.js` + a Setup test** in the same session as step 3.
 
 **Agent bundle at each stage:** `/ui-loop` after steps 3 and 5 (new baselines

@@ -10,6 +10,8 @@ import LiveRoastReadout from "./components/LiveRoastReadout";
 import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 import LiveRoastChart from "./components/charts/LiveRoastChart";
 import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
+import RoastSetupScreen, { profileStartStep } from "./components/RoastSetupScreen";
+import { beanStock } from "./lib/inventory";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
 
@@ -700,60 +702,6 @@ function ProfileBuilder({ bean, onSave, onCancel }) {
   );
 }
 
-function RoastModeDialog({ profiles, bean, onSelectManual, onSelectProfile, onCancel }) {
-  // Filter profiles from the already-filtered props; float the default to the top
-  // so the bean's go-to profile is the first tap.
-  const beanSpecificProfiles = (profiles || [])
-    .filter(p => p.beanName && p.beanName !== "")
-    .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
-  const genericProfiles = (profiles || []).filter(p => !p.beanName || p.beanName === "");
-  
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm animate-in zoom-in-95 duration-200 rounded-3xl border border-border/60 bg-surface p-6 shadow-2xl">
-        <h3 className="text-xl font-bold text-ink mb-6 text-center">Start Roast</h3>
-        <div className="space-y-3">
-          {beanSpecificProfiles.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-accent-text ml-1">FOR THIS BEAN</div>
-              {beanSpecificProfiles.map(p => (
-                <button key={p.id} onClick={() => onSelectProfile(p)} className={`w-full p-4 rounded-2xl border text-left transition ${p.isDefault ? "bg-accent/10 border-accent/40 hover:bg-accent/20" : "bg-surface/50 border-border/50 hover:bg-surface"}`}>
-                  <div className="font-bold text-ink flex items-center gap-2">
-                    {p.name}
-                    {p.isDefault && <span className="text-[8px] bg-accent text-zinc-950 px-1 rounded font-black uppercase">Default</span>}
-                  </div>
-                  <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
-                </button>
-              ))}
-            </div>
-          )}
-          
-          {genericProfiles.length > 0 && (
-            <div className="space-y-2">
-              {beanSpecificProfiles.length > 0 && (
-                <div className="text-[10px] font-bold uppercase tracking-widest text-ink-muted ml-1">GENERIC PROFILES</div>
-              )}
-              {genericProfiles.map(p => (
-                <button key={p.id} onClick={() => onSelectProfile(p)} className="w-full p-4 rounded-2xl bg-surface/50 border border-border/50 text-left hover:bg-surface transition">
-                  <div className="font-bold text-ink">{p.name}</div>
-                  <div className="text-[10px] text-ink-muted mt-1">{p.steps.length} steps</div>
-                </button>
-              ))}
-            </div>
-          )}
-          
-          <div className="pt-2">
-            <button onClick={onSelectManual} className="w-full p-4 rounded-2xl bg-accent/10 border border-accent/20 text-accent-text font-bold hover:bg-accent/20 transition">
-              MANUAL ROAST
-            </button>
-          </div>
-          <button onClick={onCancel} className="w-full py-3 text-ink-muted text-xs font-bold uppercase tracking-widest">Cancel</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // The in-progress roast curve is persisted alongside the other live_* keys so
 // a mid-roast page reload does not lose it. ~1 sample/second, so a 12-minute
 // roast is on the order of 700 points -- comfortably inside localStorage.
@@ -931,6 +879,12 @@ function App() {
 
   // Live roast session state (Roast tab only)
   const [beanName, setBeanName] = React.useState(() => localStorage.getItem("live_beanName") || "");
+  // The inventory bean this roast draws from (null = free-text bean). Recorded
+  // on the saved roast so stock deducts by id, not by a name someone typed.
+  const [beanId, setBeanId] = React.useState(() => {
+    const stored = localStorage.getItem("live_beanId");
+    return stored ? Number(stored) : null;
+  });
   const [greenWeightGrams, setGreenWeightGrams] = React.useState(() => localStorage.getItem("live_greenWeightGrams") || "");
   const [targetRoastLevel, setTargetRoastLevel] = React.useState(() => localStorage.getItem("live_targetRoastLevel") || ROAST_LEVEL_OPTIONS[2]);
 
@@ -1006,7 +960,12 @@ function App() {
   const [showCompare, setShowCompare] = React.useState(false);
   const [editingProfileNotesId, setEditingProfileNotesId] = React.useState(null);
   const [profileNotesDraft, setProfileNotesDraft] = React.useState("");
-  const [showRoastModeDialog, setShowRoastModeDialog] = React.useState(false);
+  // Setup is the Roast tab's front door: false until the roaster confirms it,
+  // and deliberately NOT persisted -- a cold launch with no roast running should
+  // always land on Setup. A running roast never needs it (roastStage below).
+  const [setupConfirmed, setSetupConfirmed] = React.useState(false);
+  // "Manual roast" is a choice, not an absence: profile is picked on purpose each roast.
+  const [manualChosen, setManualChosen] = React.useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = React.useState({ show: false, profileName: '', isDeleteAll: false });
 
   const [heat, setHeat] = React.useState("");
@@ -1286,6 +1245,11 @@ function App() {
   }, [beanName]);
 
   React.useEffect(() => {
+    if (beanId == null) localStorage.removeItem("live_beanId");
+    else localStorage.setItem("live_beanId", String(beanId));
+  }, [beanId]);
+
+  React.useEffect(() => {
     localStorage.setItem("live_greenWeightGrams", greenWeightGrams);
   }, [greenWeightGrams]);
 
@@ -1383,6 +1347,8 @@ function App() {
   React.useEffect(() => {
     if (prefillBean && elapsedSeconds === 0 && !isTimerRunning) {
       setBeanName(prefillBean.name || "");
+      setBeanId(prefillBean.id ?? null);
+      setSetupConfirmed(false); // Setup is the front door, even via a deep link
       // Session Header has no Origin field today; name is the meaningful prefill.
       // TODO: Casey review — add an Origin field to the Roast Session Header if you want origin prefilled too.
       setPrefillBean(null);
@@ -1397,11 +1363,11 @@ function App() {
     localStorage.setItem("live_currentProfileStepIdx", currentProfileStepIdx);
   }, [currentProfileStepIdx]);
 
-  const clearLiveSession = () => {
+  // keepSetup: after a SAVE the last bean / weight / level carry forward so a
+  // back-to-back roast is a click-through. Discard still wipes everything.
+  const clearLiveSession = ({ keepSetup = false } = {}) => {
     const keys = [
-      "live_beanName",
-      "live_greenWeightGrams",
-      "live_targetRoastLevel",
+      ...(keepSetup ? [] : ["live_beanName", "live_beanId", "live_greenWeightGrams", "live_targetRoastLevel"]),
       "live_startingHeat",
       "live_startingFan",
       "live_startingTemp",
@@ -1429,9 +1395,15 @@ function App() {
     turnaroundLowRef.current = null;
     prevSampleRef.current = null;
     
-    setBeanName("");
-    setGreenWeightGrams("");
-    setTargetRoastLevel(ROAST_LEVEL_OPTIONS[2]);
+    if (!keepSetup) {
+      setBeanName("");
+      setBeanId(null);
+      setGreenWeightGrams("");
+      setTargetRoastLevel(ROAST_LEVEL_OPTIONS[2]);
+    }
+    setSetupConfirmed(false);
+    setManualChosen(false);
+    setSetupOpen(false);
     setStartingHeat("");
     setStartingFan("");
     setStartingTemp("");
@@ -1573,13 +1545,10 @@ function App() {
       return;
     }
 
-    // Find profiles for the current bean
-    const beanProfiles = (profiles || []).filter(p => p.beanName === beanName);
-    if (beanProfiles.length > 0 || (profiles || []).some(p => !p.beanName)) {
-      setShowRoastModeDialog(true);
-    } else {
-      startRoast(null);
-    }
+    // The profile (or Manual) was chosen on the Setup screen, so START just
+    // starts. This used to open a dialog only when the typed bean name matched a
+    // profile exactly, and silently ran a manual roast otherwise.
+    startRoast(null);
   };
 
   const handlePause = () => {
@@ -1590,7 +1559,6 @@ function App() {
   };
 
   const startRoast = (profile) => {
-    setShowRoastModeDialog(false);
     setIsTimerRunning(true);
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
@@ -1627,6 +1595,7 @@ function App() {
       id: Date.now(),
       date: new Date().toLocaleString(),
       beanName: beanName || "Unnamed Bean",
+      beanId: beanId ?? null,
       greenWeight: greenWeightGrams ? parseFloat(greenWeightGrams) : 0,
       roastedWeight: 0,
       targetLevel: targetRoastLevel,
@@ -1678,7 +1647,7 @@ function App() {
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
-      clearLiveSession();
+      clearLiveSession({ keepSetup: true });
     }, 2000);
   };
 
@@ -1718,11 +1687,20 @@ function App() {
   // a fresh session, or restarting would replace the whole roastLog.
   const roastStarted = elapsedSeconds > 0 || (roastLog || []).length > 0;
 
-  // With a probe selected, no roast running, and a real live reading on
-  // screen, the Roast tab becomes the preheat instrument instead of the setup
-  // form. Falls back to the ordinary setup screen the instant any of those
-  // stops being true -- an instrument can't read a number it doesn't have.
-  const preheatActive = hasProbe && gatedLiveRoast.isLive && !roastStarted && !isTimerRunning;
+  // The Roast tab is a small sequence, not a pile of competing cards:
+  //   setup    -> the full-screen front door, until confirmed
+  //   preheat  -> the giant BT instrument (a probe is selected AND a real live
+  //               reading is on screen -- an instrument can't read a number it
+  //               doesn't have, so it drops to "ready" the instant that stops)
+  //   ready    -> the ordinary hero with START (no probe, or no live reading)
+  //   roasting -> a roast is under way
+  // No probe (oem-tube / sr540) never reaches "preheat", so START comes straight
+  // after Setup with nothing to skip. This replaces the old `preheatActive` flag,
+  // which hid the Session card and the profile step whenever a probe was live.
+  const roastStage = roastStarted || isTimerRunning ? "roasting"
+    : !setupConfirmed ? "setup"
+    : hasProbe && gatedLiveRoast.isLive ? "preheat"
+    : "ready";
 
   // The bridge only ever publishes chamber temperature from the K-type probe,
   // and only the Razzo has one -- so a bridge on the channel is strong evidence
@@ -2292,6 +2270,47 @@ function App() {
     }
   };
 
+  // Shared by Setup ("+ Build new") and the roast view, which are separate
+  // branches of the Roast tab but open the same builder.
+  const profileBuilderModal = isProfileBuilderOpen && (
+    <ProfileBuilder
+      bean={selectedBean}
+      onCancel={() => setIsProfileBuilderOpen(false)}
+      onSave={(newProfile) => {
+        const p = { ...newProfile, id: Date.now(), beanName: beanName };
+        setProfiles(prev => [...prev, p]);
+        setIsProfileBuilderOpen(false);
+      }}
+    />
+  );
+
+  // Profile chosen on Setup: arm it and fill the starting dials from its 0:00
+  // step (Fan before Heat). The bean's default is shown, never pre-selected.
+  const chooseProfile = (profile) => {
+    setProfileFollowing(profile);
+    setCurrentProfileStepIdx(-1);
+    setManualChosen(false);
+    const start = profileStartStep(profile);
+    if (start) {
+      setStartingFan(dialDigit(start.fan ?? ""));
+      setStartingHeat(dialDigit(start.heat ?? ""));
+    }
+  };
+  const chooseManual = () => {
+    setProfileFollowing(null);
+    setCurrentProfileStepIdx(-1);
+    setManualChosen(true);
+  };
+  const pickBean = (bean) => {
+    setBeanId(bean ? bean.id : null);
+    setBeanName(bean ? bean.name : "");
+    // A profile built for another bean shouldn't ride along to this one.
+    if (profileFollowing?.beanName && profileFollowing.beanName !== (bean ? bean.name : "")) {
+      setProfileFollowing(null);
+      setCurrentProfileStepIdx(-1);
+    }
+  };
+
   let ActiveIcon = null;
   if (activeTab === "Roast") ActiveIcon = RoasterIcon;
   else if (activeTab === "Brew") ActiveIcon = CoffeeIcon;
@@ -2331,11 +2350,48 @@ function App() {
       </header>
 
       <main className="flex-1 overflow-y-auto mx-auto w-full max-w-md px-4 pb-8 pt-6">
-        {activeTab === "Roast" && (
+        {activeTab === "Roast" && roastStage === "setup" && (
+          <div className="space-y-4">
+            <RoastSetupScreen
+              beanName={beanName}
+              beanId={beanId}
+              onPickBean={pickBean}
+              onBeanNameChange={(v) => { setBeanName(v); setBeanId(null); }}
+              greenWeightGrams={greenWeightGrams}
+              onWeightChange={setGreenWeightGrams}
+              targetRoastLevel={targetRoastLevel}
+              roastLevels={ROAST_LEVEL_OPTIONS}
+              onLevelChange={setTargetRoastLevel}
+              profiles={profiles}
+              profileFollowing={profileFollowing}
+              manualChosen={manualChosen}
+              onChooseProfile={chooseProfile}
+              onChooseManual={chooseManual}
+              onBuildProfile={() => setIsProfileBuilderOpen(true)}
+              startingSettings={(
+                <>
+                  <CockpitTile label="Fan (1-9)" value={startingFan} onChange={(e) => setStartingFan(dialDigit(e.target.value))} />
+                  <CockpitTile label="Heat (1-9)" value={startingHeat} onChange={(e) => setStartingHeat(dialDigit(e.target.value))} />
+                  <CockpitTile label="Temp" accent value={startingTemp} onChange={(e) => setStartingTemp(e.target.value)} />
+                </>
+              )}
+              equipmentSetup={equipmentSetup}
+              onEquipmentChange={(v) => { equipmentChosenRef.current = true; setEquipmentSetup(v); }}
+              preheatTarget={preheatTarget}
+              onPreheatTargetChange={setPreheatTarget}
+              probeLive={gatedLiveRoast.isLive}
+              saveSuccess={saveSuccess}
+              onPrimary={() => (hasProbe ? setSetupConfirmed(true) : handleStart())}
+            />
+            {profileBuilderModal}
+          </div>
+        )}
+
+        {activeTab === "Roast" && roastStage !== "setup" && (
           <div className="space-y-4">
             {/* 1) SESSION — full editable card; collapses to a summary bar once live,
                 or once the preheat screen takes over (tap to get it back). */}
-            {((!roastStarted && !preheatActive) || setupOpen) ? (
+            {(roastStage === "roasting" && setupOpen) ? (
             <section className="rounded-3xl border border-border/60 bg-surface/30 p-4 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">Session</div>
@@ -2450,7 +2506,7 @@ function App() {
             ) : (
             <button
               type="button"
-              onClick={() => setSetupOpen(true)}
+              onClick={() => (roastStage === "roasting" ? setSetupOpen(true) : setSetupConfirmed(false))}
               className="flex w-full items-center justify-between rounded-2xl border border-border/60 bg-surface/30 px-4 py-3 text-left transition active:scale-[0.99]"
             >
               <span className="min-w-0 truncate font-cond text-sm font-bold text-ink">{beanName || "Roast setup"}</span>
@@ -2461,35 +2517,11 @@ function App() {
             </button>
             )}
 
-            {/* PROMINENT PROFILE BUILDER CARD — not while the preheat screen has
-                the tab, so the giant instrument doesn't compete with a card. */}
-            {!roastStarted && !isTimerRunning && !preheatActive && (
-              <section 
-                onClick={() => setIsProfileBuilderOpen(true)}
-                className="rounded-3xl bg-accent/10 border border-accent/20 p-4 cursor-pointer hover:bg-accent/15 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <SliderIcon />
-                    <div>
-                      <div className="font-bold text-accent-text">Build Profile</div>
-                      <div className="text-xs text-ink-muted">Create a step-by-step heat & fan plan before you roast</div>
-                    </div>
-                  </div>
-                  <div className="text-accent-text">
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </div>
-              </section>
-            )}
-
             {/* 2) LIVE INSTRUMENT HERO — status cluster, split-flap chrono, bean +
                 derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
             <section className="overflow-hidden rounded-3xl border border-border/60 bg-surface/30 divide-y divide-border/50">
 
-              {preheatActive ? (
+              {roastStage === "preheat" ? (
                 <div className="px-4 pb-3 pt-3.5">
                   <PreheatScreen
                     bt={gatedLiveRoast.bt}
@@ -2770,17 +2802,7 @@ function App() {
             )}
 
             {/* Profile Builder & Dialogs */}
-            {isProfileBuilderOpen && (
-              <ProfileBuilder 
-                bean={selectedBean} 
-                onCancel={() => setIsProfileBuilderOpen(false)}
-                onSave={(newProfile) => {
-                  const p = { ...newProfile, id: Date.now(), beanName: beanName };
-                  setProfiles(prev => [...prev, p]);
-                  setIsProfileBuilderOpen(false);
-                }}
-              />
-            )}
+            {profileBuilderModal}
 
             {showDiscardModal && (
               <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/90 p-4 backdrop-blur-sm">
@@ -2810,16 +2832,6 @@ function App() {
                   </div>
                 </div>
               </div>
-            )}
-
-            {showRoastModeDialog && (
-              <RoastModeDialog 
-                bean={selectedBean}
-                profiles={(profiles || []).filter(p => !p.beanName || p.beanName === "" || p.beanName === beanName)}
-                onCancel={() => setShowRoastModeDialog(false)}
-                onSelectManual={() => startRoast(null)}
-                onSelectProfile={(p) => startRoast(p)}
-              />
             )}
 
             {/* 4) UNIFIED ROAST TIMELINE */}
@@ -4623,11 +4635,19 @@ function App() {
                               tab, queued and ready for START (no auto-start). */}
                           <button
                             onClick={() => {
+                              // Never swap the profile out from under a running roast.
+                              if (roastStarted || isTimerRunning) {
+                                showToast("A roast is in progress — finish or discard it first.", "error");
+                                return;
+                              }
+                              // Land on Setup with the bean and profile already chosen,
+                              // rather than arming state Setup would then override.
                               setBeanName(selectedBean.name);
-                              setProfileFollowing(p);
-                              setCurrentProfileStepIdx(-1);
+                              setBeanId(selectedBean.id ?? null);
+                              chooseProfile(p);
+                              setSetupConfirmed(false);
                               setActiveTab("Roast");
-                              showToast(`Profile "${p.name}" loaded — press START when the beans go in.`);
+                              showToast(`Profile "${p.name}" loaded — confirm setup, then START when the beans go in.`);
                             }}
                             className="mt-3 w-full rounded-xl bg-accent py-2.5 text-xs font-black uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99]"
                           >
@@ -4702,12 +4722,7 @@ function App() {
                                 return [];
                               }
                             })();
-                            const usedWeight = (roasts || [])
-                              .filter(r => r.beanName === selectedBean.name)
-                              .reduce((sum, r) => sum + (Number(r.greenWeight) || 0), 0);
-                            const adjustmentTotal = (selectedBean.weightAdjustments || [])
-                              .reduce((sum, a) => sum + (Number(a.delta) || 0), 0);
-                            const remaining = (Number(selectedBean.purchaseWeight) || 0) - usedWeight + adjustmentTotal;
+                            const remaining = beanStock(selectedBean, roasts);
                             return `${remaining}g / ${selectedBean.purchaseWeight}g`;
                           })()}
                         </div>
@@ -4850,7 +4865,7 @@ function App() {
                   {/* IDEA-006: pre-fill the Roast tab Session Header with this bean and jump there */}
                   <button
                     onClick={() => {
-                      setPrefillBean({ name: selectedBean.name, origin: selectedBean.origin });
+                      setPrefillBean({ id: selectedBean.id, name: selectedBean.name, origin: selectedBean.origin });
                       setActiveTab("Roast");
                     }}
                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3 text-sm font-bold text-zinc-950 shadow-sm transition hover:brightness-110 active:bg-accent/90"

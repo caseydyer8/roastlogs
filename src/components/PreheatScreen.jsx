@@ -52,7 +52,7 @@ function speak(text) {
 
 // Full-bleed preheat instrument. Takes over the Roast tab's hero slot
 // whenever a probe is selected, a real live reading is on screen, and no
-// roast has started yet -- see `preheatActive` in App.js. Fires the same
+// roast has started yet -- see `roastStage` ("preheat") in App.js. Fires the same
 // alert every time BT rises through target, on ANY roast (not just
 // back-to-back batches): a rising crossing is a rising crossing.
 export default function PreheatScreen({ bt, target, onTargetChange }) {

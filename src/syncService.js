@@ -55,6 +55,7 @@ export async function syncRoastToSupabase(roast) {
         profile: cleanRoast.profile,
         curve: cleanRoast.curve,
         equipment: cleanRoast.equipment,
+        bean_id: cleanRoast.beanId ?? null,
       });
 
     if (error) throw error;
@@ -209,6 +210,7 @@ export async function fetchRoastsFromSupabase() {
       profile: r.profile,
       curve: r.curve,
       equipment: r.equipment,
+      beanId: r.bean_id ?? null,
     }));
   } catch (e) {
     console.warn("Failed to fetch roasts from Supabase", e);

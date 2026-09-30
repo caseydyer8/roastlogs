@@ -1,5 +1,5 @@
 const { test, expect } = require("@playwright/test");
-const { fixtureRoast, fixtureTasting } = require("./fixtures");
+const { fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile } = require("./fixtures");
 const { fullPageShot } = require("./helpers");
 
 test.beforeEach(async ({ context, page }) => {
@@ -119,7 +119,8 @@ test("app shell: bottom nav stays pinned to the viewport bottom while content sc
 });
 
 test("profile builder: steppers ordered Fan→Heat; time picker fits viewport", async ({ page }) => {
-  await page.getByText("Build Profile").click();
+  // The Build Profile card became "+ Build new" in Setup's Profile section (v3.9.0).
+  await page.getByRole("button", { name: "+ Build new" }).click();
   await page.getByText("+ ADD STEP").click();
 
   // 2026-07 UI: Fan and Heat are inline −/+ steppers (still discrete 1-9), Fan first.
@@ -393,4 +394,101 @@ test.describe("light mode", () => {
 
     await fullPageShot(page, "history-chart-light.png");
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// Roast Setup (v3.9.0): the Roast tab's front door. Functional assertions only
+// -- the screenshot baseline for this screen is generated on Casey's Mac.
+// ---------------------------------------------------------------------------
+
+async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile] } = {}) {
+  await page.addInitScript(({ bean, profs, equipment }) => {
+    window.localStorage.setItem("beans", JSON.stringify([bean]));
+    window.localStorage.setItem("global_profiles", JSON.stringify(profs));
+    window.localStorage.setItem("roastlogs_equipment", equipment);
+  }, { bean: fixtureBean, profs: profiles, equipment: setup });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+}
+
+test("setup: the Roast tab lands on Setup, and START waits for an explicit profile choice", async ({ page }) => {
+  await seedSetup(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  // Setup is the takeover: no live hero, no START button behind it.
+  await expect(page.getByRole("button", { name: "START", exact: true })).toHaveCount(0);
+
+  const go = page.getByRole("button", { name: "Start roast" });
+  await expect(go).toBeDisabled();
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await expect(go).toBeEnabled();
+});
+
+test("setup: a probe-less setup skips preheat and goes straight to the roast", async ({ page }) => {
+  await seedSetup(page, { setup: "oem-tube" });
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+});
+
+test("setup: a probe setup reads 'Continue' with no bridge, and offers the preheat target", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await expect(page.getByLabel(/Preheat target/)).toHaveValue("315");
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  // No live reading in the test browser, so this is the ordinary hero with START.
+  await expect(page.getByRole("button", { name: "START", exact: true })).toBeVisible();
+  // ...and the summary bar takes you back to Setup before the roast begins.
+  await page.getByRole("button", { name: /Roast setup|E2E/ }).first().click();
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+});
+
+test("setup: choosing a profile fills starting Fan then Heat from its 0:00 step", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  const tiles = page.locator("div.grid.grid-cols-3 input");
+  await expect(tiles.nth(0)).toHaveValue("4"); // Fan
+  await expect(tiles.nth(1)).toHaveValue("7"); // Heat
+});
+
+test("setup -> save: the roast records beanId, stock deducts, and the setup carries forward", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /E2E Setup Bean/ }).click();
+  await expect(page.getByText("1000", { exact: false }).first()).toBeVisible();
+  await page.getByLabel("Green weight in grams").fill("250");
+  await expect(page.getByText("750g")).toBeVisible(); // left after this roast
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts"))[0]);
+  expect(saved.beanId).toBe(fixtureBean.id);
+  expect(saved.beanName).toBe(fixtureBean.name);
+  expect(saved.greenWeight).toBe(250);
+
+  // Back on Setup once the save settles, with bean and weight carried forward
+  // -- but the profile choice is NOT (chosen on purpose, every roast).
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByLabel("Green weight in grams")).toHaveValue("250");
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeDisabled();
+
+  // Stock: 1000 - 250 on the bean's own detail page.
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await expect(page.getByText("750g / 1000g")).toBeVisible();
+});
+
+test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile chosen", async ({ page }) => {
+  await seedSetup(page, { profiles: [{ ...fixtureProfile, beanName: fixtureBean.name }] });
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await page.getByRole("button", { name: "Use in Roast" }).first().click();
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeEnabled();
 });
