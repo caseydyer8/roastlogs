@@ -40,8 +40,11 @@
 # /publish-review writes .session/publish-clearance at the root of the
 # checkout it ran in, so that is where it is read from.
 
+# No `cd "$CLAUDE_PROJECT_DIR"` here: every repo lookup below is `git -C`
+# against the push's own checkout, and the old `cd … || exit 0` failed OPEN
+# when that directory did not exist.
+
 INPUT="$(cat)"
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
 emit_deny() {
   R="$1" python3 -c 'import json,os;print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":os.environ["R"]}}))' 2>/dev/null && exit 0
@@ -179,8 +182,8 @@ while IFS="$(printf '\t')" read -r KIND PDIR PREMOTE; do
   if printf '%s' "$PURL" | grep -qE "$OPS_URL_RE"; then
     continue
   fi
-  GATED_DIRS="${GATED_DIRS}${PDIR}
-"
+  GATED_DIRS="${GATED_DIRS:+${GATED_DIRS}
+}${PDIR}"
 done <<EOF
 $CLASS
 EOF
@@ -191,7 +194,10 @@ EOF
 # main checkout, or a plain push from inside a worktree, both resolve against
 # the worktree's HEAD and the worktree's .session/publish-clearance.
 while IFS= read -r PDIR; do
-  [ -n "$PDIR" ] || continue
+  # Never skip: in a gate, "skip" is the fail-open shape.
+  if [ -z "$PDIR" ]; then
+    emit_deny "BLOCKED: the publication gate resolved an empty push directory, so it cannot identify what would be published. Denying."
+  fi
 
   TOP="$(git -C "$PDIR" rev-parse --show-toplevel 2>/dev/null)"
   if [ -z "$TOP" ]; then

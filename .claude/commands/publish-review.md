@@ -37,9 +37,13 @@ for it — it reads the payload itself.
 **`clear`** — write the clearance, and nothing else:
 
 ```bash
-mkdir -p .session
-printf '%s' "${BASE_SHA}..${HEAD_SHA}" > .session/publish-clearance
+D="$(git rev-parse --show-toplevel)/.session"
+mkdir -p "$D"
+printf '%s' "${BASE_SHA}..${HEAD_SHA}" > "$D/publish-clearance"
 ```
+
+The guard reads the clearance from the top level of the checkout the push
+runs from (a worktree has its own), so write it there, not relative to cwd.
 
 Then report that the push is cleared for that range, and note that any new
 commit voids it.
