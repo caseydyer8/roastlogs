@@ -5,13 +5,17 @@ Pages at https://caseydyer8.github.io/roastlogs/.
 
 ## Working With Case (read first)
 
-Case's working standards live in `.claude/working-agreement.md` — his build loop,
+Case's working standards live in `docs/private/working-agreement.md` — his build loop,
 session rituals, design standards, tiered definition of "done," and how he runs
 his agent bundle. **Load it at the start of every session and work from it — do
 not start cold.** Address him as **"Case"** in every response. It is imported
 below so it is always in context:
 
-@.claude/working-agreement.md
+@docs/private/working-agreement.md
+
+`docs/private/` is a clone of the PRIVATE repo `caseydyer8/roastlogs-ops`
+(gitignored here). If that import is empty, the clone is missing — from the
+repo root run `git clone git@github.com:caseydyer8/roastlogs-ops.git docs/private`.
 
 Keep it current: when working standards or agent definitions change materially,
 update that file — it is the human-readable backup of preferences otherwise
@@ -93,11 +97,9 @@ trapped in agent config.
 
 - Auth is Supabase (`@supabase/supabase-js`); login gate + RLS policies.
 - **PRIVATE 2-ACCOUNT APP as of 2026-07-25** (briefly multi-user 07-21→07-25;
-  reverted after Casey + Becca decided NOT to open it to others — a home-network
-  concern). The app is locked to Casey's **two accounts ONLY** — the addresses are
-  deliberately not committed (this repo is public; publishing them would hand out the
-  full list of valid usernames for an app with signup disabled). Source of truth:
-  Supabase Dashboard → Authentication → Users. Every synced table (`roasts`, `tasting_notes`,
+  reverted after the owner decided not to open it to others). The app is locked
+  to Casey's **two accounts ONLY**. The account addresses are intentionally not listed in this repo.
+  Source of truth: Supabase Dashboard → Authentication → Users. Every synced table (`roasts`, `tasting_notes`,
   `beans`, `roast_profiles`) still carries `user_id` (`NOT NULL`, `DEFAULT
   auth.uid()`, FK to `auth.users` ON DELETE CASCADE), but the RLS is now
   **admin-only** — no per-user/owner branch remains, **no `USING (true)` remains**.
@@ -135,7 +137,7 @@ trapped in agent config.
   > is_admin` instead of returning false, so every signed-in read and write
   > failed and the RoastLink bridge died with `realtime CHANNEL_ERROR`.
   > See `docs/2026-09-04_revoke_is_admin_execute.sql` (guarded as superseded)
-  > and the incident note in `docs/NEXT-SESSION.md`.
+  > and the incident note in `docs/private/NEXT-SESSION.md`.
 - **Verifying anything that touches `is_admin` or a policy:** run it **as the
   `authenticated` role** — `set local role authenticated` plus a real
   SELECT/INSERT/UPDATE/DELETE against each RLS table. Checking that a grant
@@ -147,12 +149,8 @@ trapped in agent config.
   blocked; `anon` cannot EXECUTE `rls_auto_enable()`.
 - **Public signups: DISABLED** — Casey provisions the two accounts in the Supabase
   dashboard. There is no signup UI by design.
-- **Leaked-password protection is PLAN-GATED** — a Pro-plan feature; the org is on
-  FREE (staying free for now; not paying to host other people's data). The security
-  advisor will keep flagging it — annotate as plan-gated, not an open finding.
-  Compensating controls: server-side MFA (`aal2`) required by all 16 policies, so a
-  password alone is worth nothing, plus the Email-provider password policy
-  (min length ≥8 + require digit/lower/upper/symbol).
+- **Password-related advisor flags** (context in `docs/private/security-notes.md`):
+  Compensating control: server-side MFA on every policy.
 - **No PITR/managed snapshots on free.** Backups are logical JSON exports (see
   the `docs/` migrations for schema). **Gate any destructive/PK migration —
   e.g. the deferred Phase 3 composite-key work — on having a backup story.**
@@ -212,6 +210,10 @@ right moment — don't wait to be asked.** Casey wants these prompts.
 | A new screen/component is added | Add a matching e2e test + baseline in the same session |
 | Before any deploy of nontrivial changes | Suggest `/code-review` on the diff |
 | Session touches roast data shapes | Remember `e2e/fixtures.js` must stay in sync with the real contract |
+| Case states a session goal | `/work` — the manager: planner → Explore → implementer → test-writer → code-reviewer, merging each agent's `CHECK-IN` |
+| Any change to a grant, a policy, or a `SECURITY DEFINER` function | **migration-reviewer** agent — verifies live as `authenticated`, recommends only, never applies |
+| A tier-3 finding (security-auditor, rls-audit, external review) | **doubt-reviewer** agent before anyone promotes it out of `findings/pending/` |
+| Before calling something ready to deploy | `/ship` — parallel code-reviewer + security-auditor + test-writer; NO-GO without a rollback plan |
 
 Standing reminders to surface when relevant (not every session):
 - Photos do NOT sync to Supabase — flag durability when photos are touched.

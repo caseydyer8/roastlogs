@@ -19,8 +19,78 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"{\\\"hookSpecificOutput\\\": {\\\"hookEventName\\\": \\\"SessionStart\\\", \\\"additionalContext\\\": \\\"Case's working standards are in .claude/working-agreement.md. If it is not already in your context, read it before doing anything else, and work from it. Address the user as Case in every response. Roast controls are always Fan before Heat. ALSO: if docs/NEXT-SESSION.md exists, read it before replying \\\\u2014 it carries Case's standing open actions from the previous session, and he expects them raised first.\\\"}}\"",
+            "command": "echo \"{\\\"hookSpecificOutput\\\": {\\\"hookEventName\\\": \\\"SessionStart\\\", \\\"additionalContext\\\": \\\"Case's working standards are in docs/private/working-agreement.md (a clone of the private roastlogs-ops repo; if docs/private/ is missing, tell Case to clone it). If it is not already in your context, read it before doing anything else, and work from it. Address the user as Case in every response. Roast controls are always Fan before Heat. ALSO: if docs/private/NEXT-SESSION.md exists, read it before replying \\\\u2014 it carries Case's standing open actions from the previous session, and he expects them raised first.\\\"}}\"",
             "statusMessage": "Loading Case's developer profile..."
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
+            "timeout": 60,
+            "statusMessage": "Briefing: machine, repo position, live version..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-gate.sh\"",
+            "timeout": 30,
+            "statusMessage": "Verification gate: checking state hash..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Commit guard: verified state, secrets, forbidden merge..."
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/write-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Write guard: refusing wholesale App.js rewrite..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Publication gate: checking push clearance..."
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__(push_files|create_or_update_file|delete_file)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Publication gate: MCP write path..."
           }
         ]
       }
