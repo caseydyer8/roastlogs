@@ -7,6 +7,10 @@ const fixtureRoast = {
   id: 1750000000000,
   date: "2026-07-01",
   beanName: "E2E Ethiopia Test",
+  // Free-text roast shape: no inventory link. Roasts saved from the v3.9.0
+  // Setup screen carry the picked bean's numeric id here instead; roasts from
+  // before it don't have the key at all. Both must keep working.
+  beanId: null,
   greenWeight: "226",
   roastedWeight: "190",
   targetLevel: "City+ Medium",
@@ -48,4 +52,26 @@ const fixtureTasting = {
   notes: "Deterministic e2e tasting fixture.",
 };
 
-module.exports = { fixtureRoast, fixtureTasting };
+// Deterministic inventory bean + profile for the Roast Setup tests. Matches the
+// saved shapes: beans carry a Date.now() id, purchaseWeight as a string and a
+// weightAdjustments array; a profile step's time is "mm:ss" beside totalSeconds.
+const fixtureBean = {
+  id: 1750000000100,
+  name: "E2E Setup Bean",
+  origin: "Ethiopia",
+  purchaseWeight: "1000",
+  weightAdjustments: [],
+};
+
+const fixtureProfile = {
+  id: 1750000000200,
+  name: "E2E Profile",
+  beanName: "",
+  isDefault: false,
+  steps: [
+    { time: "00:00", totalSeconds: 0, fan: "4", heat: "7" },
+    { time: "04:00", totalSeconds: 240, fan: "6", heat: "6" },
+  ],
+};
+
+module.exports = { fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile };

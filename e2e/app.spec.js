@@ -1,5 +1,5 @@
 const { test, expect } = require("@playwright/test");
-const { fixtureRoast, fixtureTasting } = require("./fixtures");
+const { fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile } = require("./fixtures");
 const { fullPageShot } = require("./helpers");
 
 test.beforeEach(async ({ context, page }) => {
@@ -119,7 +119,8 @@ test("app shell: bottom nav stays pinned to the viewport bottom while content sc
 });
 
 test("profile builder: steppers ordered Fan→Heat; time picker fits viewport", async ({ page }) => {
-  await page.getByText("Build Profile").click();
+  // The Build Profile card became "+ Build new" in Setup's Profile section (v3.9.0).
+  await page.getByRole("button", { name: "+ Build new" }).click();
   await page.getByText("+ ADD STEP").click();
 
   // 2026-07 UI: Fan and Heat are inline −/+ steppers (still discrete 1-9), Fan first.
@@ -393,4 +394,251 @@ test.describe("light mode", () => {
 
     await fullPageShot(page, "history-chart-light.png");
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// Roast Setup (v3.9.0): the Roast tab's front door. Functional assertions only
+// -- the screenshot baseline for this screen is generated on Casey's Mac.
+// ---------------------------------------------------------------------------
+
+async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile] } = {}) {
+  await page.addInitScript(({ bean, profs, equipment }) => {
+    window.localStorage.setItem("beans", JSON.stringify([bean]));
+    window.localStorage.setItem("global_profiles", JSON.stringify(profs));
+    window.localStorage.setItem("roastlogs_equipment", equipment);
+  }, { bean: fixtureBean, profs: profiles, equipment: setup });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+}
+
+test("setup: the Roast tab lands on Setup, and START waits for an explicit profile choice", async ({ page }) => {
+  await seedSetup(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  // Setup is the takeover: no live hero, no START button behind it.
+  await expect(page.getByRole("button", { name: "START", exact: true })).toHaveCount(0);
+
+  const go = page.getByRole("button", { name: "Start roast" });
+  await expect(go).toBeDisabled();
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await expect(go).toBeEnabled();
+});
+
+test("setup: a probe-less setup skips preheat and goes straight to the roast", async ({ page }) => {
+  await seedSetup(page, { setup: "oem-tube" });
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+});
+
+test("setup: a probe setup reads 'Continue' with no bridge, and offers the preheat target", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await expect(page.getByLabel(/Preheat target/)).toHaveValue("315");
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  // No live reading in the test browser, so this is the ordinary hero with START.
+  await expect(page.getByRole("button", { name: "START", exact: true })).toBeVisible();
+  // ...and the summary bar takes you back to Setup before the roast begins.
+  await page.getByRole("button", { name: /Roast setup|E2E/ }).first().click();
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+});
+
+test("setup: choosing a profile fills starting Fan then Heat from its 0:00 step", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  const tiles = page.locator("div.grid.grid-cols-3 input");
+  await expect(tiles.nth(0)).toHaveValue("4"); // Fan
+  await expect(tiles.nth(1)).toHaveValue("7"); // Heat
+});
+
+test("setup -> save: the roast records beanId, stock deducts, and the setup carries forward", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /E2E Setup Bean/ }).click();
+  await expect(page.getByText("1000", { exact: false }).first()).toBeVisible();
+  await page.getByLabel("Green weight in grams").fill("250");
+  await expect(page.getByText("750g")).toBeVisible(); // left after this roast
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts"))[0]);
+  expect(saved.beanId).toBe(fixtureBean.id);
+  expect(saved.beanName).toBe(fixtureBean.name);
+  expect(saved.greenWeight).toBe(250);
+
+  // Back on Setup once the save settles, with bean and weight carried forward
+  // -- but the profile choice is NOT (chosen on purpose, every roast).
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByLabel("Green weight in grams")).toHaveValue("250");
+  await expect(page.getByText(/last setup carried forward/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeDisabled();
+
+  // Stock: 1000 - 250 on the bean's own detail page.
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await expect(page.getByText("750g / 1000g")).toBeVisible();
+});
+
+test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile chosen", async ({ page }) => {
+  await seedSetup(page, { profiles: [{ ...fixtureProfile, beanName: fixtureBean.name }] });
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await page.getByRole("button", { name: "Use in Roast" }).first().click();
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
+// Save a roast as a profile (v3.9.0). The prompt comes AFTER the roast is
+// written, so every test also asserts the roast is already in storage.
+// ---------------------------------------------------------------------------
+
+async function runQuickRoast(page, { fan = "5", heat = "6" } = {}) {
+  const dials = page.locator("div.grid.grid-cols-3 input");
+  await dials.nth(0).fill(fan);
+  await dials.nth(1).fill(heat);
+  await page.getByRole("button", { name: "Start roast" }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+}
+
+test("save as profile: a manual roast offers a new profile with its steps, milestones and source roast", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await runQuickRoast(page);
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText("Keep this as a profile?")).toBeVisible();
+  // The roast is already saved -- the sheet only ever adds.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("roasts")).length)).toBe(2);
+
+  await sheet.getByLabel("Profile name").fill("Saved From Roast");
+  await sheet.getByRole("button", { name: "Save profile" }).click();
+  await expect(sheet).toHaveCount(0);
+
+  const { profile, roastId } = await page.evaluate(() => ({
+    profile: JSON.parse(localStorage.getItem("global_profiles")).find((p) => p.name === "Saved From Roast"),
+    roastId: JSON.parse(localStorage.getItem("roasts"))[0].id,
+  }));
+  expect(profile.sourceRoastId).toBe(roastId);
+  expect(profile.steps).toEqual([{ time: "00:00", totalSeconds: 0, heat: "6", fan: "5" }]);
+  expect(profile.milestones.map((m) => m.label)).toEqual(["YELLOWING", "FIRST CRACK", "COOLING START"]);
+});
+
+test("save as profile: 'No thanks' leaves the roast saved and creates nothing", async ({ page }) => {
+  await seedSetup(page);
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await runQuickRoast(page);
+  await page.getByTestId("profile-from-roast").getByRole("button", { name: "No thanks" }).click();
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+  const counts = await page.evaluate(() => ({
+    roasts: JSON.parse(localStorage.getItem("roasts")).length,
+    profiles: JSON.parse(localStorage.getItem("global_profiles")).length,
+  }));
+  expect(counts).toEqual({ roasts: 2, profiles: 1 }); // fixture roast + new one; the one seeded profile
+});
+
+test("save as profile: following a profile without changing it does not nag", async ({ page }) => {
+  const single = { ...fixtureProfile, steps: [{ time: "00:00", totalSeconds: 0, fan: "5", heat: "6" }] };
+  await seedSetup(page, { profiles: [single] });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6" });
+  // Give the sheet a moment to (wrongly) appear before asserting it never does.
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+});
+
+test("save as profile: a roast that departed from its profile offers Update / Save as new, and Update rewrites the plan", async ({ page }) => {
+  await seedSetup(page); // two-step profile; the quick roast only logs one step
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "3", heat: "8" });
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet.getByRole("button", { name: "Update E2E Profile" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Save as new profile" })).toBeVisible();
+  await sheet.getByRole("button", { name: "Update E2E Profile" }).click();
+
+  const { profiles, roastId } = await page.evaluate(() => ({
+    profiles: JSON.parse(localStorage.getItem("global_profiles")),
+    roastId: JSON.parse(localStorage.getItem("roasts"))[0].id,
+  }));
+  expect(profiles).toHaveLength(1); // updated in place, not duplicated
+  expect(profiles[0].name).toBe("E2E Profile");
+  expect(profiles[0].steps).toEqual([{ time: "00:00", totalSeconds: 0, heat: "8", fan: "3" }]);
+  expect(profiles[0].sourceRoastId).toBe(roastId);
+});
+
+test("history: editing a roast a profile was saved from offers to update the profile, and never does it silently", async ({ page }) => {
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "From Fixture", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  // Change the start fan 9 -> 8: an edit to the PLAN, which is what earns the prompt.
+  await page.locator('input.w-6[value="9"]').first().fill("8");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+
+  const sheet = page.getByTestId("profile-from-roast");
+  await expect(sheet.getByText("Update the profile too?")).toBeVisible();
+  // Nothing has changed yet: the profile is only touched on a yes.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0].steps)).toEqual([]);
+
+  await sheet.getByRole("button", { name: "Update profile" }).click();
+  const updated = await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0]);
+  expect(updated.steps.length).toBeGreaterThan(0);
+  expect(updated.steps[0]).toMatchObject({ totalSeconds: 0, fan: "8", heat: "7" }); // the edited start settings
+  expect(updated.milestones.map((m) => m.label)).toContain("FIRST CRACK");
+});
+
+test("history: 'Not now' leaves the linked profile exactly as it was", async ({ page }) => {
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "From Fixture", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  await page.locator('input.w-6[value="9"]').first().fill("8");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  await page.getByTestId("profile-from-roast").getByRole("button", { name: "Not now" }).click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("global_profiles"))[0].steps)).toEqual([]);
+});
+
+test("history: a weight-only edit never offers to overwrite a profile, even one that differs from the roast", async ({ page }) => {
+  // The profile was hand-tuned since (its steps differ from the roast's log). An
+  // edit that doesn't touch the roast's plan must leave it completely alone.
+  const linked = { ...fixtureProfile, id: 1750000000300, name: "Hand Tuned", steps: [], milestones: [], sourceRoastId: fixtureRoast.id };
+  await seedSetup(page, { profiles: [linked] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("E2E Ethiopia Test").first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+  await page.getByPlaceholder("0").first().fill("191");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  await page.waitForTimeout(600);
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+});
+
+test("history: renaming a roast's bean relinks its stock to the bag the name says", async ({ page }) => {
+  const linkedRoast = { ...fixtureRoast, id: 1750000000400, beanId: fixtureBean.id, beanName: fixtureBean.name };
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify([r])), linkedRoast);
+  await seedSetup(page, { profiles: [] });
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await page.getByRole("button", { name: "EDIT ROAST" }).click();
+
+  const nameInput = page.locator(`input[value="${fixtureBean.name}"]`).first();
+  await nameInput.fill("Some Other Bean");
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem("roasts"))[0].beanId))).toBeNull();
+
+  await page.locator('input[value="Some Other Bean"]').first().fill(fixtureBean.name);
+  await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem("roasts"))[0].beanId))).toBe(fixtureBean.id);
 });

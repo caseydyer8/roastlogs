@@ -22,6 +22,7 @@ import {
   phaseSpans,
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
+import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
 // RoastCurveChart — "Split Roast Story" History detail visualization (v1.1)
@@ -45,8 +46,11 @@ const formatMMSS = (secs) => {
   return `${mm}:${ss}`;
 };
 
-// Fritsch–Carlson monotone cubic interpolation. Honest smoothing: the curve
-// passes exactly through every real temp reading and never invents overshoot.
+// Fritsch–Carlson monotone cubic interpolation. Honest gap-filling between
+// readings: passes exactly through every real reading and never invents
+// overshoot. It joins the dots; it does NOT remove probe noise -- the displayed
+// line and RoR are smoothed afterwards (see src/lib/curveSmoothing.js). Headline
+// numbers (FC Temp, Drop Temp, average) still read this raw interpolation.
 function buildMonotoneInterpolator(points) {
   const pts = points.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])).sort((a, b) => a[0] - b[0]);
   const n = pts.length;
@@ -192,41 +196,30 @@ export default function RoastCurveChart({ roast }) {
       }
       const inRange = hasTemp && t >= firstTempT && t <= lastTempT && !inGap(t);
       const temp = inRange ? tempAt(t) : null;
-      data.push({ t, temp: temp != null ? Math.round(temp * 10) / 10 : null, heat, fan, ror: null });
+      const rounded = temp != null ? Math.round(temp * 10) / 10 : null;
+      data.push({ t, temp: rounded, rawTemp: rounded, heat, fan, ror: null });
     }
 
-    // RoR in °/min over a trailing 12s window, then lightly smoothed (±4s
-    // moving average). Derived only where real readings bracket the window.
-    // A 30s/±10s window (the original tuning) ate the first quarter of a
-    // short 2-minute test roast before RoR could draw at all — 12s/±4s keeps
-    // the same noise-smoothing intent while surfacing much sooner.
+    // Display smoothing. A 1 Hz probe reads in near-whole degrees with a few
+    // tenths of noise: drawn raw the temp line is fuzzy, and RoR -- a derivative
+    // -- turns that into mountain peaks. Temp gets a +/-2 s moving average; RoR is
+    // a centred +/-15 s least-squares slope over lightly smoothed temps. (The
+    // 12 s / +/-4 s recipe this replaces was tuned for a 2-minute test roast and
+    // was ~5x rougher on a real one.) Gaps stay gaps: nulls are never filled.
     if (hasTemp) {
-      const RW = 12; // lookback window, seconds
-      const SM = 4;  // smoothing half-width, seconds
-      const raw = new Array(total + 1).fill(null);
-      for (let t = firstTempT + RW; t <= lastTempT; t++) {
-        const a = data[t - RW]?.temp;
-        const b = data[t]?.temp;
-        if (a != null && b != null) raw[t] = (b - a) * (60 / RW); // °/RWs → °/min
-      }
+      const rawTemps = data.map((d) => d.rawTemp);
+      const shown = smoothSeries(rawTemps, 2);
+      const rors = rorSeries(smoothSeries(rawTemps, 1), 15);
       for (let t = 0; t <= total; t++) {
-        if (raw[t] == null) continue;
-        let sum = 0;
-        let count = 0;
-        for (let k = Math.max(0, t - SM); k <= Math.min(total, t + SM); k++) {
-          if (raw[k] != null) {
-            sum += raw[k];
-            count++;
-          }
-        }
-        data[t].ror = count ? Math.round((sum / count) * 10) / 10 : null;
+        data[t].temp = shown[t] != null ? Math.round(shown[t] * 10) / 10 : null;
+        data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;
       }
     }
 
     // Headline metrics.
-    const temps = data.filter((d) => d.temp != null);
+    const temps = data.filter((d) => d.rawTemp != null);
     const rors = data.filter((d) => d.ror != null);
-    const avgTemp = temps.length ? temps.reduce((s, d) => s + d.temp, 0) / temps.length : null;
+    const avgTemp = temps.length ? temps.reduce((s, d) => s + d.rawTemp, 0) / temps.length : null;
     const avgRor = rors.length ? rors.reduce((s, d) => s + d.ror, 0) / rors.length : null;
     const dropT = coolingStart != null ? coolingStart : total;
     // Same honesty rule as the line, applied to the numbers. Blanking the curve

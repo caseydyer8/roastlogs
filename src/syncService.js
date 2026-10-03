@@ -55,6 +55,7 @@ export async function syncRoastToSupabase(roast) {
         profile: cleanRoast.profile,
         curve: cleanRoast.curve,
         equipment: cleanRoast.equipment,
+        bean_id: cleanRoast.beanId ?? null,
       });
 
     if (error) throw error;
@@ -209,6 +210,7 @@ export async function fetchRoastsFromSupabase() {
       profile: r.profile,
       curve: r.curve,
       equipment: r.equipment,
+      beanId: r.bean_id ?? null,
     }));
   } catch (e) {
     console.warn("Failed to fetch roasts from Supabase", e);
@@ -332,6 +334,8 @@ export async function syncProfileToSupabase(profile) {
         steps: cleanProfile.steps || [],
         is_default: cleanProfile.isDefault || false,
         notes: cleanProfile.notes,
+        source_roast_id: cleanProfile.sourceRoastId ?? null,
+        milestones: cleanProfile.milestones || [],
       });
 
     if (error) throw error;
@@ -381,6 +385,8 @@ export async function fetchProfilesFromSupabase() {
       steps: p.steps || [],
       isDefault: p.is_default || false,
       notes: p.notes,
+      sourceRoastId: p.source_roast_id ?? null,
+      milestones: p.milestones || [],
     }));
   } catch (e) {
     console.warn("Failed to fetch profiles from Supabase", e);
