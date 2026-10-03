@@ -32,9 +32,19 @@
 #
 # Fails CLOSED.
 
+# WORKTREES. The range and the clearance are resolved in the repo the push
+# runs FROM (the hook's cwd, any `cd`, any `git -C`), not CLAUDE_PROJECT_DIR.
+# A background session pushes from .claude/worktrees/<name>/ while the main
+# checkout sits on main; reading HEAD from the main checkout made every
+# worktree push resolve to an empty range and be denied (found 2026-10-03).
+# /publish-review writes .session/publish-clearance at the root of the
+# checkout it ran in, so that is where it is read from.
+
+# No `cd "$CLAUDE_PROJECT_DIR"` here: every repo lookup below is `git -C`
+# against the push's own checkout, and the old `cd … || exit 0` failed OPEN
+# when that directory did not exist.
+
 INPUT="$(cat)"
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
-CLEARANCE=".session/publish-clearance"
 
 emit_deny() {
   R="$1" python3 -c 'import json,os;print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":os.environ["R"]}}))' 2>/dev/null && exit 0
@@ -154,7 +164,7 @@ esac
 # Anchored at both ends so a look-alike host (https://evil.example/github.com/
 # caseydyer8/roastlogs-ops) cannot borrow the exemption.
 OPS_URL_RE='^(https://([^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)caseydyer8/roastlogs-ops(\.git)?/?$'
-GATED=0
+GATED_DIRS=""
 while IFS="$(printf '\t')" read -r KIND PDIR PREMOTE; do
   [ "$KIND" = "GIT_PUSH" ] || continue
   if [ -z "$PREMOTE" ]; then
@@ -172,38 +182,56 @@ while IFS="$(printf '\t')" read -r KIND PDIR PREMOTE; do
   if printf '%s' "$PURL" | grep -qE "$OPS_URL_RE"; then
     continue
   fi
-  GATED=1
+  GATED_DIRS="${GATED_DIRS:+${GATED_DIRS}
+}${PDIR}"
 done <<EOF
 $CLASS
 EOF
-[ "$GATED" = "1" ] || exit 0
+[ -n "$GATED_DIRS" ] || exit 0
 
-# --- Resolve the range this push would publish -------------------------------
-BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)"
-if [ -z "$HEAD_SHA" ]; then
-  emit_deny "BLOCKED: the publication gate could not resolve HEAD, so it cannot identify what would be published. Denying."
-fi
+# --- Per gated push: resolve its range and require clearance for it ----------
+# Each push is checked in its OWN repo, so `git -C <worktree> push` from the
+# main checkout, or a plain push from inside a worktree, both resolve against
+# the worktree's HEAD and the worktree's .session/publish-clearance.
+while IFS= read -r PDIR; do
+  # Never skip: in a gate, "skip" is the fail-open shape.
+  if [ -z "$PDIR" ]; then
+    emit_deny "BLOCKED: the publication gate resolved an empty push directory, so it cannot identify what would be published. Denying."
+  fi
 
-if git rev-parse --verify "origin/$BR" >/dev/null 2>&1; then
-  BASE_SHA="$(git rev-parse "origin/$BR" 2>/dev/null)"
-else
-  BASE_SHA="$(git merge-base origin/main HEAD 2>/dev/null)"
-fi
-[ -n "$BASE_SHA" ] || BASE_SHA="root"
+  TOP="$(git -C "$PDIR" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$TOP" ]; then
+    emit_deny "BLOCKED: the publication gate could not find a git repository at '${PDIR}', so it cannot identify what would be published. Denying."
+  fi
+  CLEARANCE="${TOP}/.session/publish-clearance"
 
-RANGE="${BASE_SHA}..${HEAD_SHA}"
+  BR="$(git -C "$TOP" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  HEAD_SHA="$(git -C "$TOP" rev-parse HEAD 2>/dev/null)"
+  if [ -z "$HEAD_SHA" ]; then
+    emit_deny "BLOCKED: the publication gate could not resolve HEAD in '${TOP}', so it cannot identify what would be published. Denying."
+  fi
 
-# --- Require clearance for THIS exact range ---------------------------------
-# Exact-match on both SHAs is the point: a new commit moves HEAD, so yesterday's
-# clearance cannot launder today's content.
-if [ ! -f "$CLEARANCE" ]; then
-  emit_deny "BLOCKED: nothing has been cleared for publication. This repo is PUBLIC and a push is irreversible — forks, clones and caches keep the content reachable even after a force-push. Run /publish-review to have publication-reviewer examine the outbound diff, every commit message in the range, and any newly tracked files. It writes clearance only on a 'clear' verdict. Range needing review: ${RANGE}"
-fi
+  if git -C "$TOP" rev-parse --verify "origin/$BR" >/dev/null 2>&1; then
+    BASE_SHA="$(git -C "$TOP" rev-parse "origin/$BR" 2>/dev/null)"
+  else
+    BASE_SHA="$(git -C "$TOP" merge-base origin/main HEAD 2>/dev/null)"
+  fi
+  [ -n "$BASE_SHA" ] || BASE_SHA="root"
 
-CLEARED="$(tr -d ' \t\n\r' < "$CLEARANCE" 2>/dev/null)"
-if [ "$CLEARED" != "$RANGE" ]; then
-  emit_deny "BLOCKED: the publication clearance on file does not match what this push would publish. Cleared: '${CLEARED:-none}'. This push: '${RANGE}'. A clearance covers one exact range, so any new commit voids it by design. Re-run /publish-review for the current range."
-fi
+  RANGE="${BASE_SHA}..${HEAD_SHA}"
+
+  # Exact-match on both SHAs is the point: a new commit moves HEAD, so
+  # yesterday's clearance cannot launder today's content.
+  if [ ! -f "$CLEARANCE" ]; then
+    emit_deny "BLOCKED: nothing has been cleared for publication. This repo is PUBLIC and a push is irreversible — forks, clones and caches keep the content reachable even after a force-push. Run /publish-review to have publication-reviewer examine the outbound diff, every commit message in the range, and any newly tracked files. It writes clearance only on a 'clear' verdict. Checkout: ${TOP}. Range needing review: ${RANGE}"
+  fi
+
+  CLEARED="$(tr -d ' \t\n\r' < "$CLEARANCE" 2>/dev/null)"
+  if [ "$CLEARED" != "$RANGE" ]; then
+    emit_deny "BLOCKED: the publication clearance on file does not match what this push would publish. Checkout: ${TOP}. Cleared: '${CLEARED:-none}'. This push: '${RANGE}'. A clearance covers one exact range, so any new commit voids it by design. Re-run /publish-review for the current range."
+  fi
+done <<EOF
+$GATED_DIRS
+EOF
 
 exit 0
