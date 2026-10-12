@@ -50,6 +50,16 @@ const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 const LOOKAHEAD = 30;
 const PLAN_MARK = { YELLOWING: "Y", "FIRST CRACK": "FC", "COOLING START": "DROP", MAILLARD: "MAI", CARAMELIZATION: "CAR" };
 
+// Why a followed profile has no ghost line, in words. State the fact the app
+// holds, not a guess about history (same stance as equipment's "Not recorded"):
+// a profile with no sourceRoastId is "no source roast", not "built by hand".
+// The separator is U+00B7, as in the tooltip header (`00:00 · Phase`).
+export const GHOST_CAPTION = {
+  "no-source": "No ghost · no source roast",
+  "source-missing": "No ghost · source roast not on this device",
+  "source-no-curve": "No ghost · source roast has no curve",
+};
+
 // Bridge holes of a few seconds in the ghost with a straight line; anything
 // longer stays a gap -- the ghost is a reference, but it should not invent a
 // stretch the source roast's probe never measured.
@@ -209,19 +219,49 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
 
     // The ghost. Only while the roast is still running: after DROP the chart stops
     // growing, and there is nothing left to steer by.
+    //
+    // What the plan CAN draw is worked out first and kept apart from that DROP
+    // gate: `ghostStatus` / `ghostReason` describe the plan, not the moment, so
+    // the "why no ghost" caption does not vanish (and shove the controls under a
+    // thumb) the instant DROP is logged.
+    //   drawn         2+ valid curve points -> a ghost line
+    //   markers-only  fewer, but at least one milestone the chart has a tag for
+    //   none          neither (or no plan at all)
+    // `plan.source` ("none" | "missing" | "found") says whether the profile
+    // references a source roast and whether it is on this device. A plan without
+    // it (or an unknown value) gets no reason rather than a guessed one.
     let planMarkers = [];
     let planEnd = 0;
     let lookahead = 0;
-    if (plan && drop == null) {
+    let ghostStatus = "none";
+    let ghostReason = null;
+    const byT = new Map();
+    let lastCurveT = -1;
+    let markers = [];
+    if (plan) {
       const planCurve = Array.isArray(plan.curve) ? plan.curve : [];
-      const byT = new Map();
       for (const p of planCurve) {
         if (p && Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.bt))) byT.set(Math.round(Number(p.t)), Number(p.bt));
       }
-      const lastCurveT = byT.size ? Math.max(...byT.keys()) : -1;
-      planMarkers = (plan.milestones || [])
+      lastCurveT = byT.size ? Math.max(...byT.keys()) : -1;
+      markers = (plan.milestones || [])
         .filter((m) => PLAN_MARK[m.label] && Number.isFinite(Number(m.t)))
         .map((m) => ({ t: Math.round(Number(m.t)), tag: PLAN_MARK[m.label], label: m.label, temp: m.temp }));
+
+      ghostStatus = byT.size >= 2 ? "drawn" : markers.length ? "markers-only" : "none";
+      if (ghostStatus !== "drawn") {
+        ghostReason =
+          plan.source === "none" ? "no-source"
+          : plan.source === "missing" ? "source-missing"
+          : plan.source === "found" ? "source-no-curve"
+          : null;
+      }
+    }
+    // A plan with nothing drawable adds no rows and no lookahead, exactly as if
+    // there were no plan: otherwise the 3-minute window would slide 30 s into
+    // empty future on a roast that has no ghost to look ahead to.
+    if (plan && drop == null && ghostStatus !== "none") {
+      planMarkers = markers;
       planEnd = Math.max(lastCurveT, ...planMarkers.map((m) => m.t), 0);
       lookahead = LOOKAHEAD;
 
@@ -245,14 +285,14 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       }
     }
 
-    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead };
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead, ghost: ghostStatus, ghostReason };
 }
 
 export default function LiveRoastChart({
   curve = [],
   roastLog = [],
   profile = null,
-  plan = null, // { curve, milestones } from the profile's source roast
+  plan = null, // { curve, milestones, source: "none"|"missing"|"found" } from the profile's source roast
   elapsedSeconds = 0,
   windowMode = "scroll", // "scroll" (last 3 min, pannable) | "expand" (whole roast)
   onWindowModeChange,
@@ -295,7 +335,7 @@ export default function LiveRoastChart({
     [curve, roastLog, profile, plan, elapsedSeconds]
   );
 
-  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead, ghostReason } = model;
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
@@ -387,8 +427,10 @@ export default function LiveRoastChart({
     <div className={attached
       ? "px-2 pb-3 pt-3"
       : "mt-3 rounded-2xl border border-border/60 bg-card p-3"}>
-      {/* Window controls */}
-      <div className="mb-2 flex items-center justify-between">
+      {/* Window controls. With a caption under them the row's own bottom margin
+          drops to 2px and the caption carries the 8px, so the gap to the ribbon
+          is unchanged. */}
+      <div className={`${ghostReason ? "mb-0.5" : "mb-2"} flex items-center justify-between`}>
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-ink-muted">Live curve</span>
           {hasProfile && (
@@ -436,6 +478,18 @@ export default function LiveRoastChart({
           </button>
         </div>
       </div>
+
+      {/* Why there is no ghost line, when a followed profile promised one. Its own
+          row, never beside the badge: text that changes length must not share a
+          row with the fixed controls or they wrap at 390px. Left edge matches the
+          "Live curve" label (it captions the header, not the plot), so it is NOT
+          inset like the ribbon. Stays through DROP and in both window modes so
+          the controls below do not move under a thumb. Muted, not an error. */}
+      {ghostReason && GHOST_CAPTION[ghostReason] && (
+        <div data-testid="ghost-caption" className="mb-2 truncate font-mono text-[10px] text-ink-muted">
+          {GHOST_CAPTION[ghostReason]}
+        </div>
+      )}
 
       {/* Phase ribbon. Inset by the two y-axis widths (42 left, 40 right) so the
           segments sit exactly over the plot area they describe. The right inset
