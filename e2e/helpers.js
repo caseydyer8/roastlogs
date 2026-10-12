@@ -62,4 +62,85 @@ async function fullPageShot(page, name, options = {}) {
   }
 }
 
-module.exports = { fullPageShot, syncDot };
+// ---------------------------------------------------------------------------
+// Test doubles for the two Supabase paths the live chart depends on. Both are
+// answered INSIDE the browser by Playwright -- nothing reaches the network, so
+// the suite's "no real Supabase traffic" guarantee holds. The per-test
+// `context.route(/supabase\.co/, abort)` in beforeEach stays the backstop: any
+// request these do not answer falls through to it.
+// ---------------------------------------------------------------------------
+
+// A RoastLink bridge on the realtime channel, publishing a steady bean temp.
+// useLiveRoast subscribes to the private "roastlink-live" channel over a
+// websocket speaking Phoenix's v2 wire format: [join_ref, ref, topic, event,
+// payload]. This answers just enough of it -- join and leave replies, heartbeat,
+// one presence entry with role "bridge" -- and then pushes a `sample` broadcast
+// every 500ms, so the hook reads "live" and the chart renders.
+//
+// Call it BEFORE the page loads the app (routes survive a reload). It does not
+// replace the real feed's security: the channel's RLS lives in the database, and
+// this never contacts it.
+async function mockRoastLinkFeed(page, { bt = 250 } = {}) {
+  const TOPIC = "realtime:roastlink-live";
+  await page.routeWebSocket(/supabase\.co\/realtime/, (ws) => {
+    let n = 0;
+    const timer = setInterval(() => {
+      try {
+        ws.send(JSON.stringify([null, null, TOPIC, "broadcast",
+          { type: "broadcast", event: "sample", payload: { bt: bt + (n++ % 5) } }]));
+      } catch (e) {
+        clearInterval(timer); // the page went away between ticks
+      }
+    }, 500);
+    ws.onClose(() => clearInterval(timer));
+    ws.onMessage((raw) => {
+      const [joinRef, ref, topic, event] = JSON.parse(String(raw));
+      const reply = (response = {}) =>
+        ws.send(JSON.stringify([joinRef, ref, topic, "phx_reply", { status: "ok", response }]));
+      if (event === "heartbeat") {
+        ws.send(JSON.stringify([null, ref, "phoenix", "phx_reply", { status: "ok", response: {} }]));
+      } else if (event === "phx_join") {
+        reply({ postgres_changes: [] });
+        ws.send(JSON.stringify([null, null, topic, "presence_state",
+          { "bridge-e2e": { metas: [{ phx_ref: "e2e", role: "bridge" }] } }]));
+      } else if (event === "phx_leave") {
+        reply();
+      }
+    });
+  });
+}
+
+// A cloud whose `roasts` table holds exactly `rows` (raw snake_case rows) and
+// whose other synced tables are empty -- but which answers the roasts read only
+// when the test calls `release()`. The launch sync therefore sits in "syncing"
+// for as long as the test wants, which makes "the roast arrives AFTER the app
+// has mounted" something a test can assert before and after, with no sleeps.
+//
+// The other tables answer at once. Left to the beforeEach abort, the client
+// retries each failed read with a back-off, which holds the sync in "syncing"
+// for tens of seconds in total. Writes are never answered: they fall through to
+// the abort.
+//
+// Call it BEFORE the page loads the app; `release` is idempotent.
+async function holdCloudRoasts(page, rows) {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const answer = (route, body) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify(body),
+    });
+  await page.route(/\/rest\/v1\/roasts(\?|$)/, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await gate;
+    await answer(route, rows);
+  });
+  await page.route(/\/rest\/v1\/(tasting_notes|beans|roast_profiles)(\?|$)/, (route) =>
+    route.request().method() === "GET" ? answer(route, []) : route.fallback()
+  );
+  return { release };
+}
+
+module.exports = { fullPageShot, syncDot, mockRoastLinkFeed, holdCloudRoasts };

@@ -1,6 +1,9 @@
 const { test, expect } = require("@playwright/test");
-const { fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile } = require("./fixtures");
-const { fullPageShot } = require("./helpers");
+const {
+  fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile, fixtureLiveRoast,
+  fixtureGhostSourceRow, fixtureGhostProfile,
+} = require("./fixtures");
+const { fullPageShot, mockRoastLinkFeed, holdCloudRoasts } = require("./helpers");
 
 test.beforeEach(async ({ context, page }) => {
   // Hard guarantee: zero Supabase traffic leaves the test browser.
@@ -492,6 +495,574 @@ test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile 
   await expect(page.getByTestId("roast-setup")).toBeVisible();
   await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Start roast" })).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
+// RL-037: the followed profile survives a mid-roast reload. iOS reclaims a
+// backgrounded PWA (app switch, lock, the phone flashlight), so the page
+// reloads with the roast's live_* keys in storage and nothing in memory. The
+// clock, log and curve always came back; the profile did not -- App.js started
+// profileFollowing at null and its persist effect then wrote that null over
+// live_profileFollowing -- so the ghost, the badge and the step guidance all
+// vanished and the roast saved with profile: null.
+//
+// The tests in this section assert the restored PLAN (badge, step strip, step
+// index). The ghost LINE that plan feeds is covered further down, where a
+// mocked bridge (mockRoastLinkFeed in e2e/helpers.js) puts a real chart on
+// screen: "ghost: a source roast that syncs down AFTER the app mounts ..."
+// (RL-038), the "ghost caption: ..." tests (RL-039), and "ghost: followed from
+// Setup, drawn live, and still drawn after a mid-roast reload" -- the RL-036
+// symptom itself, drawn before the reload and checked again after it.
+// The ghost's model is unit-tested in LiveRoastChart.plan.test.js.
+// ---------------------------------------------------------------------------
+
+const stored = (page, key) => page.evaluate((k) => window.localStorage.getItem(k), key);
+
+// What a mid-roast reload sees: the roast's live_* keys in storage, nothing in
+// memory. Written once with page.evaluate -- NOT an init script, which would
+// re-run on every reload (as the beforeEach/seedSetup ones do) and overwrite the
+// very keys the app rewrites as it runs and that these tests read back.
+// `profileRaw` seeds an exact string instead, for corrupt-data cases.
+async function reloadMidRoast(page, { profile = fixtureProfile, profileRaw, stepIdx = -1, live = fixtureLiveRoast } = {}) {
+  await page.evaluate(({ profile, profileRaw, stepIdx, live }) => {
+    const ls = window.localStorage;
+    ls.setItem("live_elapsedSeconds", String(live.elapsedSeconds));
+    ls.setItem("live_roastLog", JSON.stringify(live.roastLog));
+    ls.setItem("live_profileFollowing", profileRaw !== undefined ? profileRaw : JSON.stringify(profile));
+    // `stepIdx: null` leaves the key absent, as it would be if it was never written.
+    if (stepIdx === null) ls.removeItem("live_currentProfileStepIdx");
+    else ls.setItem("live_currentProfileStepIdx", String(stepIdx));
+  }, { profile, profileRaw, stepIdx, live });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+}
+
+const profileBadge = (page) => page.getByText("Active Profile: E2E Profile");
+
+test("profile survives a mid-roast reload: badge and plan return, and the saved roast keeps the profile", async ({ page }) => {
+  await seedSetup(page);
+  await reloadMidRoast(page);
+
+  // The SAME roast came back: paused at its clock, no Setup takeover.
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  await expect(page.getByText("02:10", { exact: true })).toBeVisible(); // 130s
+
+  // ...and so did the plan. Before the fix none of this rendered.
+  await expect(profileBadge(page)).toBeVisible();
+  await expect(page.getByText("F4 H7", { exact: true })).toBeVisible(); // 0:00 step, Fan before Heat
+  await expect(page.getByText("F6 H6", { exact: true })).toBeVisible(); // 4:00 step
+  // The persist effect must not have clobbered the stored copy on mount.
+  await expect
+    .poll(async () => JSON.parse(await stored(page, "live_profileFollowing")))
+    .toEqual(fixtureProfile);
+
+  // Controls still render Fan -> Heat -> Temp, carrying the restored log's values.
+  const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+  // (innerText carries the CSS uppercase, so compare case-insensitively.)
+  const dialLabels = await dials.locator("div:first-child").allInnerTexts();
+  expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+  await expect(dials.nth(0).locator("div").nth(1)).toHaveText("4"); // Fan
+  await expect(dials.nth(1).locator("div").nth(1)).toHaveText("7"); // Heat
+
+  // Finish the roast and save it. The profile the roaster chose must be on it.
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts"))[0]);
+  expect(saved.totalSeconds).toBeGreaterThanOrEqual(130); // continued the restored clock
+  expect(saved.profile).not.toBeNull();
+  expect(saved.profile.id).toBe(fixtureProfile.id);
+  expect(saved.profile).toEqual(fixtureProfile);
+});
+
+test("profile survives a mid-roast reload: chosen on Setup, started, paused -- the real sequence, not a seeded one", async ({ page }) => {
+  // The seeded test above hand-builds the live_* keys; this one lets the app
+  // write them, so it also catches the stored shape drifting away from the
+  // shape the restore reads.
+  await seedSetup(page);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+  await expect(profileBadge(page)).toBeVisible();
+  // Let the clock get past 0:00. At exactly 0 a lost step index heals itself --
+  // the 0:00 step is "reached" again on the first tick -- which would hide the
+  // very thing this test is for.
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "PAUSE" }).click();
+
+  // Step 0 (the 0:00 step) is reached the instant the roast starts; wait for the
+  // app to have persisted both that and the log, as a real backgrounding would.
+  await expect.poll(() => stored(page, "live_currentProfileStepIdx")).toBe("0");
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("start_settings");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(profileBadge(page)).toBeVisible();
+  const profile = JSON.parse(await stored(page, "live_profileFollowing"));
+  expect(profile.id).toBe(fixtureProfile.id);
+
+  // Step guidance resumes where it was: the NEXT step is the 4:00 one. With the
+  // step index lost it would point back at 0:00 and never advance.
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  await expect(page.getByText("04:00 · F6 · H6")).toBeVisible();
+  await expect(page.getByText("00:00 · F4 · H7")).toHaveCount(0);
+});
+
+test("profile survives a mid-roast reload: step guidance resumes at the right step, flashes, and still auto-logs the next", async ({ page }) => {
+  // 5s before the 4:00 step, with step 0 already reached.
+  await seedSetup(page);
+  await reloadMidRoast(page, { stepIdx: 0, live: { ...fixtureLiveRoast, elapsedSeconds: 235 } });
+  await expect(profileBadge(page)).toBeVisible();
+  expect(await stored(page, "live_currentProfileStepIdx")).toBe("0");
+
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  // Upcoming = steps[restored index + 1]; inside the last 5s it flashes.
+  const strip = page.locator("div.animate-pulse", { hasText: "Next step" });
+  await expect(strip).toBeVisible();
+  await expect(strip).toContainText("04:00 · F6 · H6");
+
+  // Then the 4:00 step lands on its own: logged under Profile, Fan then Heat.
+  await expect
+    .poll(
+      async () => JSON.parse(await stored(page, "live_roastLog")).find((e) => e.label === "Profile"),
+      { timeout: 15_000 }
+    )
+    .toMatchObject({ type: "adjustment", t: 240, fan: "6", heat: "6" });
+  await expect.poll(() => stored(page, "live_currentProfileStepIdx")).toBe("1");
+});
+
+test("profile restore: a stale followed profile with NO roast in progress is not restored", async ({ page }) => {
+  // Leftover keys from a roast that was never cleared. The profile is chosen on
+  // purpose on Setup every roast, so none of it may arm a new one.
+  await seedSetup(page);
+  await page.evaluate((profile) => {
+    const ls = window.localStorage;
+    ls.setItem("live_elapsedSeconds", "0");
+    ls.setItem("live_roastLog", "[]");
+    ls.setItem("live_profileFollowing", JSON.stringify(profile));
+    ls.setItem("live_currentProfileStepIdx", "1");
+  }, fixtureProfile);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect(page.getByText(/Active Profile/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "false");
+  // START still waits for an explicit choice.
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeDisabled();
+
+  // The stale copy is dropped from storage too, not merely ignored.
+  await expect.poll(() => stored(page, "live_profileFollowing")).toBe("null");
+  await expect.poll(() => stored(page, "live_currentProfileStepIdx")).toBe("-1");
+});
+
+test("profile restore: once the roast is saved, a reload does not bring the profile back", async ({ page }) => {
+  await seedSetup(page);
+  await reloadMidRoast(page);
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+  // The live session is cleared two seconds after the save, landing on Setup.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect(page.getByText(/Active Profile/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /E2E Profile/ })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Start roast" })).toBeDisabled();
+});
+
+test("profile restore: a corrupt stored profile is ignored, never trusted or crashed on", async ({ page }) => {
+  await seedSetup(page);
+
+  // Unusable profiles: the roast itself still comes back, just without a plan.
+  // The first three are rejected by any shallow check. The rest PASS a shallow
+  // "object with a steps array of objects" check and then threw while the Roast
+  // tab drew them -- before the persist effect could overwrite the bad value, so
+  // the app blanked on every relaunch ("no step time" and "name as an object"
+  // were reproduced as exactly that). There is no error boundary: a profile the
+  // Roast tab cannot draw has to be refused at the door, not survived.
+  const unusable = [
+    '{"name":"No Steps"}',
+    "{not json",
+    '{"name":"Bad Steps","steps":[null]}',
+    '{"id":1,"name":"X","steps":[{"heat":"5","fan":"4"}]}', // step with no time and no totalSeconds
+    '{"id":1,"name":{"a":1},"steps":[]}', // name is an object (rendered as a React child)
+    '{"id":1,"name":"X","steps":[{}]}',
+    '{"id":1,"name":"X","steps":[{"time":4,"heat":"5","fan":"4"}]}', // time is a number, not "MM:SS"
+    '{"id":1,"name":"X","steps":[{"time":"00:00","totalSeconds":0,"fan":{"a":1},"heat":"5"}]}', // dial is an object
+    '{"id":1,"name":"X","steps":[{"time":"00:00","totalSeconds":0,"fan":"4","heat":["5"]}]}', // dial is an array
+    '{"id":1,"name":"X","steps":[{"time":"00:00","totalSeconds":null,"fan":"4","heat":"5"}]}', // totalSeconds is null
+    '{"id":1,"name":"X","steps":[[]]}', // step is an array
+    '{"id":1,"name":"X","steps":{"0":{"time":"00:00","totalSeconds":0}}}', // steps is an object
+    '{"id":1,"name":["X"],"steps":[]}', // name is an array
+    '{"id":1,"name":"X","steps":[],"milestones":[null]}', // chart reads m.label
+    '{"id":1,"name":"X","steps":[],"milestones":"FIRST CRACK"}', // milestones is not an array
+    '{"id":1,"name":"X","steps":[],"milestones":[{"t":480}]}', // milestone with no label
+    '{"id":1,"name":"X","steps":[],"milestones":[{"label":"FIRST CRACK","t":"soon"}]}', // t is not a number
+    '{"id":1,"name":"X","steps":[],"milestones":[{"label":"FIRST CRACK","t":2000000000}]}', // the live chart would build a row per second
+    '{"id":{"toString":1},"steps":[]}', // id is String()-ed in render and in handleStop
+    '{"id":1,"sourceRoastId":{"toString":1},"steps":[]}', // sourceRoastId is String()-ed to find the source roast
+    '{"id":1,"beanName":{"a":1},"steps":[]}', // beanName is compared as text
+    JSON.stringify({ id: 1, name: "X", steps: Array.from({ length: 501 }, () => ({ time: "00:00", totalSeconds: 0, fan: "4", heat: "5" })) }), // a step count no roaster built
+    "[]",
+    "42",
+    '"just a string"',
+  ];
+  for (const profileRaw of unusable) {
+    await reloadMidRoast(page, { profileRaw });
+    await expect(page.getByText("Paused", { exact: true }), `profile ${profileRaw}`).toBeVisible();
+    await expect(page.getByText(/Active Profile/), `profile ${profileRaw}`).toHaveCount(0);
+  }
+});
+
+test("profile restore: a damaged roast in the cache costs the ghost, never the app", async ({ page }) => {
+  await seedSetup(page);
+  // A cached roast whose id is not text or a number would have thrown out of
+  // String() while the plan was looked up in render, with no error boundary to
+  // catch it -- a blank app on every relaunch. The profile still comes back.
+  await page.evaluate(() => window.localStorage.setItem("roasts", JSON.stringify([{ id: { toString: 1 } }])));
+  await reloadMidRoast(page, { profile: { ...fixtureProfile, sourceRoastId: 42 } });
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  await expect(profileBadge(page)).toBeVisible();
+
+  // Same for a profile pointing at a source roast whose phase label is not text.
+  await page.evaluate(() => window.localStorage.setItem("roasts", JSON.stringify([{ id: 42, curve: [], roastLog: [{ type: "phase", label: { toString: 1 }, time: 100 }] }])));
+  await reloadMidRoast(page, { profile: { ...fixtureProfile, sourceRoastId: 42 } });
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  await expect(profileBadge(page)).toBeVisible();
+});
+
+test("profile restore: a lost or out-of-range step index is worked out from the clock, not reset to -1", async ({ page }) => {
+  await seedSetup(page);
+
+  // A good profile with a step index past its last step: profile restored, and the
+  // index worked out from the stored clock instead of trusted. fixtureProfile has
+  // steps at 0:00 and 4:00 and the roast is paused at 2:10, so only step 0 has been
+  // passed. (-1 here was the old answer: "no step reached", which on resume waits
+  // on a 0:00 step the clock is long past, so the 4:00 step never fires.)
+  await reloadMidRoast(page, { stepIdx: 99 });
+  await expect(profileBadge(page)).toBeVisible();
+  await expect.poll(() => stored(page, "live_currentProfileStepIdx")).toBe("0");
+
+  // A missing or unreadable index is the same case.
+  for (const stepIdx of [null, "abc", -2, 2]) {
+    await reloadMidRoast(page, { stepIdx });
+    await expect(profileBadge(page), `index ${stepIdx}`).toBeVisible();
+    await expect.poll(() => stored(page, "live_currentProfileStepIdx"), `index ${stepIdx}`).toBe("0");
+  }
+
+  // ...and the repaired index is what resume uses: the NEXT step shown is 4:00.
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  await expect(page.getByText("04:00 · F6 · H6")).toBeVisible();
+  await expect(page.getByText("00:00 · F4 · H7")).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// RL-038: the live ghost is recomputed when roasts arrive from the cloud. A
+// profile saved from a roast carries only that roast's id; the ghost is drawn
+// from the roast's own curve, looked up in storage. When the roast was recorded
+// on another device it is not in storage yet at launch -- the launch sync brings
+// it in a moment later -- and the memo that builds the ghost used to read
+// storage once, so the ghost never appeared for the rest of that roast.
+//
+// This test drives the real chart, via two in-browser doubles
+// (e2e/helpers.js): a bridge feeding the realtime channel, and a cloud that
+// holds back its roasts until released. The unit tests cover planForProfile's
+// logic; this one covers the wiring the unit tests cannot -- that the roast's
+// arrival actually reaches the memo.
+// ---------------------------------------------------------------------------
+
+// Recharts draws the source curve as the only <path> with a "4 3" dash (the
+// plan's Fan/Heat lines are "3 3"; the ReferenceLines are <line> elements). It
+// renders an empty path while the curve has no points, so the length of `d` is
+// what separates "no ghost yet" from "ghost drawn" -- and a missing path counts
+// as no ghost too, so this survives a chart library that omits an empty line.
+const ghostLength = (page) =>
+  page.evaluate(() => {
+    const el = document.querySelector('path.recharts-line-curve[stroke-dasharray="4 3"]');
+    return el ? (el.getAttribute("d") || "").length : 0;
+  });
+const syncDotTitle = (page) => page.locator('[title^="Sync status"]').first().getAttribute("title");
+
+test("ghost: a source roast that syncs down AFTER the app mounts draws the dashed plan line", async ({ page }) => {
+  await mockRoastLinkFeed(page);
+  const cloud = await holdCloudRoasts(page, [fixtureGhostSourceRow]);
+  try {
+    // The Razzo, mid-roast, following a profile saved from a roast this device
+    // has never seen. (beforeEach seeds `roasts` with the one fixture roast only.)
+    await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
+    await reloadMidRoast(page, { profile: fixtureGhostProfile });
+    await expect(profileBadge(page)).toBeVisible();
+    expect(
+      (await stored(page, "roasts")).includes(String(fixtureGhostSourceRow.id)),
+      "the source roast must not be on this device yet"
+    ).toBe(false);
+
+    // Controls still render Fan -> Heat -> Temp.
+    const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+    const dialLabels = await dials.locator("div:first-child").allInnerTexts();
+    expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+
+    // The bridge is on the channel: open the live chart from the bean-temp readout.
+    await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+    await expect(page.locator(".recharts-surface").first()).toBeVisible();
+
+    // The sync is still waiting on the cloud, so the chart has no curve to ghost.
+    await expect(page.locator('[title^="Sync status"]').first()).toHaveAttribute("title", "Sync status: syncing");
+    expect(await ghostLength(page)).toBe(0);
+
+    // The roast arrives. The launch sync writes it to storage, THEN bumps
+    // roastsRev -- and that is what makes the memo read storage again.
+    cloud.release();
+    await expect
+      .poll(async () => (await stored(page, "roasts")).includes(String(fixtureGhostSourceRow.id)), { timeout: 15_000 })
+      .toBe(true);
+    await expect.poll(() => syncDotTitle(page), { timeout: 15_000 }).not.toBe("Sync status: syncing");
+    await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  } finally {
+    cloud.release(); // never leave a held request behind if an assertion threw
+  }
+});
+
+// ---------------------------------------------------------------------------
+// RL-039: say why the live chart has no ghost. A followed profile that cannot
+// draw one gets a single muted caption under the "Live curve" header; a profile
+// that can, and a roast following no profile, get nothing (an absence is only
+// explained where a ghost was promised). The reason logic is unit-tested in
+// LiveRoastChart.plan.test.js -- this covers the wiring from the stored profile
+// and roasts to the screen, and the layout at the phone's width.
+// ---------------------------------------------------------------------------
+
+const ghostCaption = (page) => page.getByTestId("ghost-caption");
+
+// The Razzo, mid-roast, with the live chart open. `roasts` is what this device
+// holds; it is written with an init script because beforeEach's own seed (the one
+// fixture roast) re-runs on every load and would overwrite a plain evaluate().
+async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast] } = {}) {
+  await mockRoastLinkFeed(page);
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
+  await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
+  await reloadMidRoast(page, { profile, profileRaw });
+  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+}
+
+// A source roast that IS on this device and has a full curve (the shape the app
+// holds: camelCase, curve array).
+const sourceWithCurve = { ...fixtureRoast, id: fixtureGhostSourceRow.id, curve: fixtureGhostSourceRow.curve };
+
+test("ghost caption: a profile with no source roast says so", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureProfile }); // hand-built: no sourceRoastId
+  await expect(ghostCaption(page)).toHaveText("No ghost · no source roast");
+  expect(await ghostLength(page)).toBe(0);
+
+  // The caption must not disturb the controls under it: still Fan -> Heat -> Temp.
+  const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+  const dialLabels = await dials.locator("div:first-child").allInnerTexts();
+  expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+});
+
+test("ghost caption: a source roast with no curve says so, and a source roast with a curve does not", async ({ page }) => {
+  // fixtureRoast is on this device but was never probed: no curve.
+  await openLiveChart(page, { profile: { ...fixtureGhostProfile, sourceRoastId: fixtureRoast.id } });
+  await expect(ghostCaption(page)).toHaveText("No ghost · source roast has no curve");
+  expect(await ghostLength(page)).toBe(0);
+
+  // Same profile shape, but its source roast carries a curve: the ghost draws
+  // and there is nothing to explain.
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), [fixtureRoast, sourceWithCurve]);
+  await reloadMidRoast(page, { profile: fixtureGhostProfile });
+  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  await expect(ghostCaption(page)).toHaveCount(0);
+});
+
+test("ghost caption: a source roast that is not on this device says so", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast] });
+  await expect(ghostCaption(page)).toHaveText("No ghost · source roast not on this device");
+  // The profile's milestones still ride along as markers; only the curve is absent.
+  expect(await ghostLength(page)).toBe(0);
+});
+
+test("ghost caption: a roast following no profile gets no caption", async ({ page }) => {
+  await openLiveChart(page, { profileRaw: "null" });
+  await expect(page.getByText("Live curve", { exact: true })).toBeVisible();
+  await expect(ghostCaption(page)).toHaveCount(0);
+});
+
+test("ghost caption: at 390px the header controls stay on one row with the caption and the Live button showing", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The longest wording, so this is the worst case for fit.
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast] });
+  const caption = ghostCaption(page);
+  await expect(caption).toHaveText("No ghost · source roast not on this device");
+
+  // Scroll back so the accent "Live" button joins the controls: the widest the
+  // right-hand group ever gets.
+  await page.getByRole("button", { name: "Scroll back 30 seconds" }).click();
+  await expect(page.getByRole("button", { name: "Live", exact: true })).toBeVisible();
+
+  const label = await page.getByText("Live curve", { exact: true }).boundingBox();
+  const threeMin = await page.getByRole("button", { name: "3 min" }).boundingBox();
+  const live = await page.getByRole("button", { name: "Live", exact: true }).boundingBox();
+  const cap = await caption.boundingBox();
+
+  // One row: the label and both buttons share a vertical centre (a wrap would
+  // push the buttons a whole line down).
+  const mid = (b) => b.y + b.height / 2;
+  expect(Math.abs(mid(label) - mid(threeMin))).toBeLessThan(3);
+  expect(Math.abs(mid(label) - mid(live))).toBeLessThan(3);
+  // The caption is its own row below the header, left-aligned with the label...
+  expect(cap.y).toBeGreaterThanOrEqual(Math.max(label.y + label.height, threeMin.y + threeMin.height) - 1);
+  expect(Math.abs(cap.x - label.x)).toBeLessThan(1.5);
+  // ...and fits on one line without being clipped.
+  expect(await caption.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+});
+
+// The caption is muted text, not an error and not a raw colour: it must resolve
+// to the theme's own --text-muted token (so the Settings toggle re-colours it),
+// and it must stay readable on the surface it sits on in BOTH themes. Contrast is
+// the WCAG ratio against the real stack of translucent layers under the text
+// (hero card at 30% over the app shell), composited the way the browser paints it.
+// This is the functional stand-in for eyeballing the light theme, which visual
+// regression would otherwise cover; it checks legibility, not appearance.
+for (const theme of ["dark", "light"]) {
+  test(`ghost caption: ${theme} theme uses the muted text token and clears WCAG AA contrast`, async ({ page }) => {
+    await page.evaluate((t) => window.localStorage.setItem("roastlogs_theme", t), theme);
+    await openLiveChart(page, { profile: fixtureProfile });
+    await expect(ghostCaption(page)).toBeVisible();
+
+    const m = await ghostCaption(page).evaluate((el) => {
+      const rgb = (s) => (s.match(/[\d.]+/g) || []).map(Number);
+      const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+      const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      // Paint the ancestors' backgrounds from the page canvas (white) down to the text.
+      const chain = [];
+      for (let n = el; n; n = n.parentElement) chain.unshift(rgb(getComputedStyle(n).backgroundColor));
+      let bg = [255, 255, 255];
+      for (const [r, g, b, a = 1] of chain) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)];
+      const fg = rgb(getComputedStyle(el).color).slice(0, 3);
+      const [hi, lo] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+      const root = getComputedStyle(document.documentElement);
+      return {
+        dataTheme: document.documentElement.getAttribute("data-theme"),
+        fg,
+        muted: rgb(root.getPropertyValue("--text-muted")),
+        error: rgb(root.getPropertyValue("--error-text")),
+        primary: rgb(root.getPropertyValue("--text-primary")),
+        ratio: (hi + 0.05) / (lo + 0.05),
+      };
+    });
+
+    expect(m.dataTheme, "the theme under test is actually applied").toBe(theme);
+    expect(m.fg, "caption resolves to --text-muted").toEqual(m.muted);
+    expect(m.fg, "muted, not the error colour").not.toEqual(m.error);
+    expect(m.fg, "muted, not full-strength body text").not.toEqual(m.primary);
+    expect(m.ratio, `contrast ${m.ratio.toFixed(2)}:1 on the card`).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+// The caption describes the plan, not the moment, so it must not vanish when DROP
+// is logged (that would shove the controls below it up under a thumb mid-cooldown).
+test("ghost caption: still there after DROP is logged", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureProfile });
+  await expect(ghostCaption(page)).toHaveText("No ghost \u00b7 no source roast");
+
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  // DROP is in the stored log...
+  await expect
+    .poll(async () => (await stored(page, "live_roastLog")) || "", { timeout: 10_000 })
+    .toContain("COOLING START");
+  // ...and the chart is still showing, with its caption.
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect(ghostCaption(page)).toHaveText("No ghost \u00b7 no source roast");
+});
+
+test("ghost caption: stays in both window modes, the same distance above the plot", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureProfile });
+  // Measured against the plot, not the page: the header row is ~1.5px taller in
+  // "3 min" mode (the arrow glyph buttons are taller than the text one), which
+  // shifts the whole chart equally and has nothing to do with the caption.
+  const gapAbovePlot = async () => {
+    const cap = await ghostCaption(page).boundingBox();
+    const plot = await page.locator(".recharts-surface").first().boundingBox();
+    return plot.y - cap.y;
+  };
+  await expect(ghostCaption(page)).toBeVisible();
+  const before = await gapAbovePlot();
+  await page.getByRole("button", { name: "3 min" }).click();
+  await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
+  await expect(ghostCaption(page)).toHaveText("No ghost \u00b7 no source roast");
+  expect(Math.abs((await gapAbovePlot()) - before)).toBeLessThan(1);
+});
+
+// ---------------------------------------------------------------------------
+// The regression Case hit, end to end: he left the app mid-roast (phone
+// flashlight), iOS reloaded the PWA, and the live curve and clock came back but
+// the followed profile did not -- so no ghost (RL-037). The tests above seed a
+// roast already under way; this one starts it the way a roaster does -- Setup,
+// choose a profile, START -- draws the ghost, reloads, and checks it is drawn
+// again. The bridge is faked at the websocket by mockRoastLinkFeed, so the real
+// useLiveRoast runs unmodified: nothing in the app is there for the test's sake.
+// ---------------------------------------------------------------------------
+
+// The bean-temp readout is also the button that opens the live chart.
+const beanTempReadout = (page) => page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ });
+
+test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast reload", async ({ page }) => {
+  await mockRoastLinkFeed(page);
+  // After beforeEach's seed and before seedSetup's reload, so it wins on load.
+  // The source roast is on this device and has a full curve, so a ghost is possible.
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), [fixtureRoast, sourceWithCurve]);
+  await seedSetup(page, { setup: "razzo-v5t", profiles: [fixtureGhostProfile] });
+
+  // Setup -> preheat (the bridge is live, so the primary button says so) -> START.
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  await expect(profileBadge(page)).toBeVisible();
+  // Past 0:00, so this is genuinely mid-roast and not a roast that just began.
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible();
+
+  // BEFORE the reload: the live chart is open and the ghost is on it.
+  await beanTempReadout(page).click({ timeout: 15_000 });
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect(ghostCaption(page)).toHaveCount(0); // a ghost is promised and drawn
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+
+  // What a backgrounded PWA leaves behind: the roast's live_* keys, profile and all.
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("start_settings");
+  await expect
+    .poll(async () => JSON.parse((await stored(page, "live_profileFollowing")) || "null")?.sourceRoastId)
+    .toBe(fixtureGhostProfile.sourceRoastId);
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  // The same roast came back: no Setup takeover, paused at its clock, plan intact.
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  await expect(profileBadge(page)).toBeVisible();
+
+  // AFTER the reload: the bridge is still publishing, so the feed returns by
+  // itself; the chart starts closed again (it is not persisted) -- open it.
+  await beanTempReadout(page).click({ timeout: 15_000 });
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect(ghostCaption(page)).toHaveCount(0);
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
 });
 
 // ---------------------------------------------------------------------------

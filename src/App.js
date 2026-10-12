@@ -13,7 +13,7 @@ import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
 import RoastSetupScreen, { profileStartStep } from "./components/RoastSetupScreen";
 import { beanStock } from "./lib/inventory";
 import ProfileFromRoastSheet from "./components/ProfileFromRoastSheet";
-import { profileFromRoast, planFromRoast, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers } from "./lib/profileFromRoast";
+import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
 
@@ -801,6 +801,64 @@ function writeStoredCurve(curve) {
   }
 }
 
+// Is a roast under way, according to storage? Same notion as `roastStarted`
+// in App (elapsed > 0 or a non-empty roastLog), read straight from
+// localStorage because the profile state below is initialised before any of
+// that state is usable.
+function storedRoastInProgress() {
+  try {
+    if (Number(localStorage.getItem("live_elapsedSeconds")) > 0) return true;
+    const log = JSON.parse(localStorage.getItem("live_roastLog") || "[]");
+    return Array.isArray(log) && log.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+// The profile being followed, restored ONLY while a roast is in progress. A
+// reload mid-roast (iOS reclaims a backgrounded PWA) otherwise restored the
+// clock and the curve but not the plan, and the persist effect then wrote
+// "null" over the saved profile -- no ghost, no step guidance, and the roast
+// saved with profile: null. Outside a roast this is null on purpose: the
+// profile is chosen deliberately on Setup every roast, never carried over.
+// The stored value is checked against what the Roast tab renders, not trusted:
+// a render that throws never reaches the persist effect, so a bad value would
+// crash every relaunch. Failing the check just loses the ghost.
+function readStoredProfileFollowing() {
+  if (!storedRoastInProgress()) return null;
+  try {
+    const p = JSON.parse(localStorage.getItem("live_profileFollowing"));
+    return isFollowableProfile(p) ? p : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// How far through that profile the roast had got. -1 (no step reached yet)
+// when no profile was restored. Otherwise the stored index when it is a real
+// step of it, else worked out from the stored clock -- without a right answer
+// here, resuming would wait on step 0 forever, since the clock is already past
+// 0:00.
+function readStoredProfileStepIdx(profile) {
+  if (!profile) return -1;
+  const n = parseInt(localStorage.getItem("live_currentProfileStepIdx"), 10);
+  if (Number.isInteger(n) && n >= -1 && n < profile.steps.length) return n;
+  return lastStepBefore(profile.steps, Number(localStorage.getItem("live_elapsedSeconds")));
+}
+
+// Every roast on this device, as stored. `rev` is never read: it is the roast-data
+// version (roastsRev in App), passed so that a memo calling this names the version
+// it read at and re-reads when the version moves. Dropping the argument would
+// freeze the live ghost at its first, pre-sync read.
+function readStoredRoasts(rev) {
+  try {
+    const all = JSON.parse(localStorage.getItem("roasts") || "[]");
+    return Array.isArray(all) ? all : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function App() {
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
@@ -978,34 +1036,17 @@ function App() {
   const [activeNumpad, setActiveNumpad] = React.useState(null); // 'heat', 'fan', or 'temp'
   
   // Roast Profile Logic
-  const [profileFollowing, setProfileFollowing] = React.useState(null);
-  const [currentProfileStepIdx, setCurrentProfileStepIdx] = React.useState(-1);
+  // Lazy init, so the restore is read during the first render -- before the
+  // persist effects below get a chance to overwrite the stored values.
+  const [profileFollowing, setProfileFollowing] = React.useState(readStoredProfileFollowing);
+  const [currentProfileStepIdx, setCurrentProfileStepIdx] = React.useState(
+    () => readStoredProfileStepIdx(readStoredProfileFollowing())
+  );
   // The "save as profile" / "update the profile" sheet: null, or
   // { mode: "saved", roast, followedId } right after a save, or
   // { mode: "history", roast, profileId } after editing a roast a profile came from.
   const [profileSheet, setProfileSheet] = React.useState(null);
 
-  // Ghost to roast against: the source roast's bean-temp curve (referenced, not
-  // copied into the profile) and the profile's milestone markers. Read once per
-  // profile, not per tick -- the source roast cannot change mid-roast.
-  const livePlan = React.useMemo(() => {
-    if (!profileFollowing) return null;
-    let src = null;
-    if (profileFollowing.sourceRoastId != null) {
-      try {
-        const all = JSON.parse(localStorage.getItem("roasts") || "[]");
-        src = (Array.isArray(all) ? all : []).find((r) => r && String(r.id) === String(profileFollowing.sourceRoastId)) || null;
-      } catch (e) {
-        src = null;
-      }
-    }
-    const milestones = (profileFollowing.milestones && profileFollowing.milestones.length)
-      ? profileFollowing.milestones
-      : src ? milestonesFromRoast(src) : [];
-    const curve = src && Array.isArray(src.curve) ? src.curve : [];
-    if (curve.length < 2 && milestones.length === 0) return null;
-    return { curve, milestones };
-  }, [profileFollowing]);
   const [profiles, setProfiles] = React.useState(() => {
     try {
       return JSON.parse(localStorage.getItem("global_profiles") || "[]");
@@ -1045,6 +1086,35 @@ function App() {
   // Styled delete confirmation (replaces native window.confirm): { type: 'roast' | 'tasting', id }
   const [confirmDelete, setConfirmDelete] = React.useState(null);
   const [syncStatus, setSyncStatus] = React.useState('idle'); // 'idle', 'syncing', 'success', 'error'
+
+  // Bumped by the launch sync right after it writes newly-arrived cloud roasts to
+  // localStorage. It is a version number, not a value: livePlan below reads the
+  // roasts straight from storage, so it needs a signal that they changed.
+  const [roastsRev, setRoastsRev] = React.useState(0);
+
+  // Ghost to roast against: the source roast's bean-temp curve (referenced, not
+  // copied into the profile) and the profile's milestone markers. Computed per
+  // profile and per roast-data change, not per tick. The roasts are read here
+  // (resolveProfilePlan is pure); roastsRev is the roast-data signal, so a source
+  // roast recorded on another device becomes a ghost once it lands instead of
+  // staying stuck on the first (empty) read. It is exact -- it moves only when
+  // roasts were written -- where syncStatus could repeat a value and hide an
+  // arrival.
+  const livePlan = React.useMemo(() => {
+    if (!profileFollowing) return null;
+    const roasts = profileFollowing.sourceRoastId != null ? readStoredRoasts(roastsRev) : [];
+    // null only when no profile is followed. Otherwise always an object, even
+    // with nothing to draw, so the chart can say WHY there is no ghost: `source`
+    // is "none" (the profile references no source roast), "missing" (it does, but
+    // that roast is not on this device) or "found". The chart works out
+    // drawn / markers-only / none from the curve itself.
+    const r = resolveProfilePlan(profileFollowing, roasts);
+    return {
+      curve: r.plan ? r.plan.curve : [],
+      milestones: r.plan ? r.plan.milestones : [],
+      source: !r.hasSourceId ? "none" : r.sourceFound ? "found" : "missing",
+    };
+  }, [profileFollowing, roastsRev]);
 
   // Photo feature removed 2026-07 (was brew-only, IndexedDB-only, never synced to Supabase).
   // Old records may still carry a `photo` key — it is simply ignored; orphaned IndexedDB
@@ -1107,6 +1177,7 @@ function App() {
       if (hasNewData) {
         mergedRoasts.sort((a, b) => b.id - a.id);
         localStorage.setItem("roasts", JSON.stringify(mergedRoasts));
+        setRoastsRev((rev) => rev + 1); // after the write, so livePlan's re-read sees it
       }
       
       // Sync brews/tasting notes
@@ -2306,7 +2377,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.9.0",
+        appVersion: "3.9.1",
         roastSessions,
         beans,
         roastProfiles,
@@ -5471,7 +5542,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.9.0</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.9.1</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
