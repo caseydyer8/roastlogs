@@ -15,12 +15,14 @@ import {
   PHASE_NAMES,
   PHASE_VAR,
   MOMENT_LABELS,
+  ownEntry,
   phaseBoundaries,
   momentsFrom,
   phaseKeyAt,
   phaseSpans,
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
+import { MAX_ROAST_S } from "../../lib/limits";
 import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +51,12 @@ const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 // visible before you reach them.
 const LOOKAHEAD = 30;
 const PLAN_MARK = { YELLOWING: "Y", "FIRST CRACK": "FC", "COOLING START": "DROP", MAILLARD: "MAI", CARAMELIZATION: "CAR" };
+
+// The model builds one row per second, so what it sizes rows by must be bounded
+// (RL-030). Source-roast points and milestones outside 0..MAX_ROAST_S are not
+// readings of this roast and are ignored here. The roast being drawn (the clock, the
+// last live point, DROP) is capped at MAX_ROAST_S where `total` is computed below.
+const inRoast = (t) => t >= 0 && t <= MAX_ROAST_S;
 
 // Why a followed profile has no ghost line, in words. State the fact the app
 // holds, not a guess about history (same stance as equipment's "Not recorded"):
@@ -108,7 +116,9 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     // while the timer runs on to the save screen.
     const b = phaseBoundaries(roastLog);
     const rawTotal = Math.max(elapsedSeconds, curve.length ? curve[curve.length - 1].t : 0, 1);
-    const total = b.drop != null ? Math.max(b.drop, 1) : rawTotal;
+    // Capped: each second of `total` is a row, and the clock, the last curve
+    // point and a logged DROP all come from storage.
+    const total = Math.min(b.drop != null ? Math.max(b.drop, 1) : rawTotal, MAX_ROAST_S);
     const yellowing = b.yellowing;
     const firstCrack = b.firstCrack;
     const drop = b.drop;
@@ -241,12 +251,12 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     if (plan) {
       const planCurve = Array.isArray(plan.curve) ? plan.curve : [];
       for (const p of planCurve) {
-        if (p && Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.bt))) byT.set(Math.round(Number(p.t)), Number(p.bt));
+        if (p && inRoast(Number(p.t)) && Number.isFinite(Number(p.bt))) byT.set(Math.round(Number(p.t)), Number(p.bt));
       }
       lastCurveT = byT.size ? Math.max(...byT.keys()) : -1;
       markers = (plan.milestones || [])
-        .filter((m) => PLAN_MARK[m.label] && Number.isFinite(Number(m.t)))
-        .map((m) => ({ t: Math.round(Number(m.t)), tag: PLAN_MARK[m.label], label: m.label, temp: m.temp }));
+        .filter((m) => ownEntry(PLAN_MARK, m.label) && inRoast(Number(m.t)))
+        .map((m) => ({ t: Math.round(Number(m.t)), tag: ownEntry(PLAN_MARK, m.label), label: m.label, temp: m.temp }));
 
       ghostStatus = byT.size >= 2 ? "drawn" : markers.length ? "markers-only" : "none";
       if (ghostStatus !== "drawn") {
@@ -365,10 +375,13 @@ export default function LiveRoastChart({
     );
   };
 
-  const now = Math.max(elapsedSeconds, total);
+  // Capped like the model's `total`: the stored clock can run past it (the
+  // timer keeps going after DROP), and this feeds the live-edge line and the
+  // phase spans, so 1e9 here must not reach the SVG.
+  const now = Math.min(Math.max(elapsedSeconds, total), MAX_ROAST_S);
   // Where the tracked roast stops: the drop if there is one, otherwise the
   // moving live edge.
-  const end = drop != null ? drop : now;
+  const end = drop != null ? Math.min(drop, MAX_ROAST_S) : now;
 
   // Which phase is happening right now -- this is the band that gets lit up.
   // Declared after `now` deliberately: it reads it.
@@ -600,8 +613,10 @@ export default function LiveRoastChart({
               Map, not an interpolation), so a signal dropout is genuinely absent
               from the data -- connectNulls was drawing a straight line across it
               and making the live view claim a measurement it never had. The
-              PLANNED profile lines below keep connectNulls: those steps are
-              sparse by design, and joining them is the whole point.
+              planned Fan/Heat lines in the control map below DO keep it: those
+              steps are sparse by design, and joining them is the whole point.
+              The ghost Temp (plan) line is not one of them -- it is a measured
+              curve like these two, so it is OFF as well (see its own note).
               Leading nulls before the first reading are unaffected either way. */}
           {planMarkers.map((m) => (
             <ReferenceLine
@@ -615,9 +630,13 @@ export default function LiveRoastChart({
             />
           ))}
           {/* The source roast's bean-temp curve: drawn first so the live curve
-              sits on top of what it is being steered against. */}
+              sits on top of what it is being steered against. No connectNulls:
+              fillShortHoles already bridged every hole of LIVE_GAP_S or less, so
+              a null left in the ghost is a stretch where the source roast's probe
+              was out. It stays a gap rather than a dashed line to steer by over
+              readings that never existed. */}
           {planEnd > 0 && (
-            <Line yAxisId="temp" type="monotone" dataKey="planTemp" name="Temp (plan)" stroke="rgb(var(--chart-temp))" strokeWidth={1.4} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} connectNulls isAnimationActive={false} />
+            <Line yAxisId="temp" type="monotone" dataKey="planTemp" name="Temp (plan)" stroke="rgb(var(--chart-temp))" strokeWidth={1.4} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} isAnimationActive={false} />
           )}
           <Line yAxisId="ror" type="monotone" dataKey="ror" name="RoR" stroke="rgb(var(--chart-ror))" strokeWidth={1.6} dot={false} isAnimationActive={false} />
           <Line yAxisId="temp" type="monotone" dataKey="temp" name="Temp" stroke="rgb(var(--chart-temp))" strokeWidth={2.4} dot={false} isAnimationActive={false} />

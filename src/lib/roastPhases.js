@@ -45,6 +45,15 @@ export const PHASE_VAR = {
   development: "--phase-dev",
 };
 
+// A label-table lookup that only sees the table's OWN entries. The tables here
+// and in the charts are plain objects, so a stored label like "constructor" or
+// "__proto__" would otherwise find a member inherited from Object.prototype and
+// be treated as a known label with junk for a name. Hygiene, not a crash fix:
+// nothing throws, the worst case is a stray marker. (hasOwnProperty.call rather
+// than Object.hasOwn: no browser-version question on iOS Safari.)
+export const ownEntry = (table, label) =>
+  Object.prototype.hasOwnProperty.call(table, label) ? table[label] : undefined;
+
 // Moments, keyed by the label stored in roastLog. Labels are stored in FULL
 // because the Roast Timeline renders entry.label directly; the charts
 // abbreviate at their own edge.
@@ -91,10 +100,10 @@ export function phaseBoundaries(roastLog) {
 export function momentsFrom(roastLog) {
   const log = Array.isArray(roastLog) ? roastLog : [];
   return log
-    .filter((e) => e && e.type === "phase" && MOMENT_LABELS[e.label])
+    .filter((e) => e && e.type === "phase" && ownEntry(MOMENT_LABELS, e.label))
     .map((e) => ({
       label: e.label,
-      name: MOMENT_LABELS[e.label],
+      name: ownEntry(MOMENT_LABELS, e.label),
       t: Number(e.t),
       // Stamped at log time. A threshold crossing carries the threshold itself,
       // so its dot sits exactly on the value it marks rather than on that

@@ -22,6 +22,7 @@ import {
   phaseSpans,
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
+import { MAX_ROAST_S } from "../../lib/limits";
 import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,9 @@ export default function RoastCurveChart({ roast }) {
     if (!roast || !Array.isArray(roast.roastLog)) return null;
     const log = roast.roastLog;
     const total = Number(roast.totalSeconds) || 0;
-    if (total <= 0) return null;
+    // No chart for a total no roast has (RL-045): the loops below run once per
+    // second of it, and "1e999" parses to Infinity, which never finishes.
+    if (total <= 0 || total > MAX_ROAST_S) return null;
 
     // Shared with the live chart, fallback and all: Maillard opens at the 305F
     // crossing when the ladder logged one, and at the YELLOWING mark when it did

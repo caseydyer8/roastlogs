@@ -9,6 +9,8 @@
 // Saved roasts keep roastLog OLDEST-FIRST (handleStop reverses the live,
 // newest-first log before saving); a roast read back from History is the same.
 
+import { MAX_ROAST_S } from "./limits";
+
 const START_LABELS = new Set(["START", "START (RESUME)"]);
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -195,10 +197,9 @@ export function planDiffers(roast, profile) {
 //                that is absent, an "MM:SS" `time` string; `time` is text or
 //                absent, and `fan` / `heat` are plain values (all three render)
 //   milestones[] optional; objects with a text `label` and a `t` between 0 and
-//                MAX_MILESTONE_S -- the live chart builds one row per second up to
+//                MAX_ROAST_S -- the live chart builds one row per second up to
 //                the latest milestone, so an absurd `t` would freeze it
 // Anything else falls back to "no profile": the ghost is lost, the app boots.
-const MAX_MILESTONE_S = 7200; // two hours; a roast is minutes
 const MAX_STEPS = 500; // a hand-built profile is dozens; a corruption guard, not a product limit
 const MAX_MILESTONES = 50;
 export function isFollowableProfile(p) {
@@ -210,7 +211,7 @@ export function isFollowableProfile(p) {
     && plain(s.fan) && plain(s.heat);
   const goodMilestone = (m) =>
     !!m && typeof m === "object" && typeof m.label === "string"
-    && Number(m.t) >= 0 && Number(m.t) <= MAX_MILESTONE_S;
+    && Number(m.t) >= 0 && Number(m.t) <= MAX_ROAST_S;
   // id / sourceRoastId are String()-ed in render and in handleStop; beanName is compared.
   const idLike = (v) => v == null || typeof v === "string" || typeof v === "number";
   return !!p && typeof p === "object" && !Array.isArray(p)

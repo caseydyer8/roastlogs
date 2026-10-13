@@ -1247,16 +1247,21 @@ test("profile restore: a lost or out-of-range step index is worked out from the 
 // arrival actually reaches the memo.
 // ---------------------------------------------------------------------------
 
-// Recharts draws the source curve as the only <path> with a "4 3" dash (the
-// plan's Fan/Heat lines are "3 3"; the ReferenceLines are <line> elements). It
-// renders an empty path while the curve has no points, so the length of `d` is
-// what separates "no ghost yet" from "ghost drawn" -- and a missing path counts
-// as no ghost too, so this survives a chart library that omits an empty line.
-const ghostLength = (page) =>
-  page.evaluate(() => {
-    const el = document.querySelector('path.recharts-line-curve[stroke-dasharray="4 3"]');
-    return el ? (el.getAttribute("d") || "").length : 0;
-  });
+// Recharts draws the source curve as a <path> with a "4 3" dash in the Temp
+// colour (the plan's Fan/Heat lines are "3 3"; the ReferenceLines are <line>
+// elements). The stroke is part of the selector because a second dashed "4 3"
+// line, in another colour, can sit beside it: matching on the dash alone would
+// quietly measure whichever comes first in the DOM. It renders an empty path
+// while the curve has no points, so the length of `d` is what separates "no
+// ghost yet" from "ghost drawn" -- and a missing path counts as no ghost too,
+// so this survives a chart library that omits an empty line.
+const GHOST_PATH = 'path.recharts-line-curve[stroke="rgb(var(--chart-temp))"][stroke-dasharray="4 3"]';
+const ghostPathD = (page) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.getAttribute("d") || "" : "";
+  }, GHOST_PATH);
+const ghostLength = async (page) => (await ghostPathD(page)).length;
 const syncDotTitle = (page) => page.locator('[title^="Sync status"]').first().getAttribute("title");
 
 test("ghost: a source roast that syncs down AFTER the app mounts draws the dashed plan line", async ({ page }) => {
@@ -1313,11 +1318,12 @@ const ghostCaption = (page) => page.getByTestId("ghost-caption");
 // The Razzo, mid-roast, with the live chart open. `roasts` is what this device
 // holds; it is written with an init script because beforeEach's own seed (the one
 // fixture roast) re-runs on every load and would overwrite a plain evaluate().
-async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast] } = {}) {
+// `live` is the roast's stored clock and log (reloadMidRoast's default when omitted).
+async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined } = {}) {
   await mockRoastLinkFeed(page);
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
   await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
-  await reloadMidRoast(page, { profile, profileRaw });
+  await reloadMidRoast(page, { profile, profileRaw, live });
   await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
 }
@@ -1530,6 +1536,141 @@ test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast 
   await expect(ghostCaption(page)).toHaveCount(0);
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
 });
+
+// ---------------------------------------------------------------------------
+// RL-027: the ghost must not invent a stretch the source roast never measured.
+// Where the source roast lost its probe for longer than LIVE_GAP_S (6 s) the
+// dashed line has to BREAK, not join across the hole. The model already emits
+// null inside such a hole, so a model-only test passes whether or not the line
+// bridges it (that guard is in LiveRoastChart.plan.test.js); whether the hole
+// is drawn is only decided in the rendered path. A line that bridges nulls is
+// ONE subpath ("M ... C ..."); a broken one starts a fresh "M" for each
+// measured stretch. So these read the path's `d`.
+// ---------------------------------------------------------------------------
+
+const ghostSubpaths = async (page) => ((await ghostPathD(page)).match(/M/g) || []).length;
+
+// The Razzo, mid-roast, following a profile saved from a source roast whose
+// probe never recorded seconds `from`..`to` (inclusive). The hole is at 3:20, past
+// the 3-minute window the chart opens in, so switch to the whole-roast view: the
+// gap is then on screen, not just in the data.
+async function openGhostWithHole(page, from, to) {
+  const source = { ...sourceWithCurve, curve: fixtureGhostSourceRow.curve.filter((p) => p.t < from || p.t > to) };
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, source] });
+  await page.getByRole("button", { name: "3 min" }).click();
+  await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+}
+
+test("ghost breaks across a probe gap: a 20 s hole in the source roast stays a gap in the dashed line", async ({ page }) => {
+  await openGhostWithHole(page, 200, 219);
+  // Two measured stretches (0:00-3:19 and 3:40 on) = two subpaths. One means the
+  // line was drawn straight across seconds the probe never read.
+  expect(await ghostSubpaths(page)).toBeGreaterThanOrEqual(2);
+});
+
+test("ghost breaks across a probe gap: a 5 s hole is still bridged, so the line stays whole", async ({ page }) => {
+  await openGhostWithHole(page, 200, 204);
+  // Within LIVE_GAP_S the model fills the hole with a short straight run: one stretch.
+  expect(await ghostSubpaths(page)).toBe(1);
+});
+
+// ---------------------------------------------------------------------------
+// RL-030: no time value read from storage may size the live chart's rows. The
+// model builds one row per second up to the largest `t` it is handed, so a
+// damaged or hand-edited value of 2e9 froze the Roast tab and one past 2^32
+// threw a RangeError out of render -- and with no error boundary above the tab
+// that blanks the whole app on every relaunch. Each test puts the huge value
+// where the chart would read it from (a cached source roast, the stored clock)
+// and asserts the chart is on screen within the default 5 s and the app still
+// answers a tap. A huge LIVE-curve point has no test here: seeded in storage it
+// did not reproduce (the app appends the bridge's next sample after it, and the
+// model reads the last point), so the unit tests carry it. The bound itself
+// (src/lib/limits.js) and the row arithmetic are unit-tested in
+// LiveRoastChart.plan.test.js, with 1e6 -- the 1e9 used here would hang that
+// suite rather than fail it.
+// ---------------------------------------------------------------------------
+
+// A frozen or crashed page never leaves the Roast tab: History is a nav tap away.
+async function expectAppResponds(page) {
+  await page.getByRole("button", { name: "History", exact: true }).click({ timeout: 5_000 });
+  await expect(page.getByText("E2E Ethiopia Test").first()).toBeVisible();
+}
+
+test("huge time value: a source roast curve point at t=2000000000 does not freeze the live chart", async ({ page }) => {
+  test.setTimeout(30_000);
+  const source = { ...sourceWithCurve, curve: [...fixtureGhostSourceRow.curve, { t: 2000000000, bt: 400 }] };
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, source] });
+  // The point is ignored, not allowed to take the real 0-660 s ghost down with it.
+  await expect.poll(() => ghostLength(page), { timeout: 5_000 }).toBeGreaterThan(100);
+  await expectAppResponds(page);
+});
+
+test("huge time value: a source roast curve point past 2^32 does not blank the app", async ({ page }) => {
+  test.setTimeout(30_000);
+  // Array.from({ length: t + 1 }) throws RangeError from t = 2^32 up.
+  const source = { ...sourceWithCurve, curve: [...fixtureGhostSourceRow.curve, { t: 2 ** 32 + 5, bt: 400 }] };
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, source] });
+  await expect.poll(() => ghostLength(page), { timeout: 5_000 }).toBeGreaterThan(100);
+  await expectAppResponds(page);
+});
+
+test("huge time value: a milestone at t=2000000000 in the source roast's log does not freeze the live chart", async ({ page }) => {
+  test.setTimeout(30_000);
+  // No `milestones` on the profile, so they are read from the source roast's own
+  // roastLog -- the path no profile validation covers. CARAMELIZATION is a label
+  // the fixture log does not already carry, so this entry is the one that counts.
+  const profile = { ...fixtureProfile, sourceRoastId: fixtureGhostSourceRow.id };
+  const source = { ...sourceWithCurve, roastLog: [...fixtureRoast.roastLog, { type: "phase", t: 2000000000, label: "CARAMELIZATION", temp: "" }] };
+  await openLiveChart(page, { profile, roasts: [fixtureRoast, source] });
+  await expect.poll(() => ghostLength(page), { timeout: 5_000 }).toBeGreaterThan(100);
+  await expectAppResponds(page);
+});
+
+test("huge time value: a stored clock of 1e9 seconds still opens the live chart", async ({ page }) => {
+  test.setTimeout(30_000);
+  await openLiveChart(page, { live: { ...fixtureLiveRoast, elapsedSeconds: 1e9 } });
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expectAppResponds(page);
+});
+
+// ---------------------------------------------------------------------------
+// RL-045: the History chart loops once per second of roast.totalSeconds, and
+// took it as Number(x) || 0 with no upper bound. A damaged or hand-edited value
+// -- "1e999" parses to Infinity, 1e9 is merely absurd -- never finished the
+// loop, so the roast's detail view hung the page every time it was opened and
+// only clearing site data got the app back. The detail must open, the tab bar
+// must answer, and a normal roast must still chart.
+// ---------------------------------------------------------------------------
+
+for (const [label, totalSeconds] of [["\"1e999\" (parses to Infinity)", "1e999"], ["1e9", 1e9]]) {
+  test(`history: huge totalSeconds ${label} does not hang the roast detail`, async ({ page }) => {
+    test.setTimeout(30_000);
+    const huge = { ...fixtureRoast, id: 1750000000500, beanName: "E2E Huge Total", totalSeconds };
+    await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), [huge, fixtureRoast]);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole("button", { name: "History" }).click();
+    // The detail renders inside this tap's own event, so a page that hangs on it
+    // never finishes the click -- hence the short timeout, not a long wait.
+    await page.getByText("E2E Huge Total").first().click({ timeout: 10_000 });
+    // The detail header is up within the default 5 s.
+    await expect(page.getByRole("button", { name: "EDIT ROAST" })).toBeVisible();
+    await expect(page.getByText("E2E Huge Total").first()).toBeVisible();
+
+    // The tab bar still answers: away to Roast and back, the detail is still there.
+    await page.getByRole("button", { name: "Roast", exact: true }).click({ timeout: 5_000 });
+    await expect(page.getByRole("button", { name: "BACK TO HISTORY" })).toHaveCount(0);
+    await page.getByRole("button", { name: "History", exact: true }).click({ timeout: 5_000 });
+    await expect(page.getByRole("button", { name: "BACK TO HISTORY" })).toBeVisible();
+
+    // Control: a normal roast still gets its chart (both ComposedCharts render).
+    await page.getByRole("button", { name: "BACK TO HISTORY" }).click();
+    await page.getByText("E2E Ethiopia Test").first().click();
+    await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Save a roast as a profile (v3.9.0). The prompt comes AFTER the roast is
