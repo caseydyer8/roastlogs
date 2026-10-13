@@ -4,13 +4,17 @@
   "private": true,
   "description": "RoastLink TWO+ -> Supabase Realtime bridge for RoastLogs",
   "main": "main.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --mac",
     "mock": "node test/mock-roastlink.js",
     "harness": "node test/harness.js",
     "roundtrip": "node test/roundtrip.js",
-    "e2e": "node test/e2e.js"
+    "e2e": "node test/e2e.js",
+    "test": "node --test \"test/unit/**/*.test.js\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",

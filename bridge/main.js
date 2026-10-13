@@ -10,6 +10,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { Bridge } = require("./lib/bridge");
+const { isSecretKey } = require("./lib/keyCheck");
 
 const SETTINGS_PATH = path.join(os.homedir(), ".roastlogs-bridge.json");
 
@@ -35,6 +36,13 @@ function saveSettings(next) {
   }
   return merged;
 }
+
+// Fixed refusal texts for the connect handler. They name no value.
+const SECRET_REFUSED = "A service_role/secret key was pasted into one of the fields -- refused.";
+const SECRET_REFUSED_ALREADY_SAVED =
+  "A service_role/secret key was pasted into one of the fields -- refused. " +
+  "A key like this is ALREADY saved in ~/.roastlogs-bridge.json -- replace it with the " +
+  "publishable key and rotate the secret key in the Supabase dashboard.";
 
 let win = null;
 let bridge = null;
@@ -76,6 +84,28 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("connect", async (_evt, { host, supabaseUrl, supabaseKey, email, password }) => {
   try {
+    // The renderer has a text-only pre-check (renderer.js) that cannot see a
+    // JWT's role claim -- this main-process check is the one that counts. It
+    // runs first so a refused paste changes nothing: no running bridge is
+    // stopped and nothing is written to disk. Every message is fixed text on
+    // purpose; no submitted value is ever echoed or logged.
+    //
+    // A non-string key would slip past isSecretKey (which is false for
+    // non-strings) and JSON.stringify straight into the settings file, so it
+    // is refused before the secret check.
+    if (typeof supabaseKey !== "string" || supabaseKey.trim() === "") {
+      return { ok: false, error: "Supabase key is missing or not text." };
+    }
+    // All five fields, not just the key: a secret key pasted into the URL or
+    // host box would be written to disk in plaintext just the same.
+    if ([host, supabaseUrl, supabaseKey, email, password].some((v) => isSecretKey(v))) {
+      // Read-only: warn if an earlier build already saved a secret key.
+      const alreadySaved = isSecretKey((loadSettings() || {}).supabaseKey);
+      return {
+        ok: false,
+        error: alreadySaved ? SECRET_REFUSED_ALREADY_SAVED : SECRET_REFUSED,
+      };
+    }
     if (bridge) {
       await bridge.stop().catch(() => {});
       bridge = null;

@@ -1,0 +1,88 @@
+-- Migration: stop FUTURE tables and views in `public` from auto-granting
+--            anon + authenticated
+-- Date: 2026-10-13   (migration name for apply_migration: revoke_default_table_privileges_public)
+-- Ledger: RL-004     Run as: postgres (the Supabase SQL editor default). HUMAN-ONLY: Case applies it.
+--
+-- WHY: pg_default_acl (grantor postgres, schema public, object type r) grants
+-- anon AND authenticated everything (arwdDxtm) on every table or view postgres
+-- creates in public. The ensure_rls event trigger turns RLS on for new TABLES,
+-- but NOT for views, and a view runs with its owner's rights: a future
+-- `create view public.x as select ... from roasts` would skip the admin+aal2
+-- policies and be readable by anon over REST. No existing object is affected --
+-- default privileges only matter at CREATE time -- so this closes the door
+-- before anyone walks through it.
+--
+-- SCOPE: TABLES only (object type r), grantor postgres only.
+--   * Existing tables, policies and grants are unchanged.
+--   * Sequence (S) and function (f) default rows are untouched.
+--   * private.is_admin is untouched. authenticated MUST keep EXECUTE on it and
+--     USAGE on schema private: an RLS policy expression runs with the CALLER's
+--     privileges, and revoking EXECUTE took the whole app down on 2026-09-04
+--     (see docs/2026-09-07_restore_is_admin_execute.sql).
+--
+-- CONSEQUENCE (a behaviour change for FUTURE migrations): every new public
+-- table must grant what it needs in its own migration, e.g.
+--     grant select, insert, update, delete on public.<new_table> to authenticated;
+-- Forget that and the app gets `42501 permission denied` on the new table. That
+-- is a loud, safe failure -- the opposite of today's silent over-grant.
+--
+-- RESIDUAL (not fixable from the postgres role): the grantor supabase_admin
+-- holds the same type-r row. postgres is not a member of supabase_admin, so
+-- `alter default privileges for role supabase_admin ...` fails with "permission
+-- denied to change default privileges" and would abort this whole transaction;
+-- it is deliberately left out. It only affects objects supabase_admin itself
+-- creates in public (platform-managed), not objects created from the SQL editor
+-- or by migrations. Accept it, or raise it with Supabase support.
+--
+-- PRE-STATE (observed live 2026-10-13, grantor postgres, schema public, type r):
+--   {postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,
+--    authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+-- EXPECTED POST-STATE:
+--   {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+--
+-- ROLLBACK (restores the exact pre-state; ALL on PG 17 = arwdDxtm):
+--   alter default privileges for role postgres in schema public
+--     grant all on tables to anon, authenticated;
+
+begin;
+
+alter default privileges for role postgres in schema public
+  revoke all on tables from anon, authenticated;
+
+commit;
+
+-- VERIFY AFTERWARDS -- run each in the SQL editor. They are read-only and
+-- roll back. Passing a catalog check is NOT enough on its own: the 2026-09-04
+-- change looked fine in the catalog and still took the app down, so the second
+-- check runs real SELECTs AS the `authenticated` role.
+--
+-- 1. Catalog + guard rails. Expect 6 rows; only postgres/r changes (it loses
+--    anon and authenticated); both booleans true.
+--
+--   begin; set transaction read only;
+--   select r.rolname as grantor, d.defaclobjtype as objtype, d.defaclacl::text as acl,
+--          has_function_privilege('authenticated','private.is_admin(uuid)','EXECUTE') as is_admin_exec_ok,
+--          has_schema_privilege('authenticated','private','USAGE') as private_usage_ok
+--   from pg_default_acl d join pg_roles r on r.oid = d.defaclrole
+--   where d.defaclnamespace = 'public'::regnamespace order by 1, 2;
+--   rollback;
+--
+-- 2. As `authenticated`, an admin at aal2 still reads every table (counts
+--    equal or above what the app shows, and NO error). Repeat with 'aal1' and
+--    with no JWT at all: expect 0/0/0/0.
+--
+--   begin; set transaction read only;
+--   select length(set_config('request.jwt.claims', json_build_object('sub',
+--     (select user_id from public.admins order by created_at, user_id limit 1)::text,
+--     'role','authenticated','aal','aal2')::text, true)) > 0;
+--   set local role authenticated;
+--   select (select count(*) from public.roasts) r, (select count(*) from public.tasting_notes) t,
+--          (select count(*) from public.beans) b, (select count(*) from public.roast_profiles) p;
+--   rollback;
+--
+-- 3. Realtime path: the same session with
+--    select set_config('realtime.topic','roastlink-live',true);
+--    then `select count(*) from realtime.messages` -- expect no ERROR.
+--
+-- 4. Real app: sign in with MFA, confirm History loads, start the bridge and
+--    confirm live temps arrive with no `CHANNEL_ERROR`.
