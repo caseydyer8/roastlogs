@@ -295,6 +295,472 @@ test("beans: cascade delete removes bean and all linked history", async ({ page 
   await expect(page.getByText("E2E Ethiopia Test")).toHaveCount(0);
 });
 
+// ---------------------------------------------------------------------------
+// RL-026: a bag is matched to its roasts by beanId, not by name. A roast logged
+// from the Setup screen (v3.9.0+) carries its bag's id; an older one carries only
+// a name. Two bags can share a name (an old bag plus a restock), and "delete
+// roasts too" used to remove BOTH bags' history because it matched on name.
+//
+// The Beans list is keyed by name, so a shared name is ONE row that opens the
+// first matching bag -- bag A below. Deleting from it must touch bag A's history
+// and nothing else.
+// ---------------------------------------------------------------------------
+const bagA = { ...fixtureBean, id: 1750000000101, name: "Dup Bean" };
+const bagB = { ...fixtureBean, id: 1750000000102, name: "Dup Bean" };
+// Dates differ so Bean Detail rows can be told apart by what they print.
+const roastA = { ...fixtureRoast, id: 1750000000301, date: "2026-08-01", beanName: "Dup Bean", beanId: bagA.id };
+const roastB = { ...fixtureRoast, id: 1750000000302, date: "2026-08-15", beanName: "Dup Bean", beanId: bagB.id };
+// Logged before v3.9.0: a name and no beanId, so nothing says WHICH Dup Bean it used.
+const roastOlder = { ...fixtureRoast, id: 1750000000303, date: "2026-06-01", beanName: "Dup Bean", beanId: null };
+const tastingA = { ...fixtureTasting, id: 1750000000401, roastId: String(roastA.id), beanName: "Dup Bean" };
+const tastingB = { ...fixtureTasting, id: 1750000000402, roastId: String(roastB.id), beanName: "Dup Bean" };
+
+// Replaces the beforeEach seed with this inventory and history. The init script
+// stacks after beforeEach's (both re-run on reload), so this one wins.
+async function seedBeanHistory(page, { beans = [], roasts = [], tastings = [] }) {
+  await page.addInitScript((seed) => {
+    window.localStorage.setItem("beans", JSON.stringify(seed.beans));
+    window.localStorage.setItem("roasts", JSON.stringify(seed.roasts));
+    window.localStorage.setItem("tastingNotes", JSON.stringify(seed.tastings));
+  }, { beans, roasts, tastings });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+}
+
+// Every DELETE the app aims at the cloud, as "table?id=eq.N". The context route
+// aborts them, but the 'request' event still fires, so each attempt is visible.
+// That is what makes a negative assertion honest: "no delete for roast B" only
+// means something once "a delete for roast A WAS sent" has been seen, because a
+// client that sends nothing at all would pass the negative just as happily.
+function recordCloudDeletes(page) {
+  const sent = [];
+  page.on("request", (req) => {
+    if (req.method() !== "DELETE") return;
+    const match = req.url().match(/\/rest\/v1\/(.+)$/);
+    if (match) sent.push(decodeURIComponent(match[1]));
+  });
+  return {
+    // Waits for at least `n` deletes (so a client that sent none fails here, not
+    // silently), then returns every one sent, sorted. The app fires its deletes
+    // as one burst; the short wait gives a stray extra one time to land before
+    // the caller asserts on what must NOT be there.
+    async sentAfter(n) {
+      await expect.poll(() => sent.length, { message: `cloud DELETEs sent (expected at least ${n})` }).toBeGreaterThanOrEqual(n);
+      await page.waitForTimeout(250);
+      return [...sent].sort();
+    },
+    // What has been sent so far, without waiting -- for asserting that a tap sent NOTHING.
+    // Only honest after the page has visibly reacted to the tap (the handler sends
+    // its deletes synchronously, so by then any it was going to send are in).
+    snapshot() {
+      return [...sent].sort();
+    },
+  };
+}
+
+const storedIds = (page, key) =>
+  page.evaluate((k) => JSON.parse(window.localStorage.getItem(k) || "[]").map((x) => x.id), key);
+// The "N sessions" pill above the roast list on Bean Detail.
+const sessionsPill = (page) => page.getByText(/^\d+ sessions$/);
+const deleteModal = (page) => page.locator("div.fixed.inset-0").filter({ hasText: "Delete this bean?" });
+async function openBeanDetail(page, name) {
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText(name).first().click();
+}
+
+test("beans: same-named bags -- deleting one bag with its roasts leaves the other bag's roasts alone", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  // The modal counts what the cascade will delete: bag A's one roast, not the two
+  // that share its name.
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 0 tastings.");
+  const cascade = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true });
+  await expect(cascade).toBeVisible();
+  await cascade.click();
+
+  const sent = await deletes.sentAfter(2);
+  // Positive control: the client DID send the delete for bag A's roast, so the
+  // absence of roast B's below is a finding rather than an artefact of nothing
+  // being observable.
+  expect(sent).toContain(`roasts?id=eq.${roastA.id}`);
+  expect(sent).not.toContain(`roasts?id=eq.${roastB.id}`);
+  // And that is the whole of it: bag A's roast and bag A itself.
+  expect(sent).toEqual([`beans?id=eq.${bagA.id}`, `roasts?id=eq.${roastA.id}`]);
+
+  expect(await storedIds(page, "roasts")).toEqual([roastB.id]);
+  expect(await storedIds(page, "beans")).toEqual([bagB.id]);
+});
+
+test("beans: same-named bags -- a tasting is deleted with its own roast, not with the other bag's", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB], tastings: [tastingA, tastingB] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 1 tasting.");
+  const cascade = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 1 TASTING", exact: true });
+  await expect(cascade).toBeVisible();
+  await cascade.click();
+
+  expect(await deletes.sentAfter(3)).toEqual([
+    `beans?id=eq.${bagA.id}`,
+    `roasts?id=eq.${roastA.id}`,
+    `tasting_notes?id=eq.${tastingA.id}`,
+  ]);
+  expect(await storedIds(page, "roasts")).toEqual([roastB.id]);
+  expect(await storedIds(page, "tastingNotes")).toEqual([tastingB.id]);
+});
+
+test("beans: same-named bags -- older roasts tied only by name are kept, and the modal says how many", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB, roastOlder] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 0 tastings.");
+  // Not deletable (which bag did it come from?), so it is not in the button's
+  // count -- but Case is told it exists and that it stays.
+  await expect(modal.getByText(/1 older roast.*not tied to one bag.*kept/i)).toBeVisible();
+  const cascade = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true });
+  await expect(cascade).toBeVisible();
+  await cascade.click();
+
+  expect(await deletes.sentAfter(2)).toEqual([`beans?id=eq.${bagA.id}`, `roasts?id=eq.${roastA.id}`]);
+  expect((await storedIds(page, "roasts")).sort()).toEqual([roastB.id, roastOlder.id]);
+});
+
+test("beans: same-named bags -- the delete modal no longer says history goes for every bag of that name", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB] });
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toBeVisible();
+  // The old warning was true when history was matched by name; it is false now
+  // that only the bag's own history is removed, and false text on an irreversible
+  // action is worse than none.
+  await expect(modal.getByText(/removes it for all of them/)).toHaveCount(0);
+  await expect(modal.getByText(/\b(only|just) this bag/i)).toBeVisible();
+});
+
+test("beans: same-named bags -- keeping history deletes only the bag, never a roast", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  await page.getByText("KEEP HISTORY, DELETE BEAN ONLY").click();
+
+  expect(await deletes.sentAfter(1)).toEqual([`beans?id=eq.${bagA.id}`]);
+  expect((await storedIds(page, "roasts")).sort()).toEqual([roastA.id, roastB.id]);
+  expect(await storedIds(page, "beans")).toEqual([bagB.id]);
+});
+
+test("bean detail: same-named bags -- lists only this bag's sessions, shows the older roast in its own kept list, and notes the other bag's", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB, roastOlder] });
+
+  await openBeanDetail(page, "Dup Bean");
+  // Bag A's own roast, matched by id: the only session. Bag B's roast is not A's, so
+  // it is not listed -- but a line says so, instead of hiding it without a word.
+  await expect(sessionsPill(page)).toHaveText("1 sessions");
+  await expect(page.getByText(roastA.date)).toBeVisible();
+  await expect(page.getByText(roastB.date)).toHaveCount(0);
+  await expect(page.getByText('1 roast belongs to another bag named "Dup Bean" and is not listed here.')).toBeVisible();
+
+  // The older roast could be either bag's: it is listed, but in its own muted list,
+  // still outside the "N sessions" count and clearly marked as kept.
+  const older = page.getByTestId("older-roasts");
+  await expect(older.getByText("Older roasts with this name — kept if this bag is deleted")).toBeVisible();
+  await expect(older.getByText("1 older roast with this name is not tied to one bag. It is listed below and kept if you delete this bag.")).toBeVisible();
+  await expect(older.getByText(roastOlder.date)).toBeVisible();
+  await expect(older.getByText(roastA.date)).toHaveCount(0);
+  await expect(older.getByText(roastB.date)).toHaveCount(0);
+  await expect(page.getByTestId("older-tastings")).toHaveCount(0);
+});
+
+test("bean detail: same-named bags -- the other bag's roasts and tastings are noted but never in this bag's delete counts", async ({ page }) => {
+  // Dates differ so a row can be told from its twin on the other bag.
+  const tastingBLater = { ...tastingB, date: "2026-08-20" };
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB], tastings: [tastingA, tastingBLater] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await expect(sessionsPill(page)).toHaveText("1 sessions");
+  await expect(page.getByText(/^1 notes$/)).toBeVisible();
+  await expect(page.getByText(roastB.date)).toHaveCount(0);
+  await expect(page.getByText(tastingBLater.date)).toHaveCount(0);
+  await expect(page.getByText('1 roast and 1 tasting note belong to another bag named "Dup Bean" and are not listed here.')).toBeVisible();
+
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  // The modal counts this bag's own history and says nothing about the other bag's.
+  await expect(modal).toContainText("This bean has 1 roast + 1 tasting.");
+  await expect(modal).not.toContainText(/another bag/i);
+  await modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 1 TASTING", exact: true }).click();
+
+  // Nothing of bag B's is touched, locally or in the cloud.
+  expect(await deletes.sentAfter(3)).toEqual([
+    `beans?id=eq.${bagA.id}`,
+    `roasts?id=eq.${roastA.id}`,
+    `tasting_notes?id=eq.${tastingA.id}`,
+  ]);
+  expect(await storedIds(page, "roasts")).toEqual([roastB.id]);
+  expect(await storedIds(page, "tastingNotes")).toEqual([tastingB.id]);
+  expect(await storedIds(page, "beans")).toEqual([bagB.id]);
+});
+
+// What KEEP HISTORY, DELETE BEAN ONLY leaves behind: roasts that carry a bag id which no
+// longer exists. Once a bag of that name is back (a fresh id), those roasts and tastings
+// are "unlinked" -- not provably this bag's, so a cascade keeps them. They used to
+// vanish from Bean Detail behind a bare count; now they are listed, apart from the sessions.
+test("bean detail: older roasts and tastings kept after KEEP HISTORY stay visible in their own list, outside the counts", async ({ page }) => {
+  const bag = { ...fixtureBean, id: 1750000000106, name: "Reborn Bean" };
+  const ownRoast = { ...fixtureRoast, id: 1750000000601, date: "2026-08-01", beanName: "Reborn Bean", beanId: bag.id };
+  const deadRoast = { ...fixtureRoast, id: 1750000000602, date: "2026-06-10", beanName: "Reborn Bean", beanId: 999 };
+  const deadTasting = { ...fixtureTasting, id: 1750000000603, date: "2026-06-12", roastId: String(deadRoast.id), beanName: "Reborn Bean" };
+  await seedBeanHistory(page, { beans: [bag], roasts: [ownRoast, deadRoast], tastings: [deadTasting] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Reborn Bean");
+  // Counted: this bag's one session, no notes. The older records are not in either pill...
+  await expect(sessionsPill(page)).toHaveText("1 sessions");
+  await expect(page.getByText(/^0 notes$/)).toBeVisible();
+  // ...and not in the comparison: one session of its own means no Compare, even though
+  // an older roast shares the name.
+  await expect(page.getByRole("button", { name: /^Compare/ })).toHaveCount(0);
+
+  const olderRoasts = page.getByTestId("older-roasts");
+  await expect(olderRoasts.getByText("Older roasts with this name — kept if this bag is deleted")).toBeVisible();
+  // Not shared by a second bag, so the note must NOT claim "one bag" is the problem.
+  await expect(olderRoasts.getByText("1 older roast with this name is not tied to this bag. It is listed below and kept if you delete it.")).toBeVisible();
+  await expect(olderRoasts.getByText(deadRoast.date)).toBeVisible();
+  await expect(olderRoasts.getByText(ownRoast.date)).toHaveCount(0);
+
+  const olderTastings = page.getByTestId("older-tastings");
+  await expect(olderTastings.getByText("Older tasting notes with this name — kept if this bag is deleted")).toBeVisible();
+  await expect(olderTastings.getByText("1 older tasting note with this name is not tied to this bag. It is listed below and kept if you delete it.")).toBeVisible();
+  await expect(olderTastings.getByText(deadTasting.date)).toBeVisible();
+  await expect(page.getByText(/not tied to one bag/i)).toHaveCount(0);
+
+  // Same rows as the sessions: tapping one opens the roast.
+  await olderRoasts.getByText(deadRoast.date).click();
+  await expect(page.getByText("BACK TO REBORN BEAN")).toBeVisible();
+  await page.getByText("BACK TO REBORN BEAN").click();
+
+  // And "kept if this bag is deleted" is true: the cascade takes the session, not these.
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 0 tastings.");
+  await modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true }).click();
+  expect(await deletes.sentAfter(2)).toEqual([`beans?id=eq.${bag.id}`, `roasts?id=eq.${ownRoast.id}`]);
+  expect(await storedIds(page, "roasts")).toEqual([deadRoast.id]);
+  expect(await storedIds(page, "tastingNotes")).toEqual([deadTasting.id]);
+});
+
+test("bean detail: KEEP HISTORY then adding the bag back does not make its roasts disappear", async ({ page }) => {
+  // The real path, end to end. A roast logged from Setup carries its bag's id; deleting
+  // the bag but keeping history leaves that id dead; adding "Reborn Bean" again gives a
+  // fresh id. Bean Detail used to say "0 sessions" and "1 older roast ... not listed here".
+  const bag = { ...fixtureBean, id: 1750000000107, name: "Reborn Bean" };
+  const roast = { ...fixtureRoast, id: 1750000000604, date: "2026-08-03", beanName: "Reborn Bean", beanId: bag.id };
+  await seedBeanHistory(page, { beans: [bag], roasts: [roast] });
+
+  await openBeanDetail(page, "Reborn Bean");
+  await page.getByText("DELETE BEAN").click();
+  await page.getByText("KEEP HISTORY, DELETE BEAN ONLY").click();
+  expect(await storedIds(page, "beans")).toEqual([]);
+
+  await page.getByText("ADD BEAN").click();
+  await page.getByPlaceholder("e.g., Ethiopia Yirgacheffe").fill("Reborn Bean");
+  await page.getByText("SAVE BEAN").click();
+  await page.getByText("Reborn Bean").first().click();
+
+  await expect(sessionsPill(page)).toHaveText("0 sessions");
+  const older = page.getByTestId("older-roasts");
+  await expect(older.getByText(roast.date)).toBeVisible();
+  await expect(older.getByText("1 older roast with this name is not tied to this bag. It is listed below and kept if you delete it.")).toBeVisible();
+});
+
+test("bean detail: a roast logged before v3.9.0 (no beanId) still lists under a bag that owns its name", async ({ page }) => {
+  const solo = { ...fixtureBean, id: 1750000000103, name: "Solo Bean" };
+  const legacy = { ...fixtureRoast, id: 1750000000304, date: "2026-05-01", beanName: "Solo Bean", beanId: null };
+  const linked = { ...fixtureRoast, id: 1750000000305, date: "2026-08-01", beanName: "Solo Bean", beanId: solo.id };
+  await seedBeanHistory(page, { beans: [solo], roasts: [legacy, linked] });
+
+  await openBeanDetail(page, "Solo Bean");
+  await expect(sessionsPill(page)).toHaveText("2 sessions");
+  await expect(page.getByText(legacy.date)).toBeVisible();
+  await expect(page.getByText(linked.date)).toBeVisible();
+  // One bag owns the name, so nothing is "not tied to one bag", nothing belongs to
+  // another bag, and neither extra list appears.
+  await expect(page.getByText(/not tied to one bag/i)).toHaveCount(0);
+  await expect(page.getByText(/another bag/i)).toHaveCount(0);
+  await expect(page.getByTestId("older-roasts")).toHaveCount(0);
+  await expect(page.getByTestId("older-tastings")).toHaveCount(0);
+});
+
+test("bean detail: a bean with no saved record still lists a roast whose beanId points at no bag", async ({ page }) => {
+  // What KEEP HISTORY, DELETE BEAN ONLY leaves behind: roasts naming a bag that
+  // no longer exists. beanId 999 matches nothing in the inventory.
+  const orphan = { ...fixtureRoast, id: 1750000000306, date: "2026-07-20", beanName: "Orphan Bean", beanId: 999 };
+  await seedBeanHistory(page, { beans: [], roasts: [orphan] });
+
+  await openBeanDetail(page, "Orphan Bean");
+  await expect(sessionsPill(page)).toHaveText("1 sessions");
+  await expect(page.getByText(orphan.date)).toBeVisible();
+});
+
+test("beans: deleting a bean with no saved record removes its orphaned roasts but not a roast that belongs to another bag", async ({ page }) => {
+  // A bag renamed after a roast was logged: the roast keeps the OLD name but
+  // carries the renamed bag's id. The name-keyed Beans list still shows the old
+  // name as an id-less row; deleting that row must not take the renamed bag's
+  // roast with it.
+  const renamedBag = { ...fixtureBean, id: 1750000000104, name: "Renamed Bag" };
+  const orphan = { ...fixtureRoast, id: 1750000000307, date: "2026-07-20", beanName: "Orphan Bean", beanId: 999 };
+  const belongsElsewhere = { ...fixtureRoast, id: 1750000000308, date: "2026-07-25", beanName: "Orphan Bean", beanId: renamedBag.id };
+  await seedBeanHistory(page, { beans: [renamedBag], roasts: [orphan, belongsElsewhere] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Orphan Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This will delete 1 roast + 0 tastings for this bean.");
+  const cascade = modal.getByRole("button", { name: "DELETE 1 ROAST + 0 TASTINGS", exact: true });
+  await expect(cascade).toBeVisible();
+  await cascade.click();
+
+  // No bean row exists to delete, so the roast is the only cloud call.
+  expect(await deletes.sentAfter(1)).toEqual([`roasts?id=eq.${orphan.id}`]);
+  expect(await storedIds(page, "roasts")).toEqual([belongsElsewhere.id]);
+  expect(await storedIds(page, "beans")).toEqual([renamedBag.id]);
+});
+
+// The local cascade removes the records beanHistory matched BY IDENTITY, not by id.
+// An id filter removes more than the modal counted whenever ids collide or are
+// missing -- and a local delete is the one nothing can bring back.
+test("beans: same-named bags -- two roasts sharing an id: deleting one bag's keeps the other bag's roast", async ({ page }) => {
+  const SHARED_ID = 1750000000501;
+  const sharedA = { ...fixtureRoast, id: SHARED_ID, date: "2026-08-01", beanName: "Dup Bean", beanId: bagA.id };
+  const sharedB = { ...fixtureRoast, id: SHARED_ID, date: "2026-08-15", beanName: "Dup Bean", beanId: bagB.id };
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [sharedA, sharedB] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 0 tastings.");
+  await modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true }).click();
+
+  // The cloud list is still the matched set's ids, unchanged: bag A and its one roast.
+  expect(await deletes.sentAfter(2)).toEqual([`beans?id=eq.${bagA.id}`, `roasts?id=eq.${SHARED_ID}`]);
+  // Both roasts have the same id, so tell them apart by bag.
+  const left = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts") || "[]").map((r) => r.beanId));
+  expect(left).toEqual([bagB.id]);
+  expect(await storedIds(page, "beans")).toEqual([bagB.id]);
+});
+
+test("beans: an id-less roast and tasting of this bag are removed locally without taking an unrelated id-less one", async ({ page }) => {
+  const solo = { ...fixtureBean, id: 1750000000105, name: "Idless Bean" };
+  // JSON drops `id: undefined`, so these are stored with no id at all.
+  const ownRoast = { ...fixtureRoast, id: undefined, date: "2026-08-01", beanName: "Idless Bean", beanId: solo.id };
+  const otherRoast = { ...fixtureRoast, id: undefined, date: "2026-08-02", beanName: "Other Bean" };
+  const ownBrew = { ...fixtureTasting, id: undefined, roastId: "", beanName: "Idless Bean" };
+  const otherBrew = { ...fixtureTasting, id: undefined, roastId: "", beanName: "Other Bean" };
+  await seedBeanHistory(page, { beans: [solo], roasts: [ownRoast, otherRoast], tastings: [ownBrew, otherBrew] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Idless Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 1 tasting.");
+  await modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 1 TASTING", exact: true }).click();
+
+  // Positive control: the cascade ran (the bag's own delete was sent) before we
+  // judge what stayed.
+  expect(await deletes.sentAfter(1)).toContain(`beans?id=eq.${solo.id}`);
+  const stored = (key) => page.evaluate((k) => JSON.parse(window.localStorage.getItem(k) || "[]").map((x) => x.beanName), key);
+  expect(await stored("roasts")).toEqual(["Other Bean"]);
+  expect(await stored("tastingNotes")).toEqual(["Other Bean"]);
+  expect(await storedIds(page, "beans")).toEqual([]);
+});
+
+// The modal is drawn from storage at one moment and the cascade reads storage again at the
+// tap. The launch sync can write between the two, so the tap could delete one more record
+// than the button promised. The rule: if the bag's own sets changed, delete NOTHING, redraw
+// the modal with the fresh counts, and let the user decide again.
+test("beans: a record that appeared after the modal was drawn is NOT swept up by the tap -- the modal redraws and asks again", async ({ page }) => {
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB], tastings: [] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  await expect(modal).toContainText("This bean has 1 roast + 0 tastings.");
+  const stale = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true });
+  await expect(stale).toBeVisible();
+
+  // The sync lands and the user taps in the SAME task: React has had no chance to redraw
+  // the button, exactly as on a phone whose last render is a moment old. The new tasting
+  // belongs to bag A's roast, so a delete would take it.
+  await stale.evaluate((button, tasting) => {
+    const stored = JSON.parse(window.localStorage.getItem("tastingNotes") || "[]");
+    window.localStorage.setItem("tastingNotes", JSON.stringify([...stored, tasting]));
+    button.click();
+  }, tastingA);
+
+  // The modal redrew with the true counts, and says why nothing happened.
+  const fresh = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 1 TASTING", exact: true });
+  await expect(fresh).toBeVisible();
+  await expect(modal).toContainText("This bean has 1 roast + 1 tasting.");
+  await expect(page.getByText(/history changed/i)).toBeVisible();
+  // Nothing was deleted: not in the cloud, not locally -- including the tasting the
+  // user was never shown.
+  expect(deletes.snapshot()).toEqual([]);
+  expect(await storedIds(page, "beans")).toEqual([bagA.id, bagB.id]);
+  expect(await storedIds(page, "roasts")).toEqual([roastA.id, roastB.id]);
+  expect(await storedIds(page, "tastingNotes")).toEqual([tastingA.id]);
+
+  // Tapping again, now on what is on screen, goes through -- and takes exactly that.
+  await fresh.click();
+  expect(await deletes.sentAfter(3)).toEqual([
+    `beans?id=eq.${bagA.id}`,
+    `roasts?id=eq.${roastA.id}`,
+    `tasting_notes?id=eq.${tastingA.id}`,
+  ]);
+  expect(await storedIds(page, "roasts")).toEqual([roastB.id]);
+  expect(await storedIds(page, "tastingNotes")).toEqual([]);
+  expect(await storedIds(page, "beans")).toEqual([bagB.id]);
+});
+
+test("beans: a record the modal did show may still disappear from storage -- the tap then deletes nothing and redraws", async ({ page }) => {
+  // The other direction: the modal promised 1 roast + 1 tasting, then the tasting was
+  // removed. Deleting a different set than the one confirmed is wrong either way.
+  await seedBeanHistory(page, { beans: [bagA, bagB], roasts: [roastA, roastB], tastings: [tastingA] });
+  const deletes = recordCloudDeletes(page);
+
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  const modal = deleteModal(page);
+  const stale = modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 1 TASTING", exact: true });
+  await expect(stale).toBeVisible();
+
+  await stale.evaluate((button) => {
+    window.localStorage.setItem("tastingNotes", "[]");
+    button.click();
+  });
+
+  await expect(modal.getByRole("button", { name: "DELETE BEAN + 1 ROAST + 0 TASTINGS", exact: true })).toBeVisible();
+  expect(deletes.snapshot()).toEqual([]);
+  expect(await storedIds(page, "roasts")).toEqual([roastA.id, roastB.id]);
+  expect(await storedIds(page, "beans")).toEqual([bagA.id, bagB.id]);
+});
+
 test("beans: profile notes save, display, and are editable", async ({ page }) => {
   await page.getByRole("button", { name: "Beans" }).click();
   await page.getByText("E2E Ethiopia Test").first().click();
