@@ -68,6 +68,116 @@ describe("profile from roast", () => {
   });
 });
 
+// RL-028: a roast that followed its profile exactly must not be called a
+// deviation. stepsFromRoast MERGES the roast side (a repeated Fan/Heat is not a
+// change), so the profile side has to be read the same way -- otherwise the
+// step counts differ and the "update the profile too?" sheet nags after a roast
+// that did nothing wrong. The logs below are what the app writes: the START row
+// carries the typed dials, and each profile step the clock reaches is logged as
+// an adjustment labelled "Profile". OLDEST-FIRST, as saved.
+describe("roastDeviatedFromPlan reads the profile on equal terms (RL-028)", () => {
+  const start = (t, fan, heat) => ({ type: "start_settings", t, fan, heat, temp: "", label: "START" });
+  const adj = (t, fan, heat) => ({ type: "adjustment", t, fan, heat, temp: "", label: "Profile" });
+  const step = (time, totalSeconds, fan, heat) => ({ time, totalSeconds, fan, heat });
+  const roastOf = (...rows) => ({ roastLog: rows });
+
+  describe("a profile with two steps in a row that leave Fan and Heat alone", () => {
+    const repeated = {
+      steps: [step("00:00", 0, "4", "7"), step("01:00", 60, "4", "7"), step("02:00", 120, "5", "7")],
+    };
+
+    it("is not a deviation when the roast followed it exactly", () => {
+      const followed = roastOf(start(0, "4", "7"), adj(60, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(followed, repeated)).toBe(false);
+    });
+    it("is not a deviation when the roast ended before the repeated step was reached", () => {
+      expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7")), { steps: repeated.steps.slice(0, 2) })).toBe(false);
+    });
+    it("collapses a longer run of repeats, not just a pair", () => {
+      const run = { steps: [step("00:00", 0, "4", "7"), step("00:30", 30, "4", "7"), step("01:00", 60, "4", "7"), step("02:00", 120, "5", "7")] };
+      const followed = roastOf(start(0, "4", "7"), adj(30, "4", "7"), adj(60, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(followed, run)).toBe(false);
+    });
+    it("still reports a changed dial", () => {
+      const changed = roastOf(start(0, "4", "7"), adj(60, "4", "7"), adj(120, "6", "7"));
+      expect(roastDeviatedFromPlan(changed, repeated)).toBe(true);
+    });
+    it("still reports an extra manual adjustment between the repeats", () => {
+      const extra = roastOf(start(0, "4", "7"), adj(60, "4", "7"), adj(90, "4", "8"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(extra, repeated)).toBe(true);
+    });
+  });
+
+  describe("a profile whose first step is after 0:00", () => {
+    const late = { steps: [step("00:30", 30, "4", "7"), step("02:00", 120, "5", "7")] };
+
+    it("is not a deviation when the typed starting dials differ from the first step", () => {
+      const followed = roastOf(start(0, "3", "6"), adj(30, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(followed, late)).toBe(false);
+    });
+    // The harder one: the 0:30 row repeats the typed dials, so stepsFromRoast
+    // merges it into the START step and the roast has no step AT 0:30 to compare.
+    // Dropping only the roast's leading t=0 step would leave [2:00] against
+    // [0:30, 2:00]; the rows before the profile's first step have to be set aside
+    // BEFORE the roast is merged.
+    it("is not a deviation when the typed starting dials equal the first step", () => {
+      const followed = roastOf(start(0, "4", "7"), adj(30, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(followed, late)).toBe(false);
+    });
+    it("still reports a changed dial after the first step", () => {
+      const changed = roastOf(start(0, "3", "6"), adj(30, "4", "7"), adj(120, "6", "7"));
+      expect(roastDeviatedFromPlan(changed, late)).toBe(true);
+    });
+    it("still reports an extra manual adjustment after the first step", () => {
+      const extra = roastOf(start(0, "3", "6"), adj(30, "4", "7"), adj(60, "4", "8"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(extra, late)).toBe(true);
+    });
+    it("still reports a first step the roast never made", () => {
+      const missed = roastOf(start(0, "3", "6"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(missed, late)).toBe(true);
+    });
+    // Only the typed STARTING dials are set aside, not everything before the
+    // first step: a hand on the dials at 0:10 is a real change to the plan, even
+    // though the Profile row at 0:30 then puts the dials back where it says.
+    it("reports a manual change made before the first step", () => {
+      const early = roastOf(start(0, "4", "7"), adj(10, "6", "9"), adj(30, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(early, late)).toBe(true);
+    });
+    it("reports a manual change before the first step when the typed dials differ too", () => {
+      const early = roastOf(start(0, "3", "6"), adj(10, "6", "9"), adj(30, "4", "7"), adj(120, "5", "7"));
+      expect(roastDeviatedFromPlan(early, late)).toBe(true);
+    });
+  });
+
+  // Latent, and in the plan's acceptance rather than the original report: an
+  // older stored profile has `time` ("MM:SS") but no `totalSeconds` -- the shape
+  // isFollowableProfile still accepts -- and stepKey reads that as second 0.
+  describe("a profile step that carries only an MM:SS time", () => {
+    const timeOnly = {
+      steps: [{ time: "00:00", fan: "4", heat: "7" }, { time: "2:00", fan: "5", heat: "7" }],
+    };
+
+    it("is not a deviation when an adjustment at the same second matches it", () => {
+      expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7"), adj(120, "5", "7")), timeOnly)).toBe(false);
+    });
+    it("still reports a dial change at that second", () => {
+      expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7"), adj(120, "6", "7")), timeOnly)).toBe(true);
+    });
+    it("still reports an adjustment at a different second", () => {
+      expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7"), adj(90, "5", "7")), timeOnly)).toBe(true);
+    });
+  });
+
+  it("still reports no profile as a deviation", () => {
+    expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7")), null)).toBe(true);
+    expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7")), undefined)).toBe(true);
+  });
+  it("still passes a profile that matches with nothing to normalise", () => {
+    const plain = { steps: [step("00:00", 0, "4", "7"), step("02:00", 120, "5", "7")] };
+    expect(roastDeviatedFromPlan(roastOf(start(0, "4", "7"), adj(120, "5", "7")), plain)).toBe(false);
+  });
+});
+
 describe("helpers", () => {
   it("formats mm:ss and finds the nearest curve reading within a second", () => {
     expect(formatMMSS(125)).toBe("02:05");

@@ -964,6 +964,199 @@ test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile 
 });
 
 // ---------------------------------------------------------------------------
+// RL-029: the preheat target can never be stored outside 200-500 F. Setup's
+// field used to write `Number(value) || 0` on every keystroke, so clearing it
+// stored 0 and stopping after a "3" stored 3 -- and both survive a reload. The
+// preheat screen then reads "Ready to charge" against a cold roaster and the
+// rising-crossing chime can never fire, so beans go in early.
+//
+// Typed entry follows ONE rule: an in-range whole number is stored as it is
+// typed; ANYTHING else (empty, "3", "33", "-10", "150", "501", "99999", "1e9")
+// changes nothing. An out-of-range draft stays in the field while editing, is
+// never stored, and the field snaps back to the last valid target when it is
+// left. It never clamps -- a half-typed "3" (the start of 330) must not become a
+// near-cold 200 F target. Only the preheat screen's -5 / +5 clamps.
+// ---------------------------------------------------------------------------
+
+const PREHEAT_KEY = "roastlogs_preheat_target";
+const preheatField = (page) => page.getByLabel(/Preheat target/);
+const storedPreheat = (page) => page.evaluate((k) => window.localStorage.getItem(k), PREHEAT_KEY);
+
+// Types a valid target and leaves the field, so the next step starts from a known one.
+async function settlePreheatTarget(page, value) {
+  const field = preheatField(page);
+  await field.fill(value);
+  await field.blur();
+  await expect(field).toHaveValue(value);
+  expect(await storedPreheat(page)).toBe(value);
+}
+
+test("preheat target: an in-range value is stored as it is typed, before the field is left", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  const field = preheatField(page);
+  await field.click();
+  await field.fill("330");
+  await expect(field).toHaveValue("330");
+  expect(await storedPreheat(page)).toBe("330"); // no blur yet
+});
+
+test("preheat target: clearing the field leaves it empty while editing, and stores nothing", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  const field = preheatField(page);
+  await field.click();
+  await field.fill("");
+  // The draft is the field's own: it is not snapped back to a number mid-edit.
+  await expect(field).toHaveValue("");
+  expect(await storedPreheat(page)).toBe("315"); // the default; never 0
+});
+
+test("preheat target: a typed value is kept when the field is left, and survives a reload", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await settlePreheatTarget(page, "330");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect(preheatField(page)).toHaveValue("330");
+  expect(await storedPreheat(page)).toBe("330");
+});
+
+test("preheat target: leaving the field empty keeps the previous target, never 0", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await settlePreheatTarget(page, "330");
+  const field = preheatField(page);
+  await field.fill("");
+  expect(await storedPreheat(page)).toBe("330"); // still the previous one while empty
+  await field.blur();
+  await expect(field).toHaveValue("330");
+  expect(await storedPreheat(page)).toBe("330");
+});
+
+// The same keep-previous rule for every kind of out-of-range draft. None of them
+// is clamped: "3" and "33" are what a half-typed 330 looks like on the way, and a
+// near-cold 200 F target is the bug this exists to prevent.
+for (const bad of ["3", "33", "-10", "150", "199", "501", "99999", "1e9"]) {
+  test(`preheat target: ${JSON.stringify(bad)} is never stored, and leaving the field keeps the previous 330`, async ({ page }) => {
+    await seedSetup(page, { setup: "razzo-v5t" });
+    await settlePreheatTarget(page, "330");
+    const field = preheatField(page);
+    await field.fill(bad);
+    await expect(field).toHaveValue(bad); // the draft stays in the field while editing...
+    expect(await storedPreheat(page)).toBe("330"); // ...but is never stored
+    await field.blur();
+    await expect(field).toHaveValue("330");
+    expect(await storedPreheat(page)).toBe("330");
+  });
+}
+
+test("preheat target: with nothing chosen yet, a half-typed 3 left behind leaves the 315 default", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  const field = preheatField(page);
+  await field.fill("3");
+  await field.blur();
+  await expect(field).toHaveValue("315");
+  expect(await storedPreheat(page)).toBe("315");
+});
+
+test("preheat target: the edges, 200 and 500, are accepted as typed", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  for (const edge of ["200", "500"]) await settlePreheatTarget(page, edge);
+});
+
+// A target stored by an earlier build (or hand-edited) must come back usable --
+// as the 315 default, not clamped to an edge. Each loads on a fresh page load,
+// which is the only place the stored value is read.
+for (const raw of ["0", "3", "-10", "9999", "abc"]) {
+  test(`preheat target: a stored ${JSON.stringify(raw)} loads as the 315 default, never as itself`, async ({ page }) => {
+    await page.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [PREHEAT_KEY, raw]);
+    await seedSetup(page, { setup: "razzo-v5t" });
+    await expect(preheatField(page)).toHaveValue("315");
+    expect(await storedPreheat(page)).toBe("315");
+  });
+}
+
+for (const raw of ["200", "500"]) {
+  test(`preheat target: a stored ${JSON.stringify(raw)} is already valid, so it loads unchanged`, async ({ page }) => {
+    await page.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [PREHEAT_KEY, raw]);
+    await seedSetup(page, { setup: "razzo-v5t" });
+    await expect(preheatField(page)).toHaveValue(raw);
+    expect(await storedPreheat(page)).toBe(raw);
+  });
+}
+
+// The preheat screen is the other editor of the same number, so it has to
+// agree with Setup about the range. Its -5 has always floored at 200; its +5
+// had no ceiling. It is only on screen with a live bridge (a probe setup, a
+// real reading, no roast under way), so these run on the mocked bridge feed.
+async function openPreheatScreen(page, target) {
+  await mockRoastLinkFeed(page);
+  await page.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [PREHEAT_KEY, String(target)]);
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  const targetButton = page.getByRole("button", { name: /^Target \d+/ });
+  await expect(targetButton).toHaveText(`Target ${target}°F`);
+  await targetButton.click(); // opens the -5 / +5 editor
+  return targetButton;
+}
+
+test("preheat target: the preheat screen's +5 stops at 500", async ({ page }) => {
+  const targetButton = await openPreheatScreen(page, 495);
+  const plus = page.getByRole("button", { name: "+5", exact: true });
+  // Three taps from 495: the first lands on 500, the next two must not pass it.
+  for (let i = 0; i < 3; i++) await plus.click();
+  await expect(targetButton).toHaveText("Target 500°F");
+  expect(await storedPreheat(page)).toBe("500");
+});
+
+test("preheat target: the preheat screen's -5 stops at 200", async ({ page }) => {
+  // Already true today -- here so the two ends of the range are asserted together.
+  const targetButton = await openPreheatScreen(page, 205);
+  const minus = page.getByRole("button", { name: "−5", exact: true });
+  for (let i = 0; i < 3; i++) await minus.click();
+  await expect(targetButton).toHaveText("Target 200°F");
+  expect(await storedPreheat(page)).toBe("200");
+});
+
+test("preheat target: the value typed on Setup is the one the preheat screen shows", async ({ page }) => {
+  await mockRoastLinkFeed(page);
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await preheatField(page).fill("340");
+  // No explicit blur: pressing the primary button is what leaves the field.
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^Target \d+/ })).toHaveText("Target 340°F");
+  expect(await storedPreheat(page)).toBe("340");
+});
+
+// iOS Safari does not move focus on a tap, so the field is never blurred: a
+// Playwright .click() (mousedown, focus change, mouseup, click) would hide that.
+// dispatchEvent("click") is ONLY the click event. The typed target has to reach
+// the preheat screen and storage without any blur to carry it.
+test("preheat target: a tap on Begin preheat that never blurs the field still carries the typed target", async ({ page }) => {
+  await mockRoastLinkFeed(page);
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await preheatField(page).fill("340");
+  const begin = page.getByRole("button", { name: /Begin preheat/ });
+  await expect(begin).toBeVisible({ timeout: 15_000 }); // the label waits on the first live reading
+  await begin.dispatchEvent("click");
+  await expect(page.getByRole("button", { name: /^Target \d+/ })).toHaveText("Target 340°F");
+  expect(await storedPreheat(page)).toBe("340");
+});
+
+test("preheat target: a target typed and left by switching tabs is kept when you come back", async ({ page }) => {
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await preheatField(page).fill("340");
+  // Only the click again, so the field is never blurred on the way out.
+  await page.getByRole("button", { name: "History", exact: true }).dispatchEvent("click");
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await page.getByRole("button", { name: "Roast", exact: true }).dispatchEvent("click");
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect(preheatField(page)).toHaveValue("340");
+  expect(await storedPreheat(page)).toBe("340");
+});
+
+// ---------------------------------------------------------------------------
 // RL-037: the followed profile survives a mid-roast reload. iOS reclaims a
 // backgrounded PWA (app switch, lock, the phone flashlight), so the page
 // reloads with the roast's live_* keys in storage and nothing in memory. The
@@ -1731,6 +1924,27 @@ test("save as profile: following a profile without changing it does not nag", as
   await page.getByRole("button", { name: /E2E Profile/ }).click();
   await runQuickRoast(page, { fan: "5", heat: "6" });
   // Give the sheet a moment to (wrongly) appear before asserting it never does.
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
+});
+
+test("save as profile: following a profile that repeats a step does not nag (RL-028)", async ({ page }) => {
+  // A hand-built profile can say "Fan 5, Heat 6" at 0:00 and again at 1:00. The
+  // roast's log merges the repeat (nothing changed), so comparing the raw
+  // profile steps called an exact follow a deviation and offered to overwrite it.
+  const repeated = {
+    ...fixtureProfile,
+    steps: [
+      { time: "00:00", totalSeconds: 0, fan: "5", heat: "6" },
+      { time: "01:00", totalSeconds: 60, fan: "5", heat: "6" },
+    ],
+  };
+  await seedSetup(page, { profiles: [repeated] });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6" });
+  // The roast is saved before the prompt is decided, so wait on that rather than
+  // on the clock, then give the sheet a moment to (wrongly) appear.
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("roasts")).length)).toBe(2);
   await page.waitForTimeout(800);
   await expect(page.getByTestId("profile-from-roast")).toHaveCount(0);
 });

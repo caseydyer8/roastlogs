@@ -16,6 +16,7 @@ import ProfileFromRoastSheet from "./components/ProfileFromRoastSheet";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
+import { storedPreheatTarget } from "./lib/preheatTarget";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -973,7 +974,7 @@ function App() {
   // Preheat target lives with the device prefs, not per-roast -- only the
   // Razzo has a target at all, so one value covers it.
   const [preheatTarget, setPreheatTarget] = React.useState(
-    () => Number(localStorage.getItem("roastlogs_preheat_target")) || 315
+    () => storedPreheatTarget(localStorage.getItem("roastlogs_preheat_target"))
   );
   React.useEffect(() => {
     localStorage.setItem("roastlogs_preheat_target", String(preheatTarget));

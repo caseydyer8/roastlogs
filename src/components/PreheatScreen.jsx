@@ -1,4 +1,5 @@
 import React from "react";
+import { clampPreheatTarget } from "../lib/preheatTarget";
 
 // Fun, and spoken-and-shown as ONE message, so the phone (pocketed or
 // face-down on a bench) and the screen always agree on what just happened.
@@ -108,7 +109,7 @@ export default function PreheatScreen({ bt, target, onTargetChange }) {
         <div className="flex items-center gap-3 pt-1">
           <button
             type="button"
-            onClick={() => onTargetChange(Math.max(200, target - 5))}
+            onClick={() => onTargetChange(clampPreheatTarget(target - 5, target))}
             className="rounded-full border border-border/60 px-3 py-1 font-mono text-sm text-ink transition active:scale-95"
           >
             &minus;5
@@ -116,7 +117,7 @@ export default function PreheatScreen({ bt, target, onTargetChange }) {
           <span className="w-14 font-mono text-sm tabular-nums text-ink">{target}&deg;F</span>
           <button
             type="button"
-            onClick={() => onTargetChange(target + 5)}
+            onClick={() => onTargetChange(clampPreheatTarget(target + 5, target))}
             className="rounded-full border border-border/60 px-3 py-1 font-mono text-sm text-ink transition active:scale-95"
           >
             +5
