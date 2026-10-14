@@ -21,6 +21,7 @@
 
   --accent-fill: 217 125 61;    /* #d97d3d ember */
   --accent-text: 217 125 61;    /* #d97d3d ember (legible on all dark surfaces) */
+  --accent-ink: 9 9 11;         /* #09090b zinc-950: label ON an ember fill (6.6:1) */
 
   --error-fill: 220 38 38;      /* #dc2626 red-600 (kept clearly "error", not accent) */
   --error-text: 248 113 113;    /* #f87171 red-400 */
@@ -59,6 +60,7 @@
      accent text bold or large. Solid fills use the same ember. */
   --accent-fill: 194 96 31;     /* #c2601f */
   --accent-text: 194 96 31;     /* #c2601f */
+  --accent-ink: 9 9 11;         /* #09090b zinc-950, same in both themes: label ON an ember fill (4.7:1 on this deeper ember; bg-primary text is only 3.7:1 here) */
 
   --error-fill: 220 38 38;      /* #dc2626 red-600 */
   --error-text: 185 28 28;      /* #b91c1c red-700 */

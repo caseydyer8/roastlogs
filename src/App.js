@@ -13,6 +13,8 @@ import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
 import RoastSetupScreen, { profileStartStep } from "./components/RoastSetupScreen";
 import { beanStock, beanHistory, sameHistorySets } from "./lib/inventory";
 import ProfileFromRoastSheet from "./components/ProfileFromRoastSheet";
+import RoastDropWeightModal from "./components/RoastDropWeightModal";
+import { parseRoastedWeight } from "./lib/roastedWeight";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
@@ -1054,6 +1056,12 @@ function App() {
   // { mode: "saved", roast, followedId } right after a save, or
   // { mode: "history", roast, profileId } after editing a roast a profile came from.
   const [profileSheet, setProfileSheet] = React.useState(null);
+  // The roasted-weight prompt that follows SAVE ROAST (RL-025): null, or
+  // { roast, firstSync, sheet } -- the roast as handleStop saved it, that save's
+  // cloud write (the weight's own write queues behind it), and the profileSheet
+  // to open once the weight has been answered (null when none is due). React
+  // state at the root, so the 2 s live-session clear and tab flip leave it open.
+  const [dropWeight, setDropWeight] = React.useState(null);
 
   const [profiles, setProfiles] = React.useState(() => {
     try {
@@ -1735,7 +1743,7 @@ function App() {
 
     // Supabase Sync
     setSyncStatus('syncing');
-    syncRoastToSupabase(newRoast).then(success => {
+    const firstSync = syncRoastToSupabase(newRoast).then(success => {
       setSyncStatus(success ? 'success' : 'error');
     });
 
@@ -1743,12 +1751,17 @@ function App() {
     // dismissing the sheet can never lose anything. Offered when there is a plan
     // to save, and -- for a roast that followed a profile -- only if the hands
     // actually departed from it (milestones drift run to run and would nag).
+    let sheet = null;
     if (stepsFromRoast(newRoast).length > 0 && (!profileFollowing || roastDeviatedFromPlan(newRoast, profileFollowing))) {
       const followed = profileFollowing
         ? (profiles || []).find((p) => String(p.id) === String(profileFollowing.id))
         : null;
-      setProfileSheet({ mode: "saved", roast: newRoast, followedId: followed ? followed.id : null });
+      sheet = { mode: "saved", roast: newRoast, followedId: followed ? followed.id : null };
     }
+
+    // One question at a time: the roasted weight first (RL-025), then the sheet,
+    // if one is due (answerDropWeight opens it). Both come after the write above.
+    setDropWeight({ roast: newRoast, firstSync, sheet });
 
     // saveSuccess outlives the clear: at +2s the tab flips to Setup, which shows
     // "saved -- setup carried forward" until +6s.
@@ -2523,6 +2536,50 @@ function App() {
       }}
     />
   );
+
+  // Answers the roasted-weight prompt (RL-025). `grams` is what was typed, or
+  // undefined for SKIP. The roast is already in storage and in the cloud queue, so
+  // either way it is safe; SKIP touches nothing. SAVE WEIGHT writes the weight onto
+  // THAT roast -- found by id in a fresh read of storage, because the launch sync can
+  // merge other roasts in ahead of it while the prompt is open -- and sends it
+  // through the usual upsert, queued behind the save's own write so a slow first
+  // upsert cannot land last and reset roasted_weight to 0. Anything that is not a
+  // real weight saves nothing: an empty entry is never stored as 0.
+  //
+  // The queued write is built when it is SENT, not when SAVE WEIGHT was tapped: it
+  // can wait a long time behind a slow first write, and in that gap the roast may be
+  // edited or deleted in History. So it re-reads the roast by id from storage then --
+  // an edit is sent as edited (the weight is already in that copy), and a roast that
+  // is gone is not sent at all, so it cannot be re-created in the cloud.
+  const answerDropWeight = (grams) => {
+    if (!dropWeight) return;
+    const { roast, firstSync, sheet } = dropWeight;
+    setDropWeight(null);
+
+    const weight = parseRoastedWeight(grams);
+    const stored = weight === null ? [] : readStoredRoasts();
+    const saved = stored.find((r) => r && Number(r.id) === Number(roast.id));
+    if (saved) {
+      const patched = { ...saved, roastedWeight: weight };
+      try {
+        localStorage.setItem("roasts", JSON.stringify(stored.map((r) => (r === saved ? patched : r))));
+        firstSync.then(() => {
+          const latest = readStoredRoasts().find((r) => r && Number(r.id) === Number(roast.id));
+          if (!latest) return null; // deleted meanwhile: send nothing, and it is not an error
+          setSyncStatus('syncing');
+          return syncRoastToSupabase(latest);
+        }).then(success => {
+          if (success === null) return; // nothing was sent, so there is no result to show
+          setSyncStatus(success ? 'success' : 'error');
+        });
+      } catch (e) {
+        // Storage refused the write. The roast itself is untouched; only the weight is lost.
+        showToast("Couldn't store the roasted weight. Add it from History.", "error");
+      }
+    }
+
+    if (sheet) setProfileSheet(sheet);
+  };
 
   const saveProfileFromSheet = (name) => {
     if (!profileSheet) return;
@@ -5483,6 +5540,14 @@ function App() {
           </div>
         )}
       </main>
+
+      {dropWeight && (
+        <RoastDropWeightModal
+          roast={dropWeight.roast}
+          onSave={answerDropWeight}
+          onSkip={() => answerDropWeight()}
+        />
+      )}
 
       {profileSheet && (
         <ProfileFromRoastSheet

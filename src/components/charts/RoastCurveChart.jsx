@@ -23,6 +23,7 @@ import {
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
 import { MAX_ROAST_S } from "../../lib/limits";
+import { weightLossPercent, formatWeightLoss } from "../../lib/roastedWeight";
 import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
@@ -235,9 +236,9 @@ export default function RoastCurveChart({ roast }) {
     // FC Temp = bean temp at first crack; Wt Loss = green→roasted mass lost.
     const fcTAt = hasTemp && firstCrack != null ? Math.min(firstCrack, lastTempT) : null;
     const fcTemp = fcTAt != null && !inGap(fcTAt) ? tempAt(fcTAt) : null;
-    const gw = Number(roast.greenWeight);
-    const rw = Number(roast.roastedWeight);
-    const weightLoss = gw > 0 && rw > 0 && rw < gw ? ((gw - rw) / gw) * 100 : null;
+    // The rule lives in lib/roastedWeight.js: the roasted-weight prompt shows the
+    // same figure as it is typed.
+    const weightLoss = weightLossPercent(roast.greenWeight, roast.roastedWeight);
 
     // Phase durations (Drying = start→yellowing, Maillard = yellowing→FC,
     // Development = FC→drop).
@@ -506,7 +507,7 @@ export default function RoastCurveChart({ roast }) {
       <div className="grid grid-cols-4 gap-2">
         <StatTile label="Avg RoR" value={avgRor != null ? `${avgRor.toFixed(1)}°/m` : "—"} accent="text-chart-ror" />
         <StatTile label="FC Temp" value={fcTemp != null ? `${Math.round(fcTemp)}°` : "—"} accent="text-accent-text" />
-        <StatTile label="Wt Loss" value={weightLoss != null ? `${weightLoss.toFixed(1)}%` : "—"} accent="text-success-text" />
+        <StatTile label="Wt Loss" value={weightLoss != null ? formatWeightLoss(weightLoss) : "—"} accent="text-success-text" />
         <StatTile label="DTR" value={dtr != null ? `${dtr.toFixed(1)}%` : "—"} accent="text-ink" />
       </div>
 

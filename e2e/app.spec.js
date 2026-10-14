@@ -934,6 +934,7 @@ test("setup -> save: the roast records beanId, stock deducts, and the setup carr
     await page.getByRole("button", { name: `Mark ${label}` }).click();
   }
   await page.getByRole("button", { name: "SAVE ROAST" }).click();
+  await skipDropWeight(page); // the roasted-weight prompt covers the nav until it is answered
 
   const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts"))[0]);
   expect(saved.beanId).toBe(fixtureBean.id);
@@ -1870,11 +1871,21 @@ for (const [label, totalSeconds] of [["\"1e999\" (parses to Infinity)", "1e999"]
 // written, so every test also asserts the roast is already in storage.
 // ---------------------------------------------------------------------------
 
+// The roasted-weight prompt (RL-025) that every SAVE ROAST now opens over the screen.
+// It stays up until it is answered -- the 2 s tab flip does not close it -- so a test
+// that goes on to touch the page behind it has to answer it first.
+const dropWeightPrompt = (page) => page.getByTestId("drop-weight");
+const skipDropWeight = (page) => dropWeightPrompt(page).getByRole("button", { name: "SKIP" }).click({ timeout: 10_000 });
+
 // `save: false` stops at COOLING START with SAVE ROAST showing, for the tests that
 // need to decide how (and how many times) it is tapped. `clockPast` lets the roast
 // clock get past 0:0N before the marks, so they carry real times: a mark at 0:00 is
 // stored as 0, which a reload reads back as "never marked" (no SAVE ROAST).
-async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPast = 0 } = {}) {
+// `dropWeight: "skip"` (the default) answers the roasted-weight prompt with SKIP, so
+// the callers that care about what comes AFTER a save -- the profile sheet, the next
+// roast -- see the screen they always did. `"leave"` hands the open prompt back to
+// the test, for the ones that are about the prompt itself. No-op when `save: false`.
+async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPast = 0, dropWeight = "skip" } = {}) {
   const dials = page.locator("div.grid.grid-cols-3 input");
   await dials.nth(0).fill(fan);
   await dials.nth(1).fill(heat);
@@ -1884,6 +1895,7 @@ async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPa
     await page.getByRole("button", { name: `Mark ${label}` }).click();
   }
   if (save) await page.getByRole("button", { name: "SAVE ROAST" }).click();
+  if (save && dropWeight === "skip") await skipDropWeight(page);
 }
 
 test("save as profile: a manual roast offers a new profile with its steps, milestones and source roast", async ({ page }) => {
@@ -2183,6 +2195,7 @@ test("save roast: a reload right after save does not bring the roast back or let
 test("save roast: the NEXT roast after a normal save still saves (RL-043)", async ({ page }) => {
   await roastToCooling(page);
   await saveRoastButton(page).click();
+  await skipDropWeight(page); // otherwise the prompt sits over Setup and blocks the next roast
   // +2 s: the live session clears and the tab flips back to Setup.
   await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
   expect(await roastCount(page)).toBe(2);
@@ -2268,4 +2281,549 @@ test("save roast: a marker left by an earlier roast neither wipes nor blocks the
   const newest = (await storedRoasts(page))[0];
   expect(newest.id).not.toBe(earlier.id);
   expect(newest.totalSeconds).toBeGreaterThanOrEqual(130); // continued the restored clock
+});
+
+// ---------------------------------------------------------------------------
+// Roasted weight after SAVE ROAST (RL-025). Before this, handleStop wrote
+// roastedWeight: 0 and the weight-loss % stayed blank until the roast was edited
+// in History -- if Case remembered. Now SAVE ROAST opens a prompt for it.
+//
+// The contract these tests hold the build to:
+//  - the roast is ALREADY in storage when the prompt opens, so no answer, SKIP
+//    included, can lose a roast;
+//  - the prompt is `[data-testid="drop-weight"]`, one grams field labelled
+//    "Roasted weight in grams" (the Setup screen's "Green weight in grams" is the
+//    model), a live weight-loss %, and SAVE WEIGHT / SKIP buttons;
+//  - it is React state at the root, so the 2 s live-session clear and tab flip
+//    leave it open;
+//  - SAVE WEIGHT patches THAT roast by id and syncs it through the existing
+//    syncRoastToSupabase; SKIP changes nothing and sends nothing;
+//  - the % is the History "Wt Loss" tile's own: green and roasted both > 0 and
+//    roasted < green, ((g - r) / g) * 100 to one decimal;
+//  - the weight prompt comes first; the profile sheet, when it applies, after it.
+// Screenshots: only `fullPageShot`, never baselined from this machine -- the
+// prompt's baseline is pending Case's Mac.
+// ---------------------------------------------------------------------------
+
+const dropWeightInput = (page) => dropWeightPrompt(page).getByLabel("Roasted weight in grams");
+const saveDropWeightButton = (page) => dropWeightPrompt(page).getByRole("button", { name: "SAVE WEIGHT" });
+const profileSheet = (page) => page.getByTestId("profile-from-roast");
+
+// A weight-loss figure anywhere in the prompt: "16.3%", never "—" or a bare label.
+const LOSS_PERCENT = /\d+(\.\d+)?\s*%/;
+// The History "Wt Loss" tile of the roast open in the detail view, e.g. "16.3%".
+const historyLossTile = (page) => page.getByText("Wt Loss", { exact: true }).locator("..");
+
+// Every write the app aims at the cloud's roasts table, body parsed, in the order
+// it was sent. The context route aborts them, but the 'request' event still fires
+// (the same trick as recordCloudDeletes), so each attempt is visible. A negative
+// assertion on this list is only honest after the roast's first write was seen.
+function recordCloudRoastWrites(page) {
+  const sent = [];
+  page.on("request", (req) => {
+    if (!["POST", "PATCH", "PUT"].includes(req.method())) return;
+    if (!/\/rest\/v1\/roasts(\?|$)/.test(req.url())) return;
+    let body = null;
+    try { body = JSON.parse(req.postData() || "null"); } catch (e) { /* not JSON: ignored below */ }
+    for (const row of [].concat(body || [])) sent.push(row);
+  });
+  return {
+    forRoast: (id) => sent.filter((row) => Number(row.id) === Number(id)),
+    all: () => [...sent],
+  };
+}
+
+// Holds the roast's own first cloud write (the one SAVE ROAST sends) in flight until
+// release(), then lets it on to the context route, which aborts it like any other.
+// While it is held, the weight's write (queued behind it) cannot have been sent --
+// which is the window in which the user can still delete or edit the roast. Call it
+// BEFORE the roast is saved. `release` is idempotent; tests call it in a finally.
+async function holdFirstRoastWrite(page) {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let held = false;
+  await page.route(/\/rest\/v1\/roasts(\?|$)/, async (route) => {
+    if (route.request().method() !== "POST" || held) return route.fallback();
+    held = true;
+    await gate;
+    await route.fallback();
+  });
+  return { release };
+}
+
+// 227 g green on a manual roast of Fan 5 / Heat 6, saved, and the prompt left open.
+// With `followed` the roast follows a one-step profile it then matches exactly, so
+// the profile sheet has no reason to open and these tests see the weight prompt alone
+// ("does not nag", above). Without it the roast is a manual one, which DOES earn the
+// "Keep this as a profile?" sheet.
+async function roastToDropWeight(page, { green = "227", followed = true, fan = "5", heat = "6" } = {}) {
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  if (followed) await page.getByRole("button", { name: /E2E Profile/ }).click();
+  else await page.getByRole("button", { name: /Manual roast/ }).click();
+  if (green) await page.getByLabel("Green weight in grams").fill(green);
+  await runQuickRoast(page, { fan, heat, clockPast: 2, dropWeight: "leave" });
+  await expect(dropWeightPrompt(page)).toBeVisible();
+}
+
+test("drop weight: SAVE ROAST opens the prompt with the roast already saved, and the 2 s tab flip does not close it (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+
+  // Already saved: in storage, once, with the weight still unset.
+  const roasts = await storedRoasts(page);
+  expect(roasts).toHaveLength(2); // the fixture roast + this one
+  expect(roasts[0].greenWeight).toBe(227);
+  expect(roasts[0].roastedWeight).toBe(0);
+  // A followed, unchanged roast has no profile to offer: the prompt is the only one.
+  await expect(profileSheet(page)).toHaveCount(0);
+  // Both answers are reachable on a phone, with nothing scrolled.
+  await expect(saveDropWeightButton(page)).toBeInViewport();
+  await expect(dropWeightPrompt(page).getByRole("button", { name: "SKIP" })).toBeInViewport();
+
+  // Type inside the first 2 s, then let the live session clear and the tab flip to
+  // Setup: the prompt, and what was typed into it, must still be there.
+  await dropWeightInput(page).fill("190");
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(dropWeightPrompt(page)).toBeVisible();
+  await expect(dropWeightInput(page)).toHaveValue("190");
+  await expect(dropWeightPrompt(page)).toContainText("16.3%");
+  expect(await roastCount(page)).toBe(2);
+});
+
+test("drop weight: the weight loss shows as it is typed, and is the History tile's own number (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page); // 227 g green
+  const prompt = dropWeightPrompt(page);
+  const input = dropWeightInput(page);
+  // Nothing typed yet, nothing to compute.
+  await expect(prompt).not.toContainText(LOSS_PERCENT);
+
+  // Key by key, no blur in between: every stroke moves the figure.
+  await input.click();
+  await page.keyboard.type("1");
+  await expect(prompt).toContainText("99.6%");
+  await page.keyboard.type("9");
+  await expect(prompt).toContainText("91.6%");
+  await page.keyboard.type("0");
+  await expect(prompt).toContainText("16.3%");
+
+  // The History tile's rounding (one decimal), including a decimal weight.
+  await input.fill("190.5");
+  await expect(prompt).toContainText("16.1%");
+  await input.fill("226");
+  await expect(prompt).toContainText("0.4%");
+
+  // The tile's own rule: no figure unless 0 < roasted < green. Roasted at or above
+  // green is not a weight loss, and the tile would read "—" for it.
+  for (const heavy of ["227", "230"]) {
+    await input.fill(heavy);
+    await expect(prompt, `${heavy} g against 227 g green`).not.toContainText(LOSS_PERCENT);
+  }
+
+  // And once saved, History shows exactly the figure the prompt showed.
+  await input.fill("190");
+  await expect(prompt).toContainText("16.3%");
+  await saveDropWeightButton(page).click();
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("Unnamed Bean").first().click();
+  await expect(historyLossTile(page)).toContainText("16.3%");
+});
+
+test("drop weight: a weight at or above the green weight gets a check-the-scale hint, and it never blocks SAVE WEIGHT (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page); // 227 g green
+  const prompt = dropWeightPrompt(page);
+  const input = dropWeightInput(page);
+  const hint = prompt.getByText("Heavier than the 227 g green weight: check the scale.");
+
+  // Nothing typed, and a normal weight: no hint.
+  await expect(hint).toHaveCount(0);
+  await input.fill("190");
+  await expect(prompt).toContainText("16.3%");
+  await expect(hint).toHaveCount(0);
+
+  // 230 and exactly 227 are both "not a weight loss": the hint names the roast's own green weight.
+  for (const heavy of ["230", "227"]) {
+    await input.fill(heavy);
+    await expect(hint, `${heavy} g against 227 g green`).toHaveCount(1);
+    await expect(prompt).not.toContainText(LOSS_PERCENT);
+  }
+
+  // One notch under green is a (tiny) loss again, so the hint goes.
+  await input.fill("226");
+  await expect(hint).toHaveCount(0);
+  await input.fill("190");
+  await expect(hint).toHaveCount(0);
+
+  // It warns and never blocks: the green weight itself may be the typo, so a heavy
+  // weight still saves, exactly as typed.
+  await input.fill("230");
+  await expect(hint).toHaveCount(1);
+  await expect(saveDropWeightButton(page)).toBeEnabled();
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+  expect((await storedRoasts(page))[0].roastedWeight).toBe(230);
+});
+
+// WCAG AA wants 4.5:1 for 16 px text. SAVE WEIGHT is white-on-ember if its label
+// takes the page's BACKGROUND colour (what `text-primary` is): in the light theme
+// that is off-white on ember, about 3.7:1. The label has its own token instead.
+test("drop weight: the SAVE WEIGHT label clears 4.5:1 against its ember button in both themes (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+  await dropWeightInput(page).fill("190"); // enabled: a disabled button is drawn at 40% opacity
+  // Measure the settled colours, not a frame of the 150 ms ease between themes: the first
+  // sample after a flip would otherwise still read the OLD theme's near-black label.
+  await page.addStyleTag({ content: "*, *::before, *::after { transition: none !important; }" });
+  const contrast = () =>
+    page.evaluate(() => {
+      const btn = document.querySelector('[data-testid="drop-weight"] button[type="submit"]');
+      const cs = getComputedStyle(btn);
+      const channels = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+      const luminance = (c) => {
+        const [r, g, b] = channels(c).map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const [hi, lo] = [luminance(cs.color), luminance(cs.backgroundColor)].sort((a, b) => b - a);
+      return (hi + 0.05) / (lo + 0.05);
+    });
+
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+    expect(await contrast(), `${theme} theme: SAVE WEIGHT label against its button`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("drop weight: SAVE WEIGHT writes the weight onto that roast and sends it to the cloud (RL-025)", async ({ page }) => {
+  const cloud = recordCloudRoastWrites(page);
+  await roastToDropWeight(page);
+  const before = await storedRoasts(page);
+  const saved = before[0];
+  // The roast's own first write is out already (it carries the unset weight).
+  await expect.poll(() => cloud.forRoast(saved.id).length, { message: "cloud writes for the roast at SAVE ROAST" }).toBe(1);
+  expect(cloud.forRoast(saved.id)[0].roasted_weight).toBe(0);
+
+  await dropWeightInput(page).fill("190");
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+  // Same roast, same place, one field different -- and nothing else touched.
+  const after = await storedRoasts(page);
+  expect(after).toHaveLength(2);
+  expect(after[0]).toEqual({ ...saved, roastedWeight: 190 });
+  expect(after[1]).toEqual(before[1]);
+
+  // The cloud got the weight through the roast's normal upsert: the same id, the
+  // whole row (an upsert that dropped columns would blank them), and it came LAST.
+  await expect.poll(() => cloud.forRoast(saved.id).length, { message: "cloud writes for the roast after SAVE WEIGHT" }).toBe(2);
+  const writes = cloud.forRoast(saved.id);
+  const last = writes[writes.length - 1];
+  expect(last.roasted_weight).toBe(190);
+  expect(last.green_weight).toBe(227);
+  expect(last.bean_name).toBe(saved.beanName);
+  expect(last.roast_log).toHaveLength(saved.roastLog.length);
+  expect(cloud.all().filter((row) => Number(row.id) !== Number(saved.id))).toHaveLength(0); // no other roast was written
+
+  // History shows it too.
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("Unnamed Bean").first().click();
+  await expect(page.getByText("Roasted Weight")).toBeVisible();
+  await expect(historyLossTile(page)).toContainText("16.3%");
+});
+
+test("drop weight: a slow first cloud write cannot land after the weight's write and reset it to 0 (RL-025)", async ({ page }) => {
+  const cloud = recordCloudRoastWrites(page);
+  // Hold the roast's own first write (the one SAVE ROAST sends) in flight. Two
+  // upserts of one row racing on a bad connection can land in either order; the one
+  // that lands last wins, so the weight's write must wait for the first to settle.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let held = false;
+  await page.route(/\/rest\/v1\/roasts(\?|$)/, async (route) => {
+    if (route.request().method() !== "POST" || held) return route.fallback();
+    held = true;
+    await gate;
+    await route.fallback(); // on to the context route, which aborts it like any other
+  });
+
+  await roastToDropWeight(page);
+  const [saved] = await storedRoasts(page);
+  await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the first write, held in flight" }).toBe(1);
+
+  await dropWeightInput(page).fill("190");
+  await saveDropWeightButton(page).click();
+  // The device has it at once -- local storage never waits on the network...
+  expect((await storedRoasts(page))[0].roastedWeight).toBe(190);
+  // ...but the cloud write queues behind the first, which has not settled yet.
+  await page.waitForTimeout(600);
+  expect(
+    cloud.forRoast(saved.id).map((row) => row.roasted_weight),
+    "the weight's write must wait for the held first write"
+  ).toEqual([0]);
+
+  release();
+  await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the weight's write after the first settled" }).toBe(2);
+  expect(cloud.forRoast(saved.id).map((row) => row.roasted_weight)).toEqual([0, 190]);
+});
+
+// The weight's cloud write waits behind the roast's first one, so it can be sent
+// well after SAVE WEIGHT was tapped. It must carry the roast as storage holds it
+// WHEN IT IS SENT, not the copy taken at the tap: a stale copy would undo an edit
+// made in between, or bring a deleted roast back from the dead.
+test("drop weight: a roast deleted while its weight write waits is not re-created in the cloud (RL-025)", async ({ page }) => {
+  const cloud = recordCloudRoastWrites(page);
+  const deletes = recordCloudDeletes(page);
+  const first = await holdFirstRoastWrite(page);
+  try {
+    await roastToDropWeight(page);
+    const [saved] = await storedRoasts(page);
+    await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the first write, held in flight" }).toBe(1);
+
+    await dropWeightInput(page).fill("190");
+    await saveDropWeightButton(page).click();
+    await expect(dropWeightPrompt(page)).toHaveCount(0);
+    expect((await storedRoasts(page))[0].roastedWeight).toBe(190);
+
+    // Delete it from History while the first write is still in flight.
+    await page.getByRole("button", { name: "History" }).click();
+    await page.getByText("Unnamed Bean").first().click();
+    await page.getByRole("button", { name: "DELETE ROAST" }).click();
+    await page.getByRole("button", { name: "DELETE", exact: true }).click();
+    expect((await storedRoasts(page)).some((r) => r.id === saved.id), "the roast is gone from this device").toBe(false);
+    // The cloud delete WAS sent: a client that sent nothing at all would pass the
+    // negative below just as happily.
+    expect(await deletes.sentAfter(1)).toEqual([`roasts?id=eq.${saved.id}`]);
+
+    first.release();
+    await page.waitForTimeout(800); // long enough for a queued write to have been sent
+    expect(
+      cloud.forRoast(saved.id).map((row) => row.roasted_weight),
+      "only the roast's own first write: the weight's write must not re-create a deleted roast"
+    ).toEqual([0]);
+    await expect(page.getByText("Couldn't store the roasted weight")).toHaveCount(0); // not an error, just moot
+    expect((await storedRoasts(page)).some((r) => r.id === saved.id)).toBe(false); // and not back on the device
+  } finally {
+    first.release();
+  }
+});
+
+test("drop weight: a roast edited while its weight write waits is sent as edited, with the weight -- never the stale copy (RL-025)", async ({ page }) => {
+  const cloud = recordCloudRoastWrites(page);
+  const first = await holdFirstRoastWrite(page);
+  try {
+    await roastToDropWeight(page);
+    const [saved] = await storedRoasts(page);
+    await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the first write, held in flight" }).toBe(1);
+
+    await dropWeightInput(page).fill("190");
+    await saveDropWeightButton(page).click();
+    await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+    // Edit it in History while the first write is still in flight.
+    await page.getByRole("button", { name: "History" }).click();
+    await page.getByText("Unnamed Bean").first().click();
+    await page.getByRole("button", { name: "EDIT ROAST" }).click();
+    await page.getByLabel("Bean Name").fill("Edited While Waiting");
+    await page.getByRole("button", { name: "SAVE CHANGES" }).click();
+    const edited = (await storedRoasts(page))[0];
+    expect(edited.id).toBe(saved.id);
+    expect(edited.beanName).toBe("Edited While Waiting");
+    expect(edited.roastedWeight).toBe(190);
+    // The edit's own upsert goes straight out (it is not queued behind the first).
+    await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the edit's own write" }).toBe(2);
+
+    first.release();
+    await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the weight's write, after the first settled" }).toBe(3);
+    const writes = cloud.forRoast(saved.id);
+    expect(writes[0].bean_name).toBe("Unnamed Bean"); // the first write predates the edit and the weight
+    expect(writes[0].roasted_weight).toBe(0);
+    // Everything sent after the edit -- the weight's write included -- is the edited roast.
+    for (const row of writes.slice(1)) {
+      expect(row.bean_name).toBe("Edited While Waiting");
+      expect(row.roasted_weight).toBe(190);
+    }
+    expect((await storedRoasts(page))[0]).toEqual(edited); // and the device was never rewritten by it
+  } finally {
+    first.release();
+  }
+});
+
+test("drop weight: SKIP leaves the roast exactly as saved, discards what was typed, and sends nothing more (RL-025)", async ({ page }) => {
+  const cloud = recordCloudRoastWrites(page);
+  await roastToDropWeight(page);
+  const before = await storedRoasts(page);
+  await expect.poll(() => cloud.forRoast(before[0].id).length).toBe(1);
+
+  await dropWeightInput(page).fill("190"); // typed, then walked away from
+  await skipDropWeight(page);
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+  // Byte for byte what handleStop wrote: still saved, still once, weight still 0.
+  expect(await storedRoasts(page)).toEqual(before);
+  expect(before[0].roastedWeight).toBe(0);
+  // SKIP is a no-op for the cloud too: the one write is the roast's own, from SAVE ROAST.
+  await page.waitForTimeout(600);
+  expect(cloud.forRoast(before[0].id).map((row) => row.roasted_weight)).toEqual([0]);
+
+  // It stays dismissed once the live session clears and the tab flips to Setup.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+});
+
+// What the field must never turn into a saved weight. None of these may write 0 or
+// anything else: the roast stays as SAVE ROAST left it, and nothing is sent. (A
+// number field refuses letters outright, a text field has to; either way no figure
+// shows and nothing saves.)
+for (const bad of ["", "abc", "-5", "0"]) {
+  test(`drop weight: ${JSON.stringify(bad)} saves nothing and never writes 0 (RL-025)`, async ({ page }) => {
+    const cloud = recordCloudRoastWrites(page);
+    await roastToDropWeight(page);
+    const before = await storedRoasts(page);
+    await expect.poll(() => cloud.forRoast(before[0].id).length).toBe(1);
+
+    const input = dropWeightInput(page);
+    if (bad) {
+      await input.click();
+      await page.keyboard.type(bad); // keystrokes, so a number field's own filtering applies
+    }
+    await expect(dropWeightPrompt(page)).not.toContainText(LOSS_PERCENT);
+    // force: a disabled SAVE WEIGHT is as good an answer as one that does nothing.
+    await saveDropWeightButton(page).click({ force: true });
+
+    expect(await storedRoasts(page)).toEqual(before);
+    await page.waitForTimeout(600);
+    expect(cloud.forRoast(before[0].id).map((row) => row.roasted_weight)).toEqual([0]);
+  });
+}
+
+test("drop weight: a roast with no green weight still takes the weight, and shows no percentage (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page, { green: "" });
+  expect((await storedRoasts(page))[0].greenWeight).toBe(0);
+
+  await dropWeightInput(page).fill("190");
+  // Nothing to take a loss from -- the History tile would read "—" too.
+  await expect(dropWeightPrompt(page)).not.toContainText(LOSS_PERCENT);
+  // ...and nothing to be heavier than, so no check-the-scale hint either.
+  await expect(dropWeightPrompt(page)).not.toContainText("check the scale");
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+  expect((await storedRoasts(page))[0].roastedWeight).toBe(190);
+});
+
+test("drop weight: the weight lands on its own roast -- the next roast gets its own prompt and the earlier one is left alone (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+  await skipDropWeight(page);
+  const [first] = await storedRoasts(page);
+
+  // Back on Setup once the save settles; the profile choice is made fresh every roast.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2, dropWeight: "leave" });
+  await expect(dropWeightPrompt(page)).toBeVisible();
+  await dropWeightInput(page).fill("150"); // 227 g green carried forward
+  await expect(dropWeightPrompt(page)).toContainText("33.9%");
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+  const roasts = await storedRoasts(page);
+  expect(roasts).toHaveLength(3);
+  expect(new Set(roasts.map((r) => r.id)).size).toBe(3);
+  expect(roasts[0].id).not.toBe(first.id);
+  expect(roasts[0].roastedWeight).toBe(150);
+  expect(roasts[1]).toEqual(first); // the earlier roast, weight still unset
+  expect(roasts[2].roastedWeight).toBe(fixtureRoast.roastedWeight); // the seeded one, untouched
+});
+
+test("drop weight: a roast that reaches storage while the prompt is open is kept, and the weight still lands on its own roast (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+  const [saved] = await storedRoasts(page);
+  // The launch sync merges cloud roasts into storage whenever its read finishes --
+  // possibly while the prompt is up -- and sorts them newest-first. A roast from
+  // another device with a LATER id lands ahead of this one, so "the first roast" is
+  // no longer this roast. Saving the weight must patch the roast with this roast's
+  // id as it finds storage now, not the first one and not the copy it was opened with.
+  const arrived = { ...fixtureRoast, id: saved.id + 5000, date: "2026-10-14", beanName: "Merged In From Cloud" };
+  await page.evaluate((roast) => {
+    const all = JSON.parse(localStorage.getItem("roasts"));
+    localStorage.setItem("roasts", JSON.stringify([roast, ...all]));
+  }, arrived);
+
+  await dropWeightInput(page).fill("190");
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+  const roasts = await storedRoasts(page);
+  expect(roasts).toHaveLength(3);
+  expect(roasts.find((r) => r.id === arrived.id)).toEqual(arrived); // kept, and not given a weight
+  expect(roasts.find((r) => r.id === saved.id)).toEqual({ ...saved, roastedWeight: 190 });
+});
+
+test("drop weight: a reload with the prompt open leaves the roast in History exactly once (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+  const [saved] = await storedRoasts(page);
+  // Past the 2 s clear, so this is the prompt-open-on-Setup state, not the save window.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(dropWeightPrompt(page)).toBeVisible();
+
+  await keepRoastsAcrossReload(page);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  // The prompt was only ever a question; the roast does not depend on it.
+  const roasts = await storedRoasts(page);
+  expect(roasts).toHaveLength(2);
+  expect(roasts.filter((r) => r.id === saved.id)).toHaveLength(1);
+  expect(roasts[0].roastedWeight).toBe(0);
+  await expect(saveRoastButton(page)).toHaveCount(0);
+});
+
+test("drop weight: with the profile sheet also due, the weight is asked first, once, and the sheet still works after SAVE WEIGHT (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page, { followed: false }); // a manual roast earns "Keep this as a profile?"
+  // One question at a time: the sheet waits behind the weight prompt.
+  await expect(profileSheet(page)).toHaveCount(0);
+
+  await dropWeightInput(page).fill("190");
+  await saveDropWeightButton(page).click();
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+
+  const sheet = profileSheet(page);
+  await expect(sheet.getByText("Keep this as a profile?")).toBeVisible();
+  await sheet.getByLabel("Profile name").fill("Weighed Roast");
+  await sheet.getByRole("button", { name: "Save profile" }).click();
+  await expect(sheet).toHaveCount(0);
+
+  // Neither question undid the other, and the weight prompt did not come back.
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+  const { roasts, profile } = await page.evaluate(() => ({
+    roasts: JSON.parse(localStorage.getItem("roasts")),
+    profile: JSON.parse(localStorage.getItem("global_profiles")).find((p) => p.name === "Weighed Roast"),
+  }));
+  expect(roasts).toHaveLength(2);
+  expect(roasts[0].roastedWeight).toBe(190);
+  expect(profile.sourceRoastId).toBe(roasts[0].id);
+});
+
+test("drop weight: SKIP with the profile sheet also due leaves the roast alone, and 'No thanks' does not bring the weight prompt back (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page, { followed: false });
+  const before = await storedRoasts(page);
+  await expect(profileSheet(page)).toHaveCount(0);
+
+  await skipDropWeight(page);
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+  await expect(profileSheet(page).getByText("Keep this as a profile?")).toBeVisible();
+  await profileSheet(page).getByRole("button", { name: "No thanks" }).click();
+
+  await expect(profileSheet(page)).toHaveCount(0);
+  await expect(dropWeightPrompt(page)).toHaveCount(0);
+  expect(await storedRoasts(page)).toEqual(before);
+});
+
+test("drop weight: the prompt renders (visual; baseline pending Case's Mac) (RL-025)", async ({ page }) => {
+  await roastToDropWeight(page);
+  await dropWeightInput(page).fill("190");
+  await expect(dropWeightPrompt(page)).toContainText("16.3%");
+  // Let the page behind settle: the tab flips to Setup at 2 s and its "saved --
+  // setup carried forward" note leaves at 6 s. A shot taken earlier is a race.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/last setup carried forward/)).toHaveCount(0, { timeout: 10_000 });
+  await fullPageShot(page, "drop-weight.png");
 });

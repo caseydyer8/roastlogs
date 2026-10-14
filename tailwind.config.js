@@ -23,6 +23,7 @@ module.exports = {
         border: 'rgb(var(--border-color) / <alpha-value>)',
         accent: 'rgb(var(--accent-fill) / <alpha-value>)',
         'accent-text': 'rgb(var(--accent-text) / <alpha-value>)',
+        'accent-ink': 'rgb(var(--accent-ink) / <alpha-value>)',
         error: 'rgb(var(--error-fill) / <alpha-value>)',
         'error-text': 'rgb(var(--error-text) / <alpha-value>)',
         success: 'rgb(var(--success-fill) / <alpha-value>)',
