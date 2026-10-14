@@ -17,6 +17,7 @@ import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, mi
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
 import { storedPreheatTarget } from "./lib/preheatTarget";
+import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -777,8 +778,6 @@ function curveTempAt(curve, t) {
   return best ? Math.round(best.bt) : null;
 }
 
-const LIVE_CURVE_KEY = "live_curve";
-
 function readStoredCurve() {
   try {
     const raw = localStorage.getItem(LIVE_CURVE_KEY);
@@ -861,6 +860,14 @@ function readStoredRoasts(rev) {
 }
 
 function App() {
+  // A roast saved just before a reload is finished, not paused (RL-043): settle
+  // that BEFORE any state below hydrates from live_*, or it would come back as a
+  // paused roast with SAVE ROAST showing. A lazy initialiser rather than an
+  // effect for exactly that reason; it is safe to run twice.
+  // The roasts blob can run to several MB of curves, so it is only parsed when a
+  // marker is actually there to be checked against it.
+  React.useState(() => (localStorage.getItem(SAVED_ROAST_KEY) === null ? false : settleSavedLiveSession(readStoredRoasts())));
+
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
   const liveRoast = useLiveRoast();
@@ -1465,31 +1472,9 @@ function App() {
 
   // keepSetup: after a SAVE the last bean / weight / level carry forward so a
   // back-to-back roast is a click-through. Discard still wipes everything.
+  // The key list lives in lib/liveSession.js: boot finishes this same clear.
   const clearLiveSession = ({ keepSetup = false } = {}) => {
-    const keys = [
-      ...(keepSetup ? [] : ["live_beanName", "live_beanId", "live_greenWeightGrams", "live_targetRoastLevel"]),
-      "live_startingHeat",
-      "live_startingFan",
-      "live_startingTemp",
-      "live_elapsedSeconds",
-      "live_devSeconds",
-      "live_firstCrackTime",
-      "live_coolingStartTime",
-      "live_roastLog",
-      "live_profileFollowing",
-      "live_currentProfileStepIdx",
-      // The curve was persisted so a mid-roast reload keeps its trace, but
-      // Discard never cleared it. startRoast masked that by resetting curveRef
-      // on a fresh roast -- until the timeline gained a curve fallback for
-      // missing temperatures, which would then paint a DISCARDED roast's
-      // readings onto the next one after a reload. Same-account bleed, not a
-      // cross-account leak: the "live_" prefix purge already covers sign-in.
-      LIVE_CURVE_KEY,
-      // Vestigial: read at startup but never written since an old version.
-      // Purged so a stale copy on a long-lived install cannot hydrate.
-      "live_adjustments"
-    ];
-    keys.forEach(k => localStorage.removeItem(k));
+    liveSessionKeys({ keepSetup }).forEach(k => localStorage.removeItem(k));
     curveRef.current = [];
     setCurvePointCount(0);
     turnaroundLowRef.current = null;
@@ -1664,6 +1649,7 @@ function App() {
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
+      clearSavedMarker(); // a new roast has not been saved
       curveRef.current = [];
       setCurvePointCount(0);
       writeStoredCurve([]);
@@ -1690,6 +1676,13 @@ function App() {
   };
 
   const handleStop = () => {
+    // Saved already? SAVE ROAST stays on screen until the live session clears
+    // 2 s later, so a second tap would otherwise add the same roast again under
+    // a new id. The marker counts only for a roast still in History that this
+    // very session saved (lib/liveSession.js): anything stale saves as normal.
+    const stamp = liveSessionStamp(elapsedSeconds, roastLog.length);
+    if (liveSessionAlreadySaved(stamp, readStoredRoasts())) return;
+
     setIsTimerRunning(false);
 
     const newRoast = {
@@ -1738,6 +1731,7 @@ function App() {
     }
 
     localStorage.setItem("roasts", JSON.stringify([newRoast, ...existingRoasts]));
+    markRoastSaved(newRoast.id, stamp); // after the write: never names a roast that is not there
 
     // Supabase Sync
     setSyncStatus('syncing');

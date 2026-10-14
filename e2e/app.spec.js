@@ -1870,15 +1870,20 @@ for (const [label, totalSeconds] of [["\"1e999\" (parses to Infinity)", "1e999"]
 // written, so every test also asserts the roast is already in storage.
 // ---------------------------------------------------------------------------
 
-async function runQuickRoast(page, { fan = "5", heat = "6" } = {}) {
+// `save: false` stops at COOLING START with SAVE ROAST showing, for the tests that
+// need to decide how (and how many times) it is tapped. `clockPast` lets the roast
+// clock get past 0:0N before the marks, so they carry real times: a mark at 0:00 is
+// stored as 0, which a reload reads back as "never marked" (no SAVE ROAST).
+async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPast = 0 } = {}) {
   const dials = page.locator("div.grid.grid-cols-3 input");
   await dials.nth(0).fill(fan);
   await dials.nth(1).fill(heat);
   await page.getByRole("button", { name: "Start roast" }).click();
+  if (clockPast > 0) await expect(page.getByText(`00:0${clockPast}`, { exact: true })).toBeVisible();
   for (const label of ["Yellowing", "First crack", "Cooling start"]) {
     await page.getByRole("button", { name: `Mark ${label}` }).click();
   }
-  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+  if (save) await page.getByRole("button", { name: "SAVE ROAST" }).click();
 }
 
 test("save as profile: a manual roast offers a new profile with its steps, milestones and source roast", async ({ page }) => {
@@ -2033,4 +2038,234 @@ test("history: renaming a roast's bean relinks its stock to the bag the name say
   await page.locator('input[value="Some Other Bean"]').first().fill(fixtureBean.name);
   await page.getByRole("button", { name: "SAVE CHANGES" }).click();
   expect((await page.evaluate(() => JSON.parse(localStorage.getItem("roasts"))[0].beanId))).toBe(fixtureBean.id);
+});
+
+// ---------------------------------------------------------------------------
+// SAVE ROAST saves exactly once (RL-043). handleStop gives every call a fresh id
+// and clears the live session only 2 s later, so a double-tap -- or a reload
+// inside that window, which brings the already-saved roast back as a paused roast
+// with SAVE ROAST showing -- put the same roast in History twice (and charged the
+// bag's stock twice).
+//
+// The cure is an idempotency marker: a note, kept with the live session, that says
+// "this session's roast is already saved". A marker that is read carelessly is a
+// worse bug than the one it cures -- it would silently DROP the next real roast, or
+// wipe one that is under way. So the tests here come in two kinds:
+//  - the double-tap and the reload: these fail until a marker exists;
+//  - the stale-marker ones (next roast, a roast deleted from History, an earlier
+//    roast's leftover): guards that a blind "marker set, so skip" would break.
+// The marker is found as the live_* key(s) SAVE ROAST adds, not by name, so these
+// test the behaviour and survive a rename. Each stale-marker test asserts that a
+// marker was written first: without one it would pass having covered nothing.
+// ---------------------------------------------------------------------------
+
+// Follows a one-step profile the quick roast then matches exactly, so the
+// save-as-profile sheet never opens over SAVE ROAST between two taps (see the
+// "does not nag" test above).
+const singleStepProfile = { ...fixtureProfile, steps: [{ time: "00:00", totalSeconds: 0, fan: "5", heat: "6" }] };
+
+const saveRoastButton = (page) => page.getByRole("button", { name: "SAVE ROAST" });
+const storedRoasts = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("roasts") || "[]"));
+const roastCount = async (page) => (await storedRoasts(page)).length;
+const liveKeys = (page) =>
+  page.evaluate(() =>
+    Object.fromEntries(
+      Object.keys(localStorage).filter((k) => k.startsWith("live_")).map((k) => [k, localStorage.getItem(k)])
+    )
+  );
+
+async function roastToCooling(page) {
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", save: false, clockPast: 2 });
+  await expect(saveRoastButton(page)).toBeVisible();
+}
+
+// A reload inside handleStop's 2 s window, without racing a clock: hold the 2 s
+// clear open in THIS document only. The patch dies with the page on reload, so
+// the next document runs the real 2 s.
+const holdSaveWindowOpen = (page) =>
+  page.evaluate(() => {
+    const realSetTimeout = window.setTimeout;
+    window.__heldClear = false;
+    window.setTimeout = (fn, ms, ...args) => {
+      if (ms === 2000) window.__heldClear = true;
+      return realSetTimeout(fn, ms === 2000 ? 600000 : ms, ...args);
+    };
+  });
+
+// Proof, right before a reload, that the 2 s window really is still open: the
+// patched timer caught handleStop's 2000 ms clear, and the finished roast's live
+// session is still on the device. Without this a later change to that delay would
+// let the clear run first and the reload tests would pass for the wrong reason.
+async function expectSaveWindowStillOpen(page) {
+  expect(await page.evaluate(() => window.__heldClear), "handleStop's 2 s clear must have been held").toBe(true);
+  expect(JSON.parse(await stored(page, "live_roastLog")).length, "the live session must still be on the device").toBeGreaterThan(0);
+}
+
+// beforeEach's init script re-seeds `roasts` with the one fixture roast on EVERY
+// load, so a reload would wipe the roast just saved -- which a real device keeps.
+// Stack a seed of what is stored now (stacked scripts run in order, last wins).
+async function keepRoastsAcrossReload(page) {
+  const raw = await page.evaluate(() => localStorage.getItem("roasts"));
+  await page.addInitScript((r) => window.localStorage.setItem("roasts", r), raw);
+}
+
+// Tap SAVE ROAST with the 2 s clear held open; return the live_* keys that tap
+// added -- the marker, whatever it is called and however it is shaped.
+async function saveAndFindMarker(page) {
+  const before = await liveKeys(page);
+  await holdSaveWindowOpen(page);
+  await saveRoastButton(page).click();
+  await expect(page.getByText("Roast saved to history!")).toBeVisible();
+  const added = Object.entries(await liveKeys(page)).filter(([k]) => !(k in before));
+  expect(
+    added.map(([k]) => k),
+    "SAVE ROAST must leave a live_* marker saying this session's roast is already saved"
+  ).not.toHaveLength(0);
+  test.info().annotations.push({ type: "marker", description: added.map(([k]) => k).join(", ") });
+  return Object.fromEntries(added);
+}
+
+// Take the roast just saved back out of storage, as History's trash button does.
+const deleteSavedRoast = (page, id) =>
+  page.evaluate((id) => {
+    const rest = JSON.parse(localStorage.getItem("roasts")).filter((r) => r.id !== id);
+    localStorage.setItem("roasts", JSON.stringify(rest));
+  }, id);
+
+test("save roast: a double-tap SAVE ROAST saves the roast once (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  expect(await roastCount(page)).toBe(1); // the fixture roast only
+
+  // Two taps on the button, one task apart, so the first has been rendered before
+  // the second lands. Not Playwright's dblclick: the first save inserts the "Roast
+  // saved" banner ABOVE the buttons and shifts them down ~32px, so a second click
+  // at the same spot misses the button and the old code would pass.
+  await saveRoastButton(page).evaluate(async (button) => {
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    button.click();
+  });
+  await expect(page.getByText("Roast saved to history!")).toBeVisible();
+
+  // Both taps have landed by now, so a second save would already be in storage --
+  // no clock to wait on.
+  const ids = (await storedRoasts(page)).map((r) => r.id);
+  expect(ids).toHaveLength(2);
+  expect(new Set(ids).size).toBe(2);
+});
+
+test("save roast: a reload right after save does not bring the roast back or let it be saved twice (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  await holdSaveWindowOpen(page);
+  await saveRoastButton(page).click();
+  expect(await roastCount(page)).toBe(2); // the fixture roast + the one just saved
+
+  await expectSaveWindowStillOpen(page);
+  await keepRoastsAcrossReload(page);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  // The roast is finished, not restored: no paused roast, no SAVE ROAST, nothing
+  // left of its log (absent or empty is the same thing).
+  await expect.soft(page.getByTestId("roast-setup"), "the finished roast must not be restored").toBeVisible();
+  await expect.soft(saveRoastButton(page), "the saved roast must not be offered for saving again").toHaveCount(0);
+  const log = await stored(page, "live_roastLog");
+  expect.soft(log === null || log === "[]", `live_roastLog should be gone, was ${log}`).toBe(true);
+
+  // ...and whatever the app still offers, tapping it must not put a second copy in History.
+  const again = saveRoastButton(page);
+  if ((await again.count()) > 0 && (await again.isEnabled())) await again.click();
+  expect(await roastCount(page)).toBe(2);
+});
+
+test("save roast: the NEXT roast after a normal save still saves (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  await saveRoastButton(page).click();
+  // +2 s: the live session clears and the tab flips back to Setup.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  expect(await roastCount(page)).toBe(2);
+
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6" });
+
+  await expect.poll(() => roastCount(page)).toBe(3);
+  const ids = (await storedRoasts(page)).map((r) => r.id);
+  expect(new Set(ids).size).toBe(3);
+});
+
+test("save roast: the NEXT roast after a reload right after save still saves (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  await holdSaveWindowOpen(page);
+  await saveRoastButton(page).click();
+
+  await expectSaveWindowStillOpen(page);
+  await keepRoastsAcrossReload(page);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // Whatever the reload cleaned up, it must not have left the next roast blocked.
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  expect(await roastCount(page)).toBe(2);
+
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6" });
+
+  await expect.poll(() => roastCount(page)).toBe(3);
+});
+
+test("save roast: a marker whose roast is gone from History does not hide SAVE ROAST or block it (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  await saveAndFindMarker(page);
+  const [saved] = await storedRoasts(page);
+
+  // Deleted from History, then the app reloads with the session still live. The
+  // marker now points at a roast that is not there, so it proves nothing.
+  await deleteSavedRoast(page, saved.id);
+  expect(await roastCount(page)).toBe(1);
+  await keepRoastsAcrossReload(page);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+
+  // So the session comes back as it always did: a roast waiting to be saved.
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(saveRoastButton(page)).toBeVisible();
+  await saveRoastButton(page).click();
+
+  await expect.poll(() => roastCount(page)).toBe(2); // the fixture roast + this save
+  expect((await storedRoasts(page))[0].id).not.toBe(saved.id);
+});
+
+test("save roast: a marker left by an earlier roast neither wipes nor blocks the roast now under way (RL-043)", async ({ page }) => {
+  await roastToCooling(page);
+  const marker = await saveAndFindMarker(page);
+  const [earlier] = await storedRoasts(page);
+
+  // The earlier roast's session is over but its marker lingers, pointing at a roast
+  // that IS in History. Put a different roast under way beside it: the live session
+  // is replaced wholesale (every live_* key but the marker), and reloaded mid-roast.
+  await page.evaluate((keep) => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("live_") && !(k in keep)) localStorage.removeItem(k);
+    }
+  }, marker);
+  await keepRoastsAcrossReload(page);
+  await reloadMidRoast(page, { profileRaw: "null" });
+
+  // The roast under way comes back as itself -- not mistaken for the finished one.
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByText("02:10", { exact: true })).toBeVisible(); // 130s
+  expect(JSON.parse(await stored(page, "live_roastLog"))).toHaveLength(1);
+
+  // ...and it saves.
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await saveRoastButton(page).click();
+
+  await expect.poll(() => roastCount(page)).toBe(3); // fixture + the earlier roast + this one
+  const newest = (await storedRoasts(page))[0];
+  expect(newest.id).not.toBe(earlier.id);
+  expect(newest.totalSeconds).toBeGreaterThanOrEqual(130); // continued the restored clock
 });
