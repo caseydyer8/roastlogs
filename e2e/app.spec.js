@@ -1,4 +1,5 @@
 const { test, expect } = require("@playwright/test");
+const { readFile } = require("fs/promises");
 const {
   fixtureRoast, fixtureTasting, fixtureBean, fixtureProfile, fixtureLiveRoast,
   fixtureGhostSourceRow, fixtureGhostProfile,
@@ -1885,12 +1886,27 @@ const skipDropWeight = (page) => dropWeightPrompt(page).getByRole("button", { na
 // the callers that care about what comes AFTER a save -- the profile sheet, the next
 // roast -- see the screen they always did. `"leave"` hands the open prompt back to
 // the test, for the ones that are about the prompt itself. No-op when `save: false`.
-async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPast = 0, dropWeight = "skip" } = {}) {
-  const dials = page.locator("div.grid.grid-cols-3 input");
-  await dials.nth(0).fill(fan);
-  await dials.nth(1).fill(heat);
-  await page.getByRole("button", { name: "Start roast" }).click();
-  if (clockPast > 0) await expect(page.getByText(`00:0${clockPast}`, { exact: true })).toBeVisible();
+// `viaPreheat: true` is the probe path (a Razzo with the bridge live): Setup's button
+// reads "Begin preheat" there and START sits on the preheat screen, which has no
+// starting dials to fill -- so `fan` and `heat` are not used.
+// `beforeMarks(page)` runs once the clock has passed `clockPast` and before the first
+// mark, for a test that has to look at the roast WHILE it runs (RL-054 reads the live
+// chart there). Omitted, nothing changes for any other caller.
+async function runQuickRoast(page, { fan = "5", heat = "6", save = true, clockPast = 0, dropWeight = "skip", viaPreheat = false, beforeMarks = null } = {}) {
+  if (viaPreheat) {
+    await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+    await page.getByRole("button", { name: "START", exact: true }).click();
+  } else {
+    const dials = page.locator("div.grid.grid-cols-3 input");
+    await dials.nth(0).fill(fan);
+    await dials.nth(1).fill(heat);
+    await page.getByRole("button", { name: "Start roast" }).click();
+  }
+  if (clockPast > 0) {
+    await expect(page.getByText(`00:${String(clockPast).padStart(2, "0")}`, { exact: true }))
+      .toBeVisible({ timeout: clockPast * 1000 + 5_000 });
+  }
+  if (beforeMarks) await beforeMarks(page);
   for (const label of ["Yellowing", "First crack", "Cooling start"]) {
     await page.getByRole("button", { name: `Mark ${label}` }).click();
   }
@@ -2826,4 +2842,234 @@ test("drop weight: the prompt renders (visual; baseline pending Case's Mac) (RL-
   await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/last setup carried forward/)).toHaveCount(0, { timeout: 10_000 });
   await fullPageShot(page, "drop-weight.png");
+});
+
+// ---------------------------------------------------------------------------
+// RL-050: the CSV export must not hand a spreadsheet a formula. Excel, Numbers and
+// Sheets run a TEXT cell that opens with = + - @ (or a TAB or CR) as a formula, and
+// the export writes free text -- Bean Name, Origin, Visual Color, Brew Again, Session
+// Notes -- straight into cells. "+15s dev" or "-1 heat at FC" in a note becomes
+// #NAME? or a sum; a bean named =cmd|'/c calc'!A1 becomes a command to run. The
+// defence is a leading ' on those text cells (the OWASP-recommended one).
+//
+// A number is NOT text: a roast that gained weight has a real Weight Loss % of -5.0,
+// and that has to stay -5.0, not become '-5.0. The second assertion is the guard
+// against a fix that prefixes by looking at the characters instead of at what the
+// exporter holds.
+//
+// The file is read the way a spreadsheet reads it (parseCSV), so the assertions are
+// about a cell's VALUE and not about whether the writer chose to quote it.
+// ---------------------------------------------------------------------------
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+// Settings -> Export Data -> the CSV button; returns the downloaded file as rows.
+// The export refuses to run on a partial cloud read, so the four reads are answered
+// -- with nothing, which leaves the file as this device's data. Answered AFTER the
+// reload so the launch sync still meets the beforeEach abort, as in every other test.
+async function exportRoastLogRows(page, { roasts, tastings, beans = [] }) {
+  await page.addInitScript(({ r, t, b }) => {
+    window.localStorage.setItem("roasts", JSON.stringify(r));
+    window.localStorage.setItem("tastingNotes", JSON.stringify(t));
+    window.localStorage.setItem("beans", JSON.stringify(b));
+  }, { r: roasts, t: tastings, b: beans });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  const cloud = await holdCloudRoasts(page, []);
+  cloud.release();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Export Data" }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Export Roast Log (CSV)" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^roastlogs-export-\d{4}-\d{2}-\d{2}\.csv$/);
+  return parseCSV(await readFile(await download.path(), "utf8"));
+}
+
+test("csv export: text cells that open with = + - @ are written with a leading ', and a real negative number stays a number (RL-050)", async ({ page }) => {
+  const payload = "=cmd|'/c calc'!A1";
+  // Every column the exporter fills from something a person typed carries a formula
+  // payload in some roast: Bean Name, Origin (read from the bean row of that name, so
+  // there is one), Target Roast Level, Visual Color, Brew Again and Session Notes.
+  // A: the crafted bean name and origin, a level that opens with =, a note with +.
+  // B: a roast that GAINED weight (loss -5.0, a number), a colour that opens with a TAB,
+  //    a level with -, a Brew Again with a quoted formula, and a note that opens with -.
+  // C: a roasted weight no scale could report -- it parses to Infinity, and the loss
+  //    must be an empty cell, not the text "-Infinity".
+  const roastA = { ...fixtureRoast, id: 1750000000501, date: "2026-08-01", beanName: payload, greenWeight: "100", roastedWeight: "85", targetLevel: "=1+1", visualColor: "+Dark" };
+  const roastB = { ...fixtureRoast, id: 1750000000502, date: "2026-08-02", beanName: "Plain Bean", greenWeight: "100", roastedWeight: "105", targetLevel: "-Full City", visualColor: "\t=1+1" };
+  const roastC = { ...fixtureRoast, id: 1750000000503, date: "2026-08-03", beanName: "Huge Bean", greenWeight: "100", roastedWeight: "1e999", targetLevel: "City", visualColor: "Even" };
+  const noteA = { ...fixtureTasting, id: 1750000000511, roastId: String(roastA.id), beanName: payload, notes: "+15s dev", brewAgain: "@Yes" };
+  const noteB = { ...fixtureTasting, id: 1750000000512, roastId: String(roastB.id), beanName: "Plain Bean", notes: "-1 heat at FC", brewAgain: '=HYPERLINK("http://x","y")' };
+  const beanA = { ...fixtureBean, id: 1750000000521, name: payload, origin: "@SUM(1+1)" };
+  const beanB = { ...fixtureBean, id: 1750000000522, name: "Plain Bean", origin: "Ethiopia" };
+
+  const rows = await exportRoastLogRows(page, { roasts: [roastA, roastB, roastC], tastings: [noteA, noteB], beans: [beanA, beanB] });
+  const [header, ...data] = rows;
+  const col = (name) => header.indexOf(name);
+  const rowFor = (date) => data.find((r) => r[col("Date")] === date);
+  expect(header.slice(0, 3)).toEqual(["Date", "Bean Name", "Origin"]);
+  expect(data).toHaveLength(3);
+
+  const a = rowFor("2026-08-01");
+  const b = rowFor("2026-08-02");
+  const c = rowFor("2026-08-03");
+  // Text cells, one per free-text column: neutralised with one leading '.
+  expect(a[col("Bean Name")]).toBe("'" + payload);
+  expect(a[col("Origin")]).toBe("'@SUM(1+1)");
+  expect(a[col("Target Roast Level")]).toBe("'=1+1");
+  expect(a[col("Visual Color")]).toBe("'+Dark");
+  expect(a[col("Brew Again (Yes/No/Maybe)")]).toBe("'@Yes");
+  expect(a[col("Session Notes")]).toBe("'+15s dev");
+  expect(b[col("Target Roast Level")]).toBe("'-Full City");
+  expect(b[col("Visual Color")]).toBe("'\t=1+1");
+  expect(b[col("Brew Again (Yes/No/Maybe)")]).toBe("'=HYPERLINK(\"http://x\",\"y\")");
+  expect(b[col("Session Notes")]).toBe("'-1 heat at FC");
+  // Numbers and ordinary text: untouched. Rating is a number from the note; Weight Loss %
+  // is the one cell the exporter computes (a toFixed string such as "-5.0").
+  expect(a[col("Weight Loss %")]).toBe("15.0");
+  expect(b[col("Weight Loss %")]).toBe("-5.0");
+  expect(a[col("Green Weight (g)")]).toBe("100");
+  expect(a[col("Rating (0.5-5)")]).toBe("3.5");
+  expect(b[col("Bean Name")]).toBe("Plain Bean");
+  expect(b[col("Origin")]).toBe("Ethiopia");
+  // A roasted weight that parses to Infinity gives an empty loss cell, never "-Infinity".
+  expect(c[col("Weight Loss %")]).toBe("");
+  expect(c[col("Target Roast Level")]).toBe("City");
+  // Whatever else is written, no cell may open with a formula character unless it is
+  // the one genuine number above. This is the net for a column added later that skips
+  // csvEscape: a payload in it would land here.
+  for (const row of data) {
+    for (const value of row) {
+      expect(value, "no cell may be a non-finite number written as text").not.toMatch(/^-?(Infinity|NaN)$/);
+      if (/^[=+\-@\t\r]/.test(value)) expect(value, "a cell a spreadsheet would run as a formula").toBe("-5.0");
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// RL-054: a probe roast saves a continuous curve, and History's tiles read numbers.
+// v3.8.2 changed how the curve is recorded and shipped without a localhost review.
+// The mockRoastLinkFeed tests above stop at the live chart (ghost, caption, badge);
+// nothing drove a whole probe roast through SAVE ROAST and into History. This one
+// does, on a healthy feed: the bridge is on the channel for the whole roast, so the
+// saved curve must have no hole in it. Avg RoR and FC Temp are READ from that saved
+// curve, so they must be numbers; DTR is phase math from the marks (drop minus first
+// crack, over the total), so it checks that the marks saved, not the curve. A GUARD on
+// existing behaviour -- it passes today and fails if recording starts leaving holes in
+// a healthy feed, or Avg RoR / FC Temp stop reading the saved curve.
+//
+// The roast runs 20 s of real time (the mock publishes at 2 Hz, the roast clock is
+// real): Avg RoR is a +/-15 s least-squares slope and stays "—" until 16 contiguous
+// seconds exist, so a shorter roast would pass for the wrong reason or fail for it.
+//
+// The v3.8.2 worry was the LIVE chart, not only the saved curve: that the Temp line
+// fragments mid-roast. So the test also opens the live chart while the roast runs and
+// reads the solid Temp path off the page. A line that is whole is ONE subpath (a
+// single "M"); every hole in the data starts a fresh "M" (connectNulls is off on this
+// line, see LiveRoastChart.jsx) -- the same count the ghost tests above use.
+// ---------------------------------------------------------------------------
+
+const historyTile = (page, label) => page.getByText(label, { exact: true }).locator("xpath=following-sibling::div");
+
+// The SOLID Temp line of the live chart: the Temp colour with no dash. (The ghost is the
+// same colour with a "4 3" dash and is not on this chart without a followed profile.)
+// Scoped to the first recharts surface, which is the live chart; the second is the
+// Fan/Heat control map. One entry per matching path, each the number of its "M"s -- so
+// `[1]` is "one line, in one piece", and `[]` (no line drawn) is not mistaken for it.
+const LIVE_TEMP_PATH = 'path.recharts-line-curve[stroke="rgb(var(--chart-temp))"]:not([stroke-dasharray])';
+const liveTempSubpaths = (page) =>
+  page.evaluate((sel) => {
+    const surface = document.querySelector(".recharts-surface");
+    if (!surface) return [];
+    return [...surface.querySelectorAll(sel)].map((p) => ((p.getAttribute("d") || "").match(/M/g) || []).length);
+  }, LIVE_TEMP_PATH);
+
+test("mock-bridge roast: a steady probe saves a continuous curve, and History's Avg RoR, FC Temp and DTR tiles show numbers (RL-054)", async ({ page }) => {
+  test.setTimeout(90_000);
+  await mockRoastLinkFeed(page); // bt 250..254, every 500 ms
+  await seedSetup(page, { setup: "razzo-v5t" });
+  await page.getByRole("button", { name: /E2E Setup Bean/ }).click();
+  await page.getByLabel("Green weight in grams").fill("250");
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+
+  await runQuickRoast(page, {
+    viaPreheat: true,
+    clockPast: 20,
+    // 20 s in, marks not yet logged: open the live chart (the Bean temp readout is its
+    // button) and look at the Temp line. Sampled for a few seconds, not once, because
+    // a fragment can come and go as the feed's 2 Hz and the roast's 1 Hz clock drift.
+    beforeMarks: async (p) => {
+      await beanTempReadout(p).click({ timeout: 15_000 });
+      await expect(p.locator(".recharts-surface").first()).toBeVisible();
+      await expect.poll(async () => (await liveTempSubpaths(p)).length, { timeout: 10_000, message: "the live Temp line is drawn" }).toBe(1);
+      for (let i = 0; i < 6; i++) {
+        expect(await liveTempSubpaths(p), `live Temp line, sample ${i}: one solid path, one subpath`).toEqual([1]);
+        await p.waitForTimeout(500);
+      }
+    },
+  });
+
+  // The controls on a probe roast still read Fan -> Heat -> Temp.
+  const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+  expect((await dials.locator("div:first-child").allInnerTexts()).map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+
+  // The roast is already in storage (runQuickRoast answered the weight prompt with SKIP).
+  const [saved] = await storedRoasts(page);
+  expect(saved.beanName).toBe(fixtureBean.name);
+  expect(saved.equipment).toMatchObject({ setup: "razzo-v5t" });
+  const curve = saved.curve;
+  expect(Array.isArray(curve) && curve.length > 0, "a probe roast saves its bean-temp curve").toBe(true);
+  // Every point is a real reading from the feed: no null, no zero fill, no NaN.
+  for (const p of curve) {
+    expect(Number.isFinite(p.t) && Number.isFinite(p.bt), `point ${JSON.stringify(p)}`).toBe(true);
+    expect(p.bt).toBeGreaterThanOrEqual(250);
+    expect(p.bt).toBeLessThanOrEqual(254);
+  }
+  // Continuous: it starts with the roast, ends with it, and no step between two
+  // points is wider than LIVE_GAP_S (6 s, src/lib/liveSample.js) -- the width at
+  // which History treats the spacing as a signal dropout and breaks the line.
+  expect(curve[0].t).toBeLessThanOrEqual(2);
+  expect(curve[curve.length - 1].t).toBeGreaterThanOrEqual(saved.totalSeconds - 2);
+  for (let i = 1; i < curve.length; i++) {
+    expect(curve[i].t, `point ${i} follows point ${i - 1} in time`).toBeGreaterThan(curve[i - 1].t);
+    expect(curve[i].t - curve[i - 1].t, `gap before point ${i}`).toBeLessThanOrEqual(6);
+  }
+  expect(curve.length).toBeGreaterThanOrEqual(18); // ~1 point a second for 20 s
+
+  // History: Avg RoR and FC Temp read that curve; DTR is phase math from the marks.
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByText(fixtureBean.name).first().click();
+  await expect(page.locator(".recharts-surface").nth(1)).toBeVisible();
+  await expect(historyTile(page, "Avg RoR")).toHaveText(/^-?\d+(\.\d)?°\/m$/);
+  await expect(historyTile(page, "FC Temp")).toHaveText(/^\d+°$/);
+  await expect(historyTile(page, "DTR")).toHaveText(/^\d+(\.\d)?%$/);
+  // FC Temp is read off the curve, so it lands inside the feed's 250..254 band.
+  const fc = parseInt(await historyTile(page, "FC Temp").innerText(), 10);
+  expect(fc).toBeGreaterThanOrEqual(249);
+  expect(fc).toBeLessThanOrEqual(255);
+  // Control: the one tile with no data behind it (the roasted weight was skipped) is
+  // still a dash, so the three above are numbers because of the data behind them and
+  // not because every tile stopped printing dashes.
+  await expect(historyTile(page, "Wt Loss")).toHaveText("—");
 });

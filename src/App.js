@@ -18,6 +18,7 @@ import { parseRoastedWeight } from "./lib/roastedWeight";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
+import { csvEscape } from "./lib/csv";
 import { storedPreheatTarget } from "./lib/preheatTarget";
 import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
 
@@ -2454,11 +2455,6 @@ function App() {
     };
   };
 
-  const csvEscape = (val) => {
-    const s = (val === null || val === undefined) ? "" : String(val);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-
   const handleExportCSV = async () => {
     setIsExporting(true);
     try {
@@ -2469,17 +2465,25 @@ function App() {
       brews.forEach(t => { if (t && t.roastId != null && t.roastId !== "") noteByRoastId[String(t.roastId)] = t; });
 
       const headers = ["Date", "Bean Name", "Origin", "Green Weight (g)", "Roasted Weight (g)", "Weight Loss %", "Target Roast Level", "Visual Color", "Rating (0.5-5)", "Brew Again (Yes/No/Maybe)", "Session Notes"];
+      // Weight Loss % is the one cell the exporter COMPUTES (a toFixed(1) string such as
+      // "-5.0", negative when a roast gained weight), so it is written as it is.
+      // csvEscape decides by type and would put the formula-guard quote on that string,
+      // because it can't tell it from text a person typed.
+      const lossCol = headers.indexOf("Weight Loss %");
       const rows = roasts.map(r => {
         const bean = beanByName[r.beanName] || {};
         const note = noteByRoastId[String(r.id)] || {};
         const green = Number(r.greenWeight);
         const roasted = Number(r.roastedWeight);
-        const loss = (green > 0 && roasted > 0) ? (((green - roasted) / green) * 100).toFixed(1) : "";
+        // Number("1e999") is Infinity, which passes `> 0` and would write "-Infinity".
+        const loss = (Number.isFinite(green) && Number.isFinite(roasted) && green > 0 && roasted > 0)
+          ? (((green - roasted) / green) * 100).toFixed(1)
+          : "";
         return [
           r.date, r.beanName, bean.origin || "", r.greenWeight || "", r.roastedWeight || "",
           loss, r.targetLevel || "", r.visualColor || "", note.rating || "",
           note.brewAgain || "", note.notes || "",
-        ].map(csvEscape).join(",");
+        ].map((cell, i) => (i === lossCol ? cell : csvEscape(cell))).join(",");
       });
       const csv = [headers.join(","), ...rows].join("\n");
       const date = new Date().toISOString().slice(0, 10);
