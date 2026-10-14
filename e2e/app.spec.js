@@ -955,6 +955,64 @@ test("setup -> save: the roast records beanId, stock deducts, and the setup carr
   await expect(page.getByText("750g / 1000g")).toBeVisible();
 });
 
+// The Setup screen carries the last roast's bag forward by id (live_beanId), and a
+// delete can come along mid-carry: the last roast used bag A, the user deletes bag A
+// while a same-named restock B exists. Setup's relink-by-name only runs when it holds
+// NO id, so a stale A (matching no bag) used to stay put and the next roast saved
+// beanId: A -- a bag that is gone. beanHistory then filed that brand-new roast as
+// "unlinked" under B, and B's stock never deducted it.
+test("setup: deleting the carried-forward bag relinks the next roast to the same-named restock", async ({ page }) => {
+  await page.addInitScript(({ beans, roasts, live }) => {
+    window.localStorage.setItem("beans", JSON.stringify(beans));
+    window.localStorage.setItem("roasts", JSON.stringify(roasts));
+    window.localStorage.setItem("roastlogs_equipment", "sr540");
+    // What a SAVE with bag A leaves behind (keepSetup): bean, id and weight carried forward.
+    window.localStorage.setItem("live_beanName", live.name);
+    window.localStorage.setItem("live_beanId", String(live.id));
+    window.localStorage.setItem("live_greenWeightGrams", "250");
+  }, { beans: [bagA, bagB], roasts: [roastA], live: { name: bagA.name, id: bagA.id } });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // Pre-condition: Setup really is carrying bag A.
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("live_beanId"))).toBe(String(bagA.id));
+
+  // Delete bag A (the first "Dup Bean"), keeping its history.
+  await openBeanDetail(page, "Dup Bean");
+  await page.getByText("DELETE BEAN").click();
+  await page.getByText("KEEP HISTORY, DELETE BEAN ONLY").click();
+  await expect.poll(() => storedIds(page, "beans")).toEqual([bagB.id]);
+
+  // Back to the Roast tab: the stale id must not survive. Setup has relinked the one
+  // bag left with that name, so it is B -- never A, never "no bag".
+  await page.getByRole("button", { name: "Roast", exact: true }).click();
+  await expect(page.getByTestId("roast-setup")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("live_beanId"))).toBe(String(bagB.id));
+
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Start roast" }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await page.getByRole("button", { name: "SAVE ROAST" }).click();
+  await skipDropWeight(page); // the roasted-weight prompt covers the nav until it is answered
+
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("roasts"))[0]);
+  expect(saved.id).not.toBe(roastA.id);
+  expect(saved.beanName).toBe("Dup Bean");
+  expect(saved.beanId).toBe(bagB.id);
+
+  // B's own detail: the new roast is B's session -- counted, deducted -- not an "older
+  // roast with this name". Only roastA (bag A's, history kept) sits in the older list.
+  await page.getByRole("button", { name: "Beans" }).click();
+  await page.getByText("Dup Bean").first().click();
+  await expect(sessionsPill(page)).toHaveText("1 sessions");
+  await expect(page.getByText("750g / 1000g")).toBeVisible();
+  const older = page.getByTestId("older-roasts");
+  await expect(older.getByText(roastA.date)).toBeVisible();
+  await expect(older.getByText(saved.date)).toHaveCount(0);
+});
+
 test("setup: 'Use in Roast' on Bean Detail lands on Setup with bean and profile chosen", async ({ page }) => {
   await seedSetup(page, { profiles: [{ ...fixtureProfile, beanName: fixtureBean.name }] });
   await page.getByRole("button", { name: "Beans" }).click();

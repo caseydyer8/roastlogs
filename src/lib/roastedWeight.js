@@ -8,6 +8,11 @@
 // stores 0. That 0 means "unset", so a typed entry must never be allowed to
 // become one: parseRoastedWeight gives null for anything that is not a real
 // weight, and the caller saves nothing.
+//
+// The CSV export computes its own Weight Loss % cell and deliberately allows
+// negative values, while History, the prompt and Compare show no figure at all
+// when roasted >= green (weightLossPercent below; Compare applies the same rule
+// inline rather than importing it).
 // ---------------------------------------------------------------------------
 
 // Typed text or a number -> a number, or NaN. Number("") and Number(null) are

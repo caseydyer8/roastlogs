@@ -57,14 +57,19 @@ commit;
 -- check runs real SELECTs AS the `authenticated` role.
 --
 -- 1. Catalog + guard rails. Expect 6 rows; only postgres/r changes (it loses
---    anon and authenticated); both booleans true.
+--    anon and authenticated); both booleans true. The query also lists any GLOBAL
+--    default-privilege row (schema 0): a revoke scoped to `public` cannot remove a
+--    default that was granted with no schema, so there must be NO such row that
+--    grants anon or authenticated anything on tables (checked 2026-10-13: none).
 --
 --   begin; set transaction read only;
---   select r.rolname as grantor, d.defaclobjtype as objtype, d.defaclacl::text as acl,
+--   select r.rolname as grantor, d.defaclnamespace::regnamespace::text as schema,
+--          d.defaclobjtype as objtype, d.defaclacl::text as acl,
 --          has_function_privilege('authenticated','private.is_admin(uuid)','EXECUTE') as is_admin_exec_ok,
 --          has_schema_privilege('authenticated','private','USAGE') as private_usage_ok
 --   from pg_default_acl d join pg_roles r on r.oid = d.defaclrole
---   where d.defaclnamespace = 'public'::regnamespace order by 1, 2;
+--   where d.defaclnamespace = 'public'::regnamespace or d.defaclnamespace = 0
+--   order by 1, 2, 3;
 --   rollback;
 --
 -- 2. As `authenticated`, an admin at aal2 still reads every table (counts

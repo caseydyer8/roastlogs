@@ -3,9 +3,11 @@ import { parseRoastedWeight, weightLossPercent, formatWeightLoss } from "../lib/
 
 // The question SAVE ROAST leaves behind: what did the roasted beans weigh?
 //
-// The roast is already written -- to storage and to the cloud queue -- before
+// The roast is already written -- to storage, and sent to the cloud -- before
 // this opens, so no answer, SKIP included, can lose a roast. SAVE WEIGHT only
-// ever adds one number to it. The weight-loss % moves with every keystroke and
+// ever adds one number to it. That number goes out as one cloud write, no retry;
+// if the app is killed or offline first the weight stays on this device only
+// (a History edit re-syncs it). The weight-loss % moves with every keystroke and
 // is the History "Wt Loss" tile's own figure (lib/roastedWeight.js).
 //
 // Purely presentational: App.js patches the roast, syncs it, and decides what

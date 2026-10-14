@@ -2189,6 +2189,15 @@ function App() {
       setPrefillBean(null);
     }
 
+    // Setup carries the last roast's bag forward by id. If that bag is THIS one, the id is about
+    // to point at nothing; Setup's relink-by-name only runs while it holds NO id, so left alone the
+    // next roast would save a beanId for a bag that is gone (and sit "unlinked" under a same-named
+    // restock). Clear it so Setup relinks the one bag left with that name. Never touches a roast
+    // that has begun: that one genuinely used this bag.
+    if (!roastStarted && !isTimerRunning && bean.id && beanId != null && Number(beanId) === Number(bean.id)) {
+      setBeanId(null);
+    }
+
     if (cascade) {
       const { roasts: matchedRoasts, tastings: matchedBrews } = matched;
       // By identity, not by id: two records sharing an id, or an id-less one, must not take an
@@ -2542,15 +2551,17 @@ function App() {
   );
 
   // Answers the roasted-weight prompt (RL-025). `grams` is what was typed, or
-  // undefined for SKIP. The roast is already in storage and in the cloud queue, so
-  // either way it is safe; SKIP touches nothing. SAVE WEIGHT writes the weight onto
-  // THAT roast -- found by id in a fresh read of storage, because the launch sync can
-  // merge other roasts in ahead of it while the prompt is open -- and sends it
-  // through the usual upsert, queued behind the save's own write so a slow first
-  // upsert cannot land last and reset roasted_weight to 0. Anything that is not a
-  // real weight saves nothing: an empty entry is never stored as 0.
+  // undefined for SKIP. The roast is already in storage (and its own cloud write is
+  // under way), so either way it is safe; SKIP touches nothing. SAVE WEIGHT writes the
+  // weight onto THAT roast -- found by id in a fresh read of storage, because the
+  // launch sync can merge other roasts in ahead of it while the prompt is open -- and
+  // sends it through the usual upsert, chained behind the save's own write so a slow
+  // first upsert cannot land last and reset roasted_weight to 0. That is ONE cloud
+  // write with no retry: if the app is killed or offline first, the weight stays on
+  // this device only (a History edit re-syncs it). Anything that is not a real
+  // weight saves nothing: an empty entry is never stored as 0.
   //
-  // The queued write is built when it is SENT, not when SAVE WEIGHT was tapped: it
+  // The chained write is built when it is SENT, not when SAVE WEIGHT was tapped: it
   // can wait a long time behind a slow first write, and in that gap the roast may be
   // edited or deleted in History. So it re-reads the roast by id from storage then --
   // an edit is sent as edited (the weight is already in that copy), and a roast that

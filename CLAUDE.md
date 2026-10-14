@@ -77,8 +77,10 @@ trapped in agent config.
     when two or more bags share the name. The delete modal, the local removal, the
     Supabase delete list and Bean Detail all read its result, and the confirm button
     re-checks it at the tap (`sameHistorySets`) and deletes NOTHING if a sync changed
-    the set meanwhile. Stock (`roastMatchesBean` / `beanStock`) still matches by name
-    on purpose, and the Beans list is still keyed by name (deferred).
+    the set meanwhile. Stock (`roastMatchesBean` / `beanStock`) matches by `beanId`
+    and falls back to the name ONLY for pre-v3.9.0 roasts with no `beanId`, so such a
+    roast still deducts from every same-named bag (deliberate, unchanged). The Beans
+    list is still keyed by name (deferred), so two same-named bags show as one row.
   - **Preheat target is 200-500 F** (`src/lib/preheatTarget.js`). Typed entry commits
     only an in-range whole number and otherwise keeps the previous target; only the
     preheat screen's -5/+5 clamp. A stored out-of-range value loads as 315.
@@ -92,15 +94,16 @@ trapped in agent config.
   - **Drop-weight prompt** (`RoastDropWeightModal`) opens after the roast is saved;
     SKIP changes nothing; weight must be 0.1-100000 g; its second cloud write
     re-reads the roast from storage at send time (never resurrects or overwrites).
-  - **Text on the ember accent** is `text-accent-ink` (a token), not `text-primary`
-    (that is the background colour) and not a raw `zinc` class.
+  - **Text on the ember accent**: new UI uses `text-accent-ink` (a token), never
+    `text-primary` (that is the background colour). Older buttons still use
+    `text-zinc-950`, the same colour, and are not migrated yet.
   - **Tests:** `npm run test:unit` (Jest, `src/**/*.test.js`) is `verify.sh` step 4.
     In a container the e2e needs `REACT_APP_SUPABASE_URL` set to the real, public
     project URL (the page's CSP only allows that host) with a placeholder anon key.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.
-- Almost everything lives in `src/App.js` (~4300 lines). Extracted components
+- Almost everything lives in `src/App.js` (~5800 lines). Extracted components
   go in `src/components/` (e.g. `src/components/charts/RoastCurveChart.jsx`).
 
 ## Deployment / Release
@@ -114,7 +117,7 @@ trapped in agent config.
   branch). Pushing `main` does NOT update the live site — deploy is separate.
 - **Version lives in THREE places** — bump all of them together:
   1. `package.json` `version`
-  2. The About modal badge in `src/App.js` (search `v1.` near "About modal")
+  2. The About modal badge in `src/App.js` (search the current version, e.g. `v3.9.2`)
   3. The backup export `appVersion` field in `src/App.js`
 - After deploying, verify: `curl` the live URL for 200, and remind that the
   Pages CDN takes 1–2 min (hard refresh / private window to confirm).
