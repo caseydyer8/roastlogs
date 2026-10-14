@@ -70,6 +70,33 @@ trapped in agent config.
   flags two or more compared roasts with *different, known* `equipment.setup`
   values — roasts missing the field entirely are never treated as a mismatch.
   See `docs/equipment-field-plan.md` and `docs/roastlink-live-data-plan.md`.
+- **v3.9.2 rules** (each has a failing-first test; read these before touching the area):
+  - **What belongs to a bean** is decided in ONE place, `beanHistory()` in
+    `src/lib/inventory.js`: a roast with a `beanId` belongs to that bag only; a
+    pre-v3.9.0 roast (no `beanId`) goes by name and is "unlinked" (KEPT on delete)
+    when two or more bags share the name. The delete modal, the local removal, the
+    Supabase delete list and Bean Detail all read its result, and the confirm button
+    re-checks it at the tap (`sameHistorySets`) and deletes NOTHING if a sync changed
+    the set meanwhile. Stock (`roastMatchesBean` / `beanStock`) still matches by name
+    on purpose, and the Beans list is still keyed by name (deferred).
+  - **Preheat target is 200-500 F** (`src/lib/preheatTarget.js`). Typed entry commits
+    only an in-range whole number and otherwise keeps the previous target; only the
+    preheat screen's -5/+5 clamp. A stored out-of-range value loads as 315.
+  - **A roast saves once.** SAVE ROAST writes a `live_savedRoast` marker (`{ id,
+    stamp }`, `src/lib/liveSession.js`) that is honoured ONLY if its roast is in
+    `roasts` AND the stamp matches this live session; a stale marker never blocks a
+    new roast. Boot settles it before any `live_*` state hydrates.
+  - **Stored times are bounded**: `MAX_ROAST_S = 7200` in `src/lib/limits.js`.
+    Anything that sizes rows or loops by a stored time (curves, milestones, clocks,
+    `totalSeconds`) must respect it, or one corrupt value freezes the tab.
+  - **Drop-weight prompt** (`RoastDropWeightModal`) opens after the roast is saved;
+    SKIP changes nothing; weight must be 0.1-100000 g; its second cloud write
+    re-reads the roast from storage at send time (never resurrects or overwrites).
+  - **Text on the ember accent** is `text-accent-ink` (a token), not `text-primary`
+    (that is the background colour) and not a raw `zinc` class.
+  - **Tests:** `npm run test:unit` (Jest, `src/**/*.test.js`) is `verify.sh` step 4.
+    In a container the e2e needs `REACT_APP_SUPABASE_URL` set to the real, public
+    project URL (the page's CSP only allows that host) with a placeholder anon key.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.
