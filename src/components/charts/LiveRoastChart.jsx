@@ -23,7 +23,7 @@ import {
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
 import { MAX_ROAST_S } from "../../lib/limits";
-import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
+import { smoothSeries, chartRor, CHART_ROR_HALF_S } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
 // LiveRoastChart — the in-progress roast, drawn while it happens.
@@ -51,6 +51,8 @@ const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 // visible before you reach them.
 const LOOKAHEAD = 30;
 const PLAN_MARK = { YELLOWING: "Y", "FIRST CRACK": "FC", "COOLING START": "DROP", MAILLARD: "MAI", CARAMELIZATION: "CAR" };
+// Tooltip row order on the temp panel (its series names).
+const TOOLTIP_ROWS = ["Temp", "Temp (plan)", "RoR", "RoR (plan)"];
 
 // The model builds one row per second, so what it sizes rows by must be bounded
 // (RL-030). Source-roast points and milestones outside 0..MAX_ROAST_S are not
@@ -83,6 +85,24 @@ function fillShortHoles(arr, maxRun) {
       for (let k = i; k < j; k++) out[k] = a + ((b - a) * (k - i + 1)) / (j - i + 1);
     }
     i = j;
+  }
+  return out;
+}
+
+// The source roast's rate of rise, one entry per second of `filled` (its readings
+// after fillShortHoles). chartRor is the live line's own recipe, so the two compare
+// like for like. On its own it would still price a window that merely touches a
+// hole -- rorSeries trims a null at the edge of its window and slopes what is left --
+// so the seconds either side of every hole are cleared too: the RoR ghost breaks
+// where the BT ghost does, a window's width wider. A hole is a null left BETWEEN
+// readings; seconds before the source's first reading are not one.
+function ghostRor(filled) {
+  const out = chartRor(filled);
+  const lead = filled.findIndex((v) => v != null);
+  if (lead < 0) return out;
+  for (let i = lead + 1; i < filled.length; i++) {
+    if (filled[i] != null) continue;
+    for (let k = Math.max(0, i - CHART_ROR_HALF_S); k <= Math.min(filled.length - 1, i + CHART_ROR_HALF_S); k++) out[k] = null;
   }
   return out;
 }
@@ -221,7 +241,7 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     // slightly noisier than the settled curve behind it. Gaps stay gaps.
     const rawTemps = data.map((d) => d.temp);
     const shownTemps = smoothSeries(rawTemps, 2);
-    const rors = rorSeries(smoothSeries(rawTemps, 1), 15);
+    const rors = chartRor(rawTemps);
     for (let t = 0; t < data.length; t++) {
       data[t].temp = shownTemps[t] != null ? Math.round(shownTemps[t] * 10) / 10 : null;
       data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;
@@ -276,21 +296,26 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       lookahead = LOOKAHEAD;
 
       const rowsEnd = Math.max(total + lookahead, planEnd);
-      const ghost = smoothSeries(
-        fillShortHoles(Array.from({ length: lastCurveT + 1 }, (_, t) => (byT.has(t) ? byT.get(t) : null)), LIVE_GAP_S),
-        2
-      );
+      const bridged = fillShortHoles(Array.from({ length: lastCurveT + 1 }, (_, t) => (byT.has(t) ? byT.get(t) : null)), LIVE_GAP_S);
+      const ghost = smoothSeries(bridged, 2);
+      // The pace is read from the bridged readings, not from `ghost`: the live RoR
+      // comes from the raw readings, never from the +/-2 s line you look at, and
+      // the ghost's must too. The BT ghost has no time shift, so neither does
+      // this: both clocks count roast-seconds from START.
+      const ghostRors = ghostStatus === "drawn" ? ghostRor(bridged) : [];
       for (let t = 0; t <= rowsEnd; t++) {
         const planTemp = ghost[t] != null ? Math.round(ghost[t] * 10) / 10 : null;
+        const planRor = ghostRors[t] != null ? Math.round(ghostRors[t] * 10) / 10 : null;
         if (t < data.length) {
           data[t].planTemp = planTemp;
+          data[t].planRor = planRor;
         } else {
           while (sIdx < steps.length && steps[sIdx].t <= t) {
             pHeat = steps[sIdx].heat;
             pFan = steps[sIdx].fan;
             sIdx++;
           }
-          data.push({ t, temp: null, heat: null, fan: null, profHeat: pHeat, profFan: pFan, ror: null, planTemp });
+          data.push({ t, temp: null, heat: null, fan: null, profHeat: pHeat, profFan: pFan, ror: null, planTemp, planRor });
         }
       }
     }
@@ -345,7 +370,7 @@ export default function LiveRoastChart({
     [curve, roastLog, profile, plan, elapsedSeconds]
   );
 
-  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead, ghostReason } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead, ghost, ghostReason } = model;
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
@@ -607,6 +632,9 @@ export default function LiveRoastChart({
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={tooltipLabel}
             formatter={(v, n) => [v, n]}
+            // Each live value with its plan underneath. Recharts' default sorts by
+            // name, which would read RoR first.
+            itemSorter={(item) => TOOLTIP_ROWS.indexOf(item.name)}
           />
           {/* connectNulls is deliberately OFF on these two. This model already
               emits temp: null for a second with no reading (btAt is a per-second
@@ -629,12 +657,21 @@ export default function LiveRoastChart({
               label={{ value: m.tag, position: "insideTopRight", fontSize: 8, fill: "rgb(var(--chart-tick))" }}
             />
           ))}
-          {/* The source roast's bean-temp curve: drawn first so the live curve
-              sits on top of what it is being steered against. No connectNulls:
-              fillShortHoles already bridged every hole of LIVE_GAP_S or less, so
-              a null left in the ghost is a stretch where the source roast's probe
-              was out. It stays a gap rather than a dashed line to steer by over
-              readings that never existed. */}
+          {/* The source roast's pace, the twin of the bean-temp ghost below: the same
+              dash and faintness in the RoR colour. It exists exactly when the BT
+              ghost is drawn (a source too short for a pace simply has none) and,
+              like it, has no connectNulls: the model leaves it null around a source
+              hole. The ghost stack mirrors the live one, so every ghost sits under
+              every live line. */}
+          {ghost === "drawn" && planEnd > 0 && (
+            <Line yAxisId="ror" type="monotone" dataKey="planRor" name="RoR (plan)" stroke="rgb(var(--chart-ror))" strokeWidth={1.2} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} isAnimationActive={false} />
+          )}
+          {/* The source roast's bean-temp curve, drawn before the live lines so the
+              live curve sits on top of what it is being steered against. No
+              connectNulls: fillShortHoles already bridged every hole of LIVE_GAP_S
+              or less, so a null left in the ghost is a stretch where the source
+              roast's probe was out. It stays a gap rather than a dashed line to
+              steer by over readings that never existed. */}
           {planEnd > 0 && (
             <Line yAxisId="temp" type="monotone" dataKey="planTemp" name="Temp (plan)" stroke="rgb(var(--chart-temp))" strokeWidth={1.4} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} isAnimationActive={false} />
           )}

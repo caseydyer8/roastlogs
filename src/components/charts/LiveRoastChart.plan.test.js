@@ -1,5 +1,6 @@
 import { buildLiveChartModel, GHOST_CAPTION } from "./LiveRoastChart";
 import { LIVE_GAP_S } from "../../lib/liveSample";
+import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
 
 // Source roast: 1 Hz curve rising 200 -> 300F over 100s, with milestones.
 const curve = Array.from({ length: 101 }, (_, t) => ({ t, bt: 200 + t }));
@@ -319,5 +320,182 @@ describe("buildLiveChartModel milestone labels", () => {
     const labels = ["YELLOWING", "FIRST CRACK", "COOLING START", "MAILLARD", "CARAMELIZATION"];
     const m = buildLiveChartModel({ ...base, plan: { curve, milestones: labels.map((label, i) => ({ label, t: 10 * (i + 1) })) } });
     expect(m.planMarkers.map((x) => x.tag)).toEqual(["Y", "FC", "DROP", "MAI", "CAR"]);
+  });
+});
+
+// The live RoR line, pinned to the numbers it drew before its recipe moved into chartRor
+// (src/lib/curveSmoothing.js) to be shared with the ghost. Where the maths lives must not
+// move a single point of the line Case steers by. The values were read off the code before
+// the move, on this curve.
+describe("buildLiveChartModel live RoR", () => {
+  const curve600 = Array.from({ length: 601 }, (_, t) => ({
+    t,
+    bt: Math.round((200 + 210 * (1 - Math.exp(-t / 260)) - 40 * Math.exp(-t / 25)) * 10) / 10,
+  }));
+
+  it("is exactly what it drew before the shared recipe", () => {
+    const m = buildLiveChartModel({ curve: curve600, roastLog: [], profile: null, elapsedSeconds: 600 });
+    const ror = m.data.map((d) => d.ror);
+    for (const [t, v] of [[0, 117.3], [1, 116.1], [15, 100], [100, 34.8], [300, 15.3], [599, 4.8], [600, 4.8]]) {
+      expect(ror[t]).toBeCloseTo(v, 5);
+    }
+    expect(ror.filter((v) => v != null)).toHaveLength(601);
+    expect(Math.round(ror.reduce((a, v) => a + v, 0) * 10) / 10).toBe(13701.9);
+  });
+});
+
+// The source roast's rate of rise (RL-056): data[t].planRor, the RoR ghost's series. It is
+// the live line's own recipe applied to the plan's per-second readings, so the two can be
+// compared by eye. The test below pins that; the rest pin where it is null, and that
+// nothing is drawn unless the BT ghost is.
+describe("buildLiveChartModel ghost RoR (planRor)", () => {
+  const isNum = (v) => typeof v === "number";
+  const round1 = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  const count = (m) => m.data.filter((d) => isNum(d.planRor)).length;
+  const truth = (t) => Math.round((200 + 210 * (1 - Math.exp(-t / 260)) - 40 * Math.exp(-t / 25)) * 10) / 10;
+  const roast600 = Array.from({ length: 601 }, (_, t) => ({ t, bt: truth(t) }));
+  const withHole = (from, to) => roast600.filter((p) => p.t < from || p.t > to);
+  const planOf = (c) => ({ curve: c, milestones: [], source: "found" });
+
+  it("is the live line's recipe: the same curve as live and as plan gives the same RoR at every second", () => {
+    const m = buildLiveChartModel({ curve: roast600, roastLog: [], profile: null, plan: planOf(roast600), elapsedSeconds: 600 });
+    let compared = 0;
+    for (let t = 0; t < m.data.length; t++) {
+      const { ror, planRor } = m.data[t];
+      if (ror == null || planRor == null) continue;
+      compared++;
+      expect(Math.abs(planRor - ror)).toBeLessThan(1e-6);
+    }
+    expect(compared).toBeGreaterThan(500);
+  });
+
+  // Not the same curve this time, and noisy enough that the +/-2 s display smoothing the
+  // BT ghost goes through would move the numbers: the series must come from the plan's own
+  // readings, after the short holes are bridged and before that smoothing, with no time shift.
+  it("is rorSeries(smoothSeries(plan, 1), 15) of the plan's own per-second readings, to 0.1", () => {
+    let seed = 11;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    const noisy = Array.from({ length: 601 }, (_, t) => ({ t, bt: Math.round((truth(t) + (rnd() - 0.5) * 4) * 10) / 10 }));
+    const bts = noisy.map((p) => p.bt);
+    const expected = rorSeries(smoothSeries(bts, 1), 15).map(round1);
+    // The check can tell the two orders apart: smoothing first would have read differently.
+    const smoothedFirst = rorSeries(smoothSeries(smoothSeries(bts, 2), 1), 15).map(round1);
+    expect(expected.some((v, t) => Math.abs(v - smoothedFirst[t]) > 0.5)).toBe(true);
+
+    const m = buildLiveChartModel({ ...base, plan: planOf(noisy) });
+    for (let t = 0; t <= 600; t++) expect(m.data[t].planRor).toBeCloseTo(expected[t], 5);
+  });
+
+  it("reads a known pace from second 0 to the end of the plan (0.3 F/s = 18 F/min)", () => {
+    const ramp = Array.from({ length: 301 }, (_, t) => ({ t, bt: Math.round((200 + t * 0.3) * 10) / 10 }));
+    const m = buildLiveChartModel({ ...base, plan: planOf(ramp) });
+    expect(m.data[100].planRor).toBeCloseTo(18, 1);
+    expect(m.data[200].planRor).toBeCloseTo(18, 1);
+    // The first and last seconds use a one-sided window and the light smoothing nudges the end
+    // points, so there the pace is right to within 2%, but it is there.
+    for (const t of [0, 300]) expect(Math.abs(m.data[t].planRor - 18)).toBeLessThan(0.36);
+  });
+
+  it("carries the plan's pace on the lookahead rows, past the live edge", () => {
+    const m = buildLiveChartModel({ ...base, plan }); // plan: 1 F/s = 60 F/min, to 100 s
+    expect(m.data.length).toBeGreaterThanOrEqual(101);
+    expect(m.data[60].planRor).toBeCloseTo(60, 1); // second 60 is past the live edge (20)
+    // Near either end the window is one-sided and the light smoothing nudges the end point: within 2%.
+    for (const t of [0, 10, 100]) expect(Math.abs(m.data[t].planRor - 60)).toBeLessThan(1.2);
+  });
+
+  it("is stored rounded to 0.1", () => {
+    const m = buildLiveChartModel({ ...base, plan: planOf(roast600) });
+    expect(count(m)).toBeGreaterThan(500);
+    for (const d of m.data) if (isNum(d.planRor)) expect(Math.abs(d.planRor * 10 - Math.round(d.planRor * 10))).toBeLessThan(1e-6);
+  });
+
+  it("a 10 s hole in the plan is null for 15 s either side of it, and the pace is there on both sides", () => {
+    const m = buildLiveChartModel({ ...base, plan: planOf(withHole(300, 309)) });
+    const ts = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+    // Listing the offending seconds, rather than failing on the first.
+    expect(ts(285, 324).filter((t) => m.data[t].planRor != null)).toEqual([]);
+    expect([100, 250, 360, 500].filter((t) => !isNum(m.data[t].planRor))).toEqual([]);
+  });
+
+  it("a 5 s hole is bridged before the slope is taken, so the pace runs straight through it", () => {
+    const ramp = Array.from({ length: 301 }, (_, t) => ({ t, bt: 200 + t / 2 })); // 0.5 F/s = 30 F/min
+    const m = buildLiveChartModel({ ...base, plan: planOf(ramp.filter((p) => p.t < 200 || p.t > 204)) });
+    const off = Array.from({ length: 71 }, (_, i) => 170 + i).filter((t) => !(isNum(m.data[t].planRor) && Math.abs(m.data[t].planRor - 30) < 0.1));
+    expect(off).toEqual([]);
+  });
+
+  it("is absent after DROP, with the ghost it belongs to", () => {
+    const before = buildLiveChartModel({ ...base, plan });
+    expect(count(before)).toBeGreaterThan(50); // the control: without DROP there is a pace
+    const roastLog = [{ type: "phase", label: "COOLING START", t: 18, temp: "" }];
+    const after = buildLiveChartModel({ ...base, roastLog, plan });
+    expect(after.data.some((d) => d.planRor != null)).toBe(false);
+  });
+
+  it.each([
+    ["markers-only (source not on this device)", { curve: [], milestones: plan.milestones, source: "missing" }],
+    ["none: no source roast", { curve: [], milestones: [], source: "none" }],
+    ["none: source roast not on this device", { curve: [], milestones: [], source: "missing" }],
+    ["none: source roast with no curve", { curve: [], milestones: [], source: "found" }],
+    ["none: a single curve point", { curve: [{ t: 10, bt: 200 }], milestones: [], source: "found" }],
+  ])("is null on every row when the ghost is %s", (_name, p) => {
+    const m = buildLiveChartModel({ ...base, plan: p });
+    expect(m.data.some((d) => d.planRor != null)).toBe(false);
+  });
+
+  it("is null on every row with no plan at all", () => {
+    expect(buildLiveChartModel(base).data.some((d) => d.planRor != null)).toBe(false);
+  });
+
+  // The ghost draws from two readings, but a pace needs 16 unbroken seconds: a shorter
+  // plan has a BT ghost and, silently, no RoR ghost.
+  it("a plan too short for a pace still draws its BT ghost and has no RoR", () => {
+    const m = buildLiveChartModel({ ...base, plan: planOf(roast600.slice(0, 10)) });
+    expect(m.ghost).toBe("drawn");
+    expect(m.data[5].planTemp).not.toBeNull();
+    expect(m.data.some((d) => d.planRor != null)).toBe(false);
+  });
+
+  // RL-030: it is built from the bounded source readings only, never from the raw curve.
+  it("ignores a source point at t = 1e9 or 2^32 + 5: same pace, built in well under a second", () => {
+    const clean = buildLiveChartModel({ ...base, plan: planOf(roast600) });
+    expect(count(clean)).toBeGreaterThan(500); // the control
+    const started = Date.now();
+    const huge = buildLiveChartModel({ ...base, plan: planOf([...roast600, { t: 1e9, bt: 400 }, { t: 2 ** 32 + 5, bt: 400 }]) });
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(huge.data.map((d) => d.planRor)).toEqual(clean.data.map((d) => d.planRor));
+  });
+
+  // Critic correction 6: the ghost's pace is on the RoR axis from second 0, so a source whose
+  // first 15 s fall at -100 F/min must not push the axis out. Encoded as a BOUND on the series
+  // (the ceiling stays at the plan's real peak, nothing below the dip itself), not as a cap:
+  // a faithful, uncapped series passes, and so would one that capped the early pace. The
+  // synthetic roast's true pace peaks at 45 F/min, and a slope over a window can never exceed
+  // the pace inside it.
+  it("a charge dip of -100 F/min does not push the ceiling past the plan's real peak (45 F/min)", () => {
+    const pace = [[0, -100], [15, -100], [30, -30], [60, 40], [120, 45], [240, 32], [360, 22], [480, 15], [600, 10]];
+    const paceAt = (t) => {
+      for (let i = 1; i < pace.length; i++) {
+        if (t <= pace[i][0]) {
+          const [t0, p0] = pace[i - 1];
+          const [t1, p1] = pace[i];
+          return p0 + ((p1 - p0) * (t - t0)) / (t1 - t0);
+        }
+      }
+      return pace[pace.length - 1][1];
+    };
+    let bt = 230;
+    const dip = Array.from({ length: 661 }, (_, t) => {
+      const point = { t, bt: Math.round(bt * 10) / 10 };
+      bt += paceAt(t) / 60;
+      return point;
+    });
+    const m = buildLiveChartModel({ ...base, plan: planOf(dip) });
+    const values = m.data.map((d) => d.planRor).filter(isNum);
+    expect(values.length).toBeGreaterThan(600);
+    expect(Math.max(...values)).toBeLessThanOrEqual(47);
+    expect(Math.max(...values)).toBeGreaterThanOrEqual(40); // the real recovery is still drawn
+    expect(Math.min(...values)).toBeGreaterThanOrEqual(-101);
   });
 });

@@ -1592,10 +1592,14 @@ const ghostCaption = (page) => page.getByTestId("ghost-caption");
 // holds; it is written with an init script because beforeEach's own seed (the one
 // fixture roast) re-runs on every load and would overwrite a plain evaluate().
 // `live` is the roast's stored clock and log (reloadMidRoast's default when omitted).
-async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined } = {}) {
-  await mockRoastLinkFeed(page);
+// `bt` is what the bridge publishes (a number, or a function of the sample count: see
+// mockRoastLinkFeed); `liveCurve` is the roast's recorded bean-temp curve so far, which
+// is what a reload mid-roast reads back from storage.
+async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined, bt = undefined, liveCurve = undefined } = {}) {
+  await mockRoastLinkFeed(page, { bt });
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
   await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
+  if (liveCurve) await page.evaluate((c) => window.localStorage.setItem("live_curve", JSON.stringify(c)), liveCurve);
   await reloadMidRoast(page, { profile, profileRaw, live });
   await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
@@ -1853,6 +1857,234 @@ test("ghost breaks across a probe gap: a 5 s hole is still bridged, so the line 
   await openGhostWithHole(page, 200, 204);
   // Within LIVE_GAP_S the model fills the hole with a short straight run: one stretch.
   expect(await ghostSubpaths(page)).toBe(1);
+});
+
+// ---------------------------------------------------------------------------
+// RL-056 / RL-057: the RoR ghost. The source roast's rate of rise is drawn on the live
+// chart as the BT ghost's twin: same "4 3" dash and 0.5 opacity, the RoR colour, 1.2 wide,
+// on the RoR axis. It exists exactly when the BT ghost does -- never without it, never
+// after DROP -- and adds no caption, legend or toggle. The series itself (same recipe as
+// the live RoR, null around a probe gap) is unit-tested in LiveRoastChart.plan.test.js;
+// these read what reaches the SVG.
+//
+// GHOST_PATH above is scoped by the Temp colour, so the second dashed "4 3" line this adds
+// cannot be mistaken for the BT ghost by any of the specs that measure it.
+// ---------------------------------------------------------------------------
+
+const ROR_PLAN_PATH = 'path.recharts-line-curve[stroke="rgb(var(--chart-ror))"][stroke-dasharray="4 3"]';
+const rorPlanD = (page) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.getAttribute("d") || "" : "";
+  }, ROR_PLAN_PATH);
+const rorPlanLength = async (page) => (await rorPlanD(page)).length;
+const rorPlanSubpaths = async (page) => ((await rorPlanD(page)).match(/M/g) || []).length;
+
+// Every line drawn on the live chart (its first recharts surface; the second is the Fan/Heat
+// control map), in DOM order -- which is paint order, last on top. Named by what it is: the
+// RoR or the Temp colour, and "(plan)" for the dashed ones. A line with no points renders an
+// empty path (the BT ghost does, for a plan that only has milestones), and that is not drawn.
+const liveChartLines = (page) =>
+  page.evaluate(() => {
+    const surface = document.querySelector(".recharts-surface");
+    if (!surface) return [];
+    return [...surface.querySelectorAll("path.recharts-line-curve")].filter((p) => (p.getAttribute("d") || "").length > 0).map((p) => {
+      const name = p.getAttribute("stroke").includes("--chart-ror") ? "RoR" : "Temp";
+      return p.getAttribute("stroke-dasharray") ? `${name} (plan)` : name;
+    });
+  });
+
+// The numbers printed on the live chart's right-hand (RoR) axis. Recharts renders each tick
+// label as a <text>; the RoR axis is the one on the right, so it is picked by position.
+const rorAxisTicks = (page) =>
+  page.evaluate(() => {
+    const surface = document.querySelector(".recharts-surface");
+    const half = surface.getBoundingClientRect().width / 2;
+    return [...surface.querySelectorAll("text.recharts-cartesian-axis-tick-value")]
+      .filter((t) => Number(t.getAttribute("x")) > half)
+      .map((t) => Number(t.textContent));
+  });
+
+// A synthetic source (or live) roast with a hard charge dip, so the RoR axis has something
+// to be squeezed by. The pace is a piecewise-linear RoR in F/min -- -100 F/min for the first
+// 15 s (the charge dip), the turnaround, a recovery peaking at 45 F/min, then the long
+// decline through the caramelization stretch (about 25 F/min at 5:00-6:00) -- integrated
+// into a 1 Hz bean-temp curve rounded to 0.1 F, the way the app stores one. Charged at 230 F.
+const DIP_PACE = [[0, -100], [15, -100], [30, -30], [60, 40], [120, 45], [240, 32], [360, 22], [480, 15], [600, 10]];
+function dipCurve(length) {
+  const paceAt = (t) => {
+    for (let i = 1; i < DIP_PACE.length; i++) {
+      const [t1, p1] = DIP_PACE[i];
+      if (t <= t1) {
+        const [t0, p0] = DIP_PACE[i - 1];
+        return p0 + ((p1 - p0) * (t - t0)) / (t1 - t0);
+      }
+    }
+    return DIP_PACE[DIP_PACE.length - 1][1];
+  };
+  const curve = [];
+  let bt = 230;
+  for (let t = 0; t < length; t++) {
+    curve.push({ t, bt: Math.round(bt * 10) / 10 });
+    bt += paceAt(t) / 60;
+  }
+  return curve;
+}
+const sourceWithDip = { ...sourceWithCurve, curve: dipCurve(661) };
+
+// A roast `seconds` in whose own charge dipped: the curve it has recorded so far (what a
+// reload mid-roast reads back), the clock to match, and a bridge that keeps publishing the
+// newest reading so the feed stays "live" and the chart stays mounted.
+function dippedLiveRoast(seconds) {
+  const liveCurve = dipCurve(seconds + 1);
+  return {
+    liveCurve,
+    live: { ...fixtureLiveRoast, elapsedSeconds: seconds },
+    bt: () => liveCurve[liveCurve.length - 1].bt,
+  };
+}
+
+const GHOST_STATES = [
+  { name: "a source roast with a curve", profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithCurve], caption: null },
+  { name: "a profile with no source roast", profile: fixtureProfile, roasts: [fixtureRoast], caption: "No ghost · no source roast" },
+  { name: "a source roast that is not on this device", profile: fixtureGhostProfile, roasts: [fixtureRoast], caption: "No ghost · source roast not on this device" },
+  { name: "a source roast with no curve", profile: { ...fixtureGhostProfile, sourceRoastId: fixtureRoast.id }, roasts: [fixtureRoast], caption: "No ghost · source roast has no curve" },
+];
+
+for (const state of GHOST_STATES) {
+  test(`ghost: RoR plan line is drawn exactly when the BT ghost is (${state.name})`, async ({ page }) => {
+    // A live curve with a pace of its own, so the live RoR and Temp lines are really drawn
+    // and the lines asserted below are the whole stack, not whatever happened to render.
+    await openLiveChart(page, { profile: state.profile, roasts: state.roasts, ...dippedLiveRoast(130) });
+    const drawn = state.caption === null;
+
+    // The caption is the proof the plan has settled into this state: an absence asserted
+    // before the chart has caught up with it would pass for the wrong reason.
+    if (drawn) {
+      await expect(ghostCaption(page)).toHaveCount(0);
+      await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+    } else {
+      await expect(ghostCaption(page)).toHaveText(state.caption);
+    }
+
+    if (drawn) {
+      // The RoR twin: a real path (not just an element) in the RoR colour, with the
+      // BT ghost's dash and opacity and a hair thinner than the 1.4 BT ghost.
+      await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+      const style = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return { width: el.getAttribute("stroke-width"), opacity: el.getAttribute("stroke-opacity") };
+      }, ROR_PLAN_PATH);
+      expect(style).toEqual({ width: "1.2", opacity: "0.5" });
+      // The ghost stack mirrors the live stack, every ghost under every live line.
+      expect(await liveChartLines(page)).toEqual(["RoR (plan)", "Temp (plan)", "RoR", "Temp"]);
+      // One dash means "the source roast", and no new legend or caption explains it.
+      await expect(page.locator(".recharts-legend-wrapper")).toHaveCount(0);
+
+      // The controls under the chart still read Fan -> Heat -> Temp.
+      const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+      const dialLabels = await dials.locator("div:first-child").allInnerTexts();
+      expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+    } else {
+      expect(await ghostLength(page)).toBe(0);
+      expect(await rorPlanLength(page)).toBe(0);
+      expect(await liveChartLines(page)).toEqual(["RoR", "Temp"]);
+    }
+    // Present exactly when the BT ghost is.
+    expect((await rorPlanLength(page)) > 0).toBe((await ghostLength(page)) > 0);
+  });
+}
+
+test("ghost: RoR plan line is drawn exactly when the BT ghost is (gone with it at DROP)", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithCurve], ...dippedLiveRoast(130) });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect
+    .poll(async () => (await stored(page, "live_roastLog")) || "", { timeout: 10_000 })
+    .toContain("COOLING START");
+  // The chart is still on screen, and neither dashed line is: after DROP there is nothing
+  // left to steer by.
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect.poll(() => ghostLength(page), { timeout: 10_000 }).toBe(0);
+  await expect.poll(() => rorPlanLength(page), { timeout: 10_000 }).toBe(0);
+  expect(await liveChartLines(page)).toEqual(["RoR", "Temp"]);
+});
+
+// RL-027's rule, for the RoR twin: no connectNulls. A source-roast hole longer than
+// LIVE_GAP_S leaves a RoR gap about +/-15 s wide (the slope needs an unbroken window), which is
+// honest; a short hole is bridged before the slope is taken, so the line stays whole.
+test("ghost breaks across a probe gap: the RoR plan line breaks too, in two pieces", async ({ page }) => {
+  await openGhostWithHole(page, 200, 219);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  expect(await rorPlanSubpaths(page)).toBe(2);
+});
+
+test("ghost breaks across a probe gap: a 5 s hole is bridged for the RoR plan line as well", async ({ page }) => {
+  await openGhostWithHole(page, 200, 204);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  expect(await rorPlanSubpaths(page)).toBe(1);
+});
+
+// The tooltip reads each live value with its plan underneath: Temp, Temp (plan), RoR, RoR (plan).
+// Recharts' default sorts by name, which would read RoR first. Hover needs a pointer, so
+// desktop only. The live curve is seeded so there is a live Temp and RoR at the hovered second.
+test("ghost: hovering a second reads Temp, Temp (plan), RoR, RoR (plan)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "hover needs a mouse pointer; the iphone project is touch only");
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip], ...dippedLiveRoast(300) });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+
+  // The window is the last three minutes (2:30-5:30 at 5:00), so the middle of the plot is
+  // 4:00: inside the recorded curve and inside the plan. 42 and 44 are the axis insets.
+  const box = await page.locator(".recharts-surface").first().boundingBox();
+  await page.mouse.move(box.x + 42 + (box.width - 42 - 44) / 2, box.y + 50);
+  const names = page.locator(".recharts-tooltip-item-name");
+  await expect(names.first()).toBeVisible();
+  expect(await names.allInnerTexts()).toEqual(["Temp", "Temp (plan)", "RoR", "RoR (plan)"]);
+});
+
+// The plan's pace joins the RoR axis from second 0, so the axis it opens with is the one it
+// keeps, and the source roast's charge dip (-100 F/min over the first 15 s) must not blow the
+// ceiling or the floor out and squeeze the stretch that matters (caramelization, about
+// 25 F/min). Read as the numbers printed on the axis, at the phone's width. The synthetic
+// roast peaks at 45 F/min, so the axis tops out at 60 (the model rounds 1.2x the peak up to
+// a whole 10); the floor is whatever the dip draws and is bounded by the dip itself.
+//
+// Measured on the code before the ghost RoR: a dipping LIVE curve alone already prints a
+// negative floor (the axis domain is [0, fn] with no allowDataOverflow, so Recharts widens it
+// to the most negative RoR: about -99 here). This pins "no worse than the dip", not "pinned at 0".
+const ROR_AXIS_CEILING = 60;
+const ROR_AXIS_FLOOR = -100;
+
+test("ghost: the RoR axis opens at the plan's pace, on a calm live feed (390px)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The default feed: 250..254 F, so the LIVE line has no pace of its own to set the axis.
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip] });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  const ticks = await rorAxisTicks(page);
+  expect(ticks.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(1);
+  // Without the plan's pace the axis would stop at 10: the plan reaches 45 F/min.
+  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(Math.min(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
+});
+
+test("ghost: a dipping live feed under a dipping plan keeps the RoR axis within its floor and ceiling (390px)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Five minutes into a roast whose own charge dipped, the bridge still publishing.
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip], ...dippedLiveRoast(300) });
+  // Measured with the plan's pace on screen, not before it has drawn.
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  const ticks = await rorAxisTicks(page);
+  expect(ticks.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(1);
+  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(Math.min(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
 });
 
 // ---------------------------------------------------------------------------
