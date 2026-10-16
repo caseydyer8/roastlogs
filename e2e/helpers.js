@@ -80,19 +80,56 @@ async function fullPageShot(page, name, options = {}) {
 // Call it BEFORE the page loads the app (routes survive a reload). It does not
 // replace the real feed's security: the channel's RLS lives in the database, and
 // this never contacts it.
-async function mockRoastLinkFeed(page, { bt = 250 } = {}) {
+//
+// `bt` is what the bridge reads. A number is the base of the 5-sample sawtooth
+// the feed has always published (bt, bt+1 ... bt+4, repeating); a function
+// `fn(n)` returns the exact reading for sample n, counted from 0 since the last
+// `set` (or since the call), across reloads. It returns a controller, which
+// callers that only want a steady feed simply ignore:
+//   set(btOrFn)     change what the bridge reads from the next sample on, e.g.
+//                   `set((n) => 330 + 0.5 * n)` for a ramp. Samples are 500 ms
+//                   apart, so a step of x per sample is 2x per second.
+//   dropBridge()    the bridge app quits: samples stop and the channel's presence
+//                   resyncs with nobody on it (the hook reads "no-bridge" after
+//                   STALE_MS). It stays down for sockets the page opens later, so
+//                   call it BEFORE a load to start a page with the feed already gone.
+//   restoreBridge() the bridge app comes back: presence resyncs with the bridge on
+//                   it and samples resume at the next tick (hook: "bridge-only",
+//                   then "live" on the first sample). Also applies to later sockets.
+// `announce: false` joins the channel but NEVER sends a presence frame -- not at
+// join, and not from dropBridge()/restoreBridge() either. It withholds PRESENCE
+// only. useLiveRoast flips to "live" on any sample, presence synced or not, so the
+// hook stays in "connecting" only while no sample arrives either. To hold it there
+// (the few seconds after every reload), pair it with dropBridge() BEFORE the load.
+async function mockRoastLinkFeed(page, { bt = 250, announce = true } = {}) {
   const TOPIC = "realtime:roastlink-live";
+  const feed = { source: bt, ticks: 0, bridgeUp: true };
+  const sockets = new Set();
+  const nextBt = () => {
+    const n = feed.ticks++;
+    return typeof feed.source === "function" ? feed.source(n) : feed.source + (n % 5);
+  };
+  const presenceState = () => JSON.stringify([null, null, TOPIC, "presence_state",
+    feed.bridgeUp ? { "bridge-e2e": { metas: [{ phx_ref: "e2e", role: "bridge" }] } } : {}]);
+  // Presence is re-announced to every open socket whenever the bridge comes or goes.
+  const announceToAll = () => {
+    if (!announce) return;
+    for (const ws of sockets) {
+      try { ws.send(presenceState()); } catch (e) { /* closing */ }
+    }
+  };
   await page.routeWebSocket(/supabase\.co\/realtime/, (ws) => {
-    let n = 0;
+    sockets.add(ws);
     const timer = setInterval(() => {
+      if (!feed.bridgeUp) return;
       try {
         ws.send(JSON.stringify([null, null, TOPIC, "broadcast",
-          { type: "broadcast", event: "sample", payload: { bt: bt + (n++ % 5) } }]));
+          { type: "broadcast", event: "sample", payload: { bt: nextBt() } }]));
       } catch (e) {
         clearInterval(timer); // the page went away between ticks
       }
     }, 500);
-    ws.onClose(() => clearInterval(timer));
+    ws.onClose(() => { clearInterval(timer); sockets.delete(ws); });
     ws.onMessage((raw) => {
       const [joinRef, ref, topic, event] = JSON.parse(String(raw));
       const reply = (response = {}) =>
@@ -101,13 +138,26 @@ async function mockRoastLinkFeed(page, { bt = 250 } = {}) {
         ws.send(JSON.stringify([null, ref, "phoenix", "phx_reply", { status: "ok", response: {} }]));
       } else if (event === "phx_join") {
         reply({ postgres_changes: [] });
-        ws.send(JSON.stringify([null, null, topic, "presence_state",
-          { "bridge-e2e": { metas: [{ phx_ref: "e2e", role: "bridge" }] } }]));
+        if (announce) ws.send(presenceState());
       } else if (event === "phx_leave") {
         reply();
       }
     });
   });
+  return {
+    set(btOrFn) {
+      feed.source = btOrFn;
+      feed.ticks = 0;
+    },
+    dropBridge() {
+      feed.bridgeUp = false;
+      announceToAll();
+    },
+    restoreBridge() {
+      feed.bridgeUp = true;
+      announceToAll();
+    },
+  };
 }
 
 // A cloud whose `roasts` table holds exactly `rows` (raw snake_case rows) and

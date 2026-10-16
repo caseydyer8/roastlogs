@@ -872,12 +872,14 @@ test.describe("light mode", () => {
 // -- the screenshot baseline for this screen is generated on Casey's Mac.
 // ---------------------------------------------------------------------------
 
-async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile] } = {}) {
+// `bean` is the one inventory bean the device holds. The shared fixture by default; a test
+// that needs another name (a long one) passes its own, so e2e/fixtures.js stays as it is.
+async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile], bean = fixtureBean } = {}) {
   await page.addInitScript(({ bean, profs, equipment }) => {
     window.localStorage.setItem("beans", JSON.stringify([bean]));
     window.localStorage.setItem("global_profiles", JSON.stringify(profs));
     window.localStorage.setItem("roastlogs_equipment", equipment);
-  }, { bean: fixtureBean, profs: profiles, equipment: setup });
+  }, { bean, profs: profiles, equipment: setup });
   await page.reload();
   await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
 }
@@ -1256,6 +1258,24 @@ async function reloadMidRoast(page, { profile = fixtureProfile, profileRaw, step
   await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
 }
 
+// The bean-temp readout is also the button that opens the live chart -- and a
+// tap TOGGLES it. On a probe roast the app opens the chart by itself (at START,
+// and when the page reloads into a roast under way), so a bare tap would now
+// close it. This taps only if the chart is not already open. It gives the
+// auto-open a moment to land first: the readout can render a beat before the
+// state that opens the chart settles, and a tap in that gap would close it.
+const beanTempReadout = (page) => page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ });
+
+async function ensureLiveChartOpen(page) {
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  try {
+    await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 1_500 });
+  } catch (e) {
+    await readout.click({ timeout: 15_000 });
+  }
+}
+
 const profileBadge = (page) => page.getByText("Active Profile: E2E Profile");
 
 test("profile survives a mid-roast reload: badge and plan return, and the saved roast keeps the profile", async ({ page }) => {
@@ -1537,7 +1557,7 @@ test("ghost: a source roast that syncs down AFTER the app mounts draws the dashe
     expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
 
     // The bridge is on the channel: open the live chart from the bean-temp readout.
-    await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+    await ensureLiveChartOpen(page);
     await expect(page.locator(".recharts-surface").first()).toBeVisible();
 
     // The sync is still waiting on the cloud, so the chart has no curve to ghost.
@@ -1577,7 +1597,7 @@ async function openLiveChart(page, { profile = undefined, profileRaw = undefined
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
   await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
   await reloadMidRoast(page, { profile, profileRaw, live });
-  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
 }
 
@@ -1606,7 +1626,7 @@ test("ghost caption: a source roast with no curve says so, and a source roast wi
   // and there is nothing to explain.
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), [fixtureRoast, sourceWithCurve]);
   await reloadMidRoast(page, { profile: fixtureGhostProfile });
-  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
   await expect(ghostCaption(page)).toHaveCount(0);
@@ -1654,11 +1674,41 @@ test("ghost caption: at 390px the header controls stay on one row with the capti
   expect(await caption.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
+// What an element's text is painted in, and how legible that is where it sits. Contrast is
+// the WCAG ratio against the real stack of translucent layers under the text (hero card at
+// 30% over the app shell), composited the way the browser paints it -- so it needs no
+// screenshot. `size` is the font size in px, for the caller to pick the bar (4.5:1 for
+// small text, 3:1 for large). Also returns the theme's own tokens so a caller can assert
+// "this is the muted ink" by value, whichever theme is on. Used by the ghost caption and
+// the held live readout.
+const paintedInk = (locator) =>
+  locator.evaluate((el) => {
+    const rgb = (s) => (s.match(/[\d.]+/g) || []).map(Number);
+    const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    // Paint the ancestors' backgrounds from the page canvas (white) down to the text.
+    const chain = [];
+    for (let n = el; n; n = n.parentElement) chain.unshift(rgb(getComputedStyle(n).backgroundColor));
+    let bg = [255, 255, 255];
+    for (const [r, g, b, a = 1] of chain) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)];
+    const fg = rgb(getComputedStyle(el).color).slice(0, 3);
+    const [hi, lo] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+    const root = getComputedStyle(document.documentElement);
+    return {
+      dataTheme: document.documentElement.getAttribute("data-theme"),
+      fg,
+      size: parseFloat(getComputedStyle(el).fontSize),
+      muted: rgb(root.getPropertyValue("--text-muted")),
+      error: rgb(root.getPropertyValue("--error-text")),
+      primary: rgb(root.getPropertyValue("--text-primary")),
+      ratio: (hi + 0.05) / (lo + 0.05),
+    };
+  });
+
 // The caption is muted text, not an error and not a raw colour: it must resolve
 // to the theme's own --text-muted token (so the Settings toggle re-colours it),
 // and it must stay readable on the surface it sits on in BOTH themes. Contrast is
-// the WCAG ratio against the real stack of translucent layers under the text
-// (hero card at 30% over the app shell), composited the way the browser paints it.
+// paintedInk's WCAG ratio.
 // This is the functional stand-in for eyeballing the light theme, which visual
 // regression would otherwise cover; it checks legibility, not appearance.
 for (const theme of ["dark", "light"]) {
@@ -1667,27 +1717,7 @@ for (const theme of ["dark", "light"]) {
     await openLiveChart(page, { profile: fixtureProfile });
     await expect(ghostCaption(page)).toBeVisible();
 
-    const m = await ghostCaption(page).evaluate((el) => {
-      const rgb = (s) => (s.match(/[\d.]+/g) || []).map(Number);
-      const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
-      const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-      // Paint the ancestors' backgrounds from the page canvas (white) down to the text.
-      const chain = [];
-      for (let n = el; n; n = n.parentElement) chain.unshift(rgb(getComputedStyle(n).backgroundColor));
-      let bg = [255, 255, 255];
-      for (const [r, g, b, a = 1] of chain) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)];
-      const fg = rgb(getComputedStyle(el).color).slice(0, 3);
-      const [hi, lo] = [lum(fg), lum(bg)].sort((x, y) => y - x);
-      const root = getComputedStyle(document.documentElement);
-      return {
-        dataTheme: document.documentElement.getAttribute("data-theme"),
-        fg,
-        muted: rgb(root.getPropertyValue("--text-muted")),
-        error: rgb(root.getPropertyValue("--error-text")),
-        primary: rgb(root.getPropertyValue("--text-primary")),
-        ratio: (hi + 0.05) / (lo + 0.05),
-      };
-    });
+    const m = await paintedInk(ghostCaption(page));
 
     expect(m.dataTheme, "the theme under test is actually applied").toBe(theme);
     expect(m.fg, "caption resolves to --text-muted").toEqual(m.muted);
@@ -1744,9 +1774,6 @@ test("ghost caption: stays in both window modes, the same distance above the plo
 // useLiveRoast runs unmodified: nothing in the app is there for the test's sake.
 // ---------------------------------------------------------------------------
 
-// The bean-temp readout is also the button that opens the live chart.
-const beanTempReadout = (page) => page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ });
-
 test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast reload", async ({ page }) => {
   await mockRoastLinkFeed(page);
   // After beforeEach's seed and before seedSetup's reload, so it wins on load.
@@ -1763,7 +1790,7 @@ test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast 
   await expect(page.getByText("00:02", { exact: true })).toBeVisible();
 
   // BEFORE the reload: the live chart is open and the ghost is on it.
-  await beanTempReadout(page).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect(ghostCaption(page)).toHaveCount(0); // a ghost is promised and drawn
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
@@ -1783,8 +1810,8 @@ test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast 
   await expect(profileBadge(page)).toBeVisible();
 
   // AFTER the reload: the bridge is still publishing, so the feed returns by
-  // itself; the chart starts closed again (it is not persisted) -- open it.
-  await beanTempReadout(page).click({ timeout: 15_000 });
+  // itself; the chart is not persisted, so make sure it is open again.
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect(ghostCaption(page)).toHaveCount(0);
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
@@ -3074,11 +3101,12 @@ test("mock-bridge roast: a steady probe saves a continuous curve, and History's 
   await runQuickRoast(page, {
     viaPreheat: true,
     clockPast: 20,
-    // 20 s in, marks not yet logged: open the live chart (the Bean temp readout is its
-    // button) and look at the Temp line. Sampled for a few seconds, not once, because
-    // a fragment can come and go as the feed's 2 Hz and the roast's 1 Hz clock drift.
+    // 20 s in, marks not yet logged: make sure the live chart is open (the Bean temp
+    // readout is its button) and look at the Temp line. Sampled for a few seconds, not
+    // once, because a fragment can come and go as the feed's 2 Hz and the roast's 1 Hz
+    // clock drift.
     beforeMarks: async (p) => {
-      await beanTempReadout(p).click({ timeout: 15_000 });
+      await ensureLiveChartOpen(p);
       await expect(p.locator(".recharts-surface").first()).toBeVisible();
       await expect.poll(async () => (await liveTempSubpaths(p)).length, { timeout: 10_000, message: "the live Temp line is drawn" }).toBe(1);
       for (let i = 0; i < 6; i++) {
@@ -3130,4 +3158,932 @@ test("mock-bridge roast: a steady probe saves a continuous curve, and History's 
   // still a dash, so the three above are numbers because of the data behind them and
   // not because every tile stopped printing dashes.
   await expect(historyTile(page, "Wt Loss")).toHaveText("—");
+});
+
+// ---------------------------------------------------------------------------
+// RL-063: the live chart opens itself on a probe roast. It used to start closed
+// (liveChartOpen is React state, not persisted), so the chart stayed hidden until
+// the roaster tapped the Bean temp readout -- after every START and, worse, after
+// every mid-roast reload, which iOS does to a backgrounded PWA (RL-036). Now:
+//   - a probe roast (only the Razzo has a probe) opens it at START and when the
+//     page loads into a roast under way. It is PER ROAST: a tap on the readout
+//     closes it for the rest of THAT roast, and the next roast opens it again;
+//   - it opens only when it can be drawn now and near START or the page load. A
+//     bridge that joins mid-roast does NOT make the chart drop in under the thumb
+//     (the readout shows, collapsed, and the roaster taps it), and a reload after
+//     COOLING START does not open it above SAVE ROAST;
+//   - from START until SAVE ROAST / DISCARD (not until COOLING START: a hold may only
+//     end at a stage change, never at a tap) the chart stays MOUNTED when the feed
+//     drops, with the curve it has, and the readout stays too -- muted, "Feed lost" or
+//     "Connecting", never blank -- so there is a cue that the feed is gone and a toggle
+//     to close the chart by hand. "Connecting" has a ceiling: about 15 s after the page
+//     loaded it reads "Feed lost" too, with nothing else changing;
+//   - a chart the FEED took away (a roast with no curve whose feed dies) is not
+//     brought back by the feed when it returns: the readout comes back collapsed;
+//   - the controls never move for any of it: the chart is up from START (the same
+//     layout for the whole roast) and a feed change does not change a row height;
+//   - a probe-less setup (oem-tube, sr540) still gets no chart and no readout.
+// The bridge is faked at the websocket (mockRoastLinkFeed), so the real
+// useLiveRoast runs unmodified; the controller's dropBridge()/restoreBridge() are
+// the bridge app quitting and coming back. Functional assertions only -- the
+// roast-tab baseline with the chart open by default is a Mac job (visual pending).
+// ---------------------------------------------------------------------------
+
+const liveChartSurface = (page) => page.locator(".recharts-surface");
+// The cluster readout in EVERY state (data-state: live | no-signal | feed-lost |
+// connecting). beanTempReadout above matches only the two states that print "Bean temp".
+const liveReadout = (page) => page.getByTestId("live-readout");
+
+// A Razzo roast started the way a roaster starts it: Setup -> Begin preheat -> START,
+// on the mocked bridge. Taps NOTHING that opens the chart. `profile` follows that
+// profile from Setup instead of a manual roast; `roasts` is what this device holds
+// (an init script, since beforeEach's seed re-runs on every load); `bean` picks the
+// inventory bean in Setup the way Case does (it adds the bean name to the summary bar
+// above the hero); `bean` may be an inventory bean of its own instead of `true`, to
+// roast with a name the fixture does not have. `feedDown` starts the roast with the
+// bridge already gone: Setup then reads "Continue" (nothing live to preheat against)
+// and START is on the ready hero. `silent` is the other way to read "Continue": a
+// bridge that IS on the channel (so the hook reads bridge-only) whose device sends no
+// usable bean temp -- pair it with `feedOptions: { bt: () => NaN }`.
+// Returns the feed controller.
+async function startProbeRoast(page, { feedOptions, profile = null, roasts = null, bean = false, feedDown = false, silent = false } = {}) {
+  const feed = await mockRoastLinkFeed(page, feedOptions);
+  if (feedDown) feed.dropBridge(); // before the load below: the new socket sees nobody on the channel
+  if (roasts) await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
+  const pickedBean = bean && typeof bean === "object" ? bean : fixtureBean;
+  await seedSetup(page, { setup: "razzo-v5t", profiles: profile ? [profile] : undefined, bean: pickedBean });
+  if (bean) await page.getByRole("button", { name: pickedBean.name }).click();
+  await page.getByRole("button", { name: profile ? /E2E Profile/ : /Manual roast/ }).click();
+  await page.getByRole("button", { name: feedDown || silent ? "Continue" : "Begin preheat" }).click({ timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  return feed;
+}
+
+const dialLabelsOf = async (page) =>
+  (await page.locator("div.grid.grid-cols-3.divide-x > button").locator("div:first-child").allInnerTexts())
+    .map((l) => l.toLowerCase());
+
+// <main> scrolls inside the fixed shell, and a click on a button that is partly under
+// the nav makes Playwright scroll it. Every reading of where a control sits is taken
+// at scrollTop 0, so two readings are comparable.
+const mainToTop = (page) => page.locator("main").evaluate((el) => el.scrollTo(0, 0));
+async function boxAtTop(page, name) {
+  await mainToTop(page);
+  return page.getByRole("button", { name }).boundingBox();
+}
+
+// The live instrument hero: the one overflow-hidden rounded section on the Roast tab.
+const heroSection = (page) => page.locator("section.overflow-hidden.rounded-3xl");
+
+// Where the run button (`runName`: PAUSE, or RESUME when paused) and the hero sit, both
+// read at scrollTop 0. "Nothing under the thumb moved" is these two staying put: the run
+// button is the thing the thumb is on, the hero's bottom edge is where everything below
+// it (the timeline, SAVE ROAST) starts.
+async function heroReading(page, runName) {
+  const run = await boxAtTop(page, runName);
+  const hero = await heroSection(page).boundingBox();
+  return { run, hero, heroBottom: hero.y + hero.height };
+}
+
+// Every text node in a locator with the colour it is painted in -- so "muted" can be
+// asserted as "the same ink as the label", without naming a class or a token.
+const inkOf = (locator) =>
+  locator.evaluate((root) => {
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = n.textContent.trim();
+      if (text) out.push({ text, color: getComputedStyle(n.parentElement).color });
+    }
+    return out;
+  });
+
+test("live chart opens itself at START on a Razzo roast", async ({ page }) => {
+  await startProbeRoast(page);
+  // No tap on the Bean temp readout: the chart is simply there.
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true");
+  // The controls the taller hero pushes down still read Fan -> Heat -> Temp.
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+test("live chart opens itself: a tap closes it and it stays closed", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  const readout = beanTempReadout(page);
+  // It opened by itself (no tap yet) -- so the close below is the roaster's doing.
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  // Ten seconds of a roast that keeps running: nothing may re-open it. Sampled each
+  // second rather than once, so an effect that re-fires on the clock tick is caught.
+  const clock = async () => Number(await stored(page, "live_elapsedSeconds"));
+  const before = await clock();
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(1000);
+    await expect(readout, `second ${i + 1} after the tap`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page)).toHaveCount(0);
+  }
+  expect(await clock(), "the roast clock kept running").toBeGreaterThanOrEqual(before + 8);
+});
+
+test("live chart opens itself: a reload into a running Razzo roast re-opens it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await expect(page.getByText("00:03", { exact: true })).toBeVisible({ timeout: 10_000 });
+  // Close it by hand first, so what comes back after the reload is the app's doing and
+  // not a leftover: the choice not to look at the chart is for THIS page session only.
+  await ensureLiveChartOpen(page);
+  await beanTempReadout(page).click();
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("start_settings");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // The same roast came back (paused at its clock, no Setup takeover)...
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  // ...and so did the chart, with no tap. The feed returns by itself.
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true", { timeout: 15_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+// The chart opens only when it can be drawn NOW and near START or the page load.
+// Case's Razzo roast is sometimes started before the bridge app is up. The roast runs
+// with the feed down; when the bridge joins, say 20 s in, the readout appears -- and
+// the chart must NOT drop in, 260 px tall, on top of the Mark button under his thumb.
+test("live chart opens itself: a bridge that joins late does not pop the chart in under the thumb", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page, { feedDown: true });
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+
+  // The feed is down from START: the readout holds its slot as the muted "Feed lost" cue,
+  // with nothing to draw and so nothing to toggle.
+  const held = liveReadout(page);
+  await expect.soft(held, "feed down from START: the readout holds its slot").toHaveAttribute("data-state", "feed-lost");
+  await expect.soft(held, "nothing to draw yet, so nothing to toggle").toBeDisabled();
+  await expect.soft(held).toHaveAttribute("aria-expanded", "false");
+
+  // About 20 s in. This is the "before": where the thumb is resting.
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  const before = await boxAtTop(page, "Mark Yellowing");
+
+  feed.restoreBridge();
+  // The bean temp arrives: the readout reads Bean temp (live), collapsed.
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  // ...and keeps its hands off: still collapsed a few seconds later (an effect that
+  // opens it once the feed settles would land after the first look).
+  for (let i = 0; i < 6; i++) {
+    await expect(readout, `sample ${i} after the bridge joined`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, sample ${i} after the bridge joined`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  await expect.soft(liveReadout(page)).toHaveAttribute("data-state", "live");
+
+  // Nothing under the thumb moved: the Mark button is where it was before the join.
+  const after = await boxAtTop(page, "Mark Yellowing");
+  expect(
+    Math.abs(after.y - before.y),
+    `Mark Yellowing top edge: ${before.y} before the bridge joined, ${after.y} after`
+  ).toBeLessThanOrEqual(0.5);
+});
+
+// A reload after COOLING START. The roast is over bar SAVE ROAST; nothing about a
+// finished roast wants a chart, and one dropping in when the feed returns a second later
+// would push SAVE ROAST ~260 px down.
+test("live chart opens itself: a reload after COOLING START does not open the chart", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("COOLING START");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // The finished roast came back, waiting to be saved...
+  await expect(saveRoastButton(page)).toBeVisible();
+  // ...and the feed returns by itself (Bean temp = the hook is live again).
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  // The chart did not open, and does not open a moment later either.
+  for (let i = 0; i < 6; i++) {
+    await expect(readout, `sample ${i} after the feed returned`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, sample ${i} after the feed returned`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// The auto-open is per ROAST. A close sticks for the rest of THAT roast (through its
+// marks and the drop), and the next roast, in the same page session, opens it again. The
+// roaster who closes the chart on roast 1 must not have to tap on every roast after it.
+test("live chart opens itself: it opens again for the next roast after a close on the last one", async ({ page }) => {
+  test.setTimeout(120_000);
+  await startProbeRoast(page, { profile: singleStepProfile });
+  const readout = beanTempReadout(page);
+  // Roast 1 opens itself (the precondition: the close below is the roaster's).
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+
+  // It stays closed for the rest of roast 1: after each mark, through the drop.
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+    await page.waitForTimeout(700);
+    await expect(readout, `after Mark ${label}`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart after Mark ${label}`).toHaveCount(0);
+  }
+  await saveRoastButton(page).click();
+  await skipDropWeight(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  expect(await roastCount(page)).toBe(2); // the fixture roast and roast 1
+
+  // Roast 2, same page session: no reload in between.
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+for (const setup of ["oem-tube", "sr540"]) {
+  test(`live chart opens itself: ${setup} roast has no chart and no Bean temp readout`, async ({ page }) => {
+    // A bridge IS on the channel and publishing -- the probe-less setup must ignore it.
+    await mockRoastLinkFeed(page);
+    await seedSetup(page, { setup });
+    // A bridge on the channel makes the app GUESS the Razzo, unless the setup was picked
+    // by hand ("the app may guess; it does not argue"). Pick it, as a roaster who knows
+    // their roaster has no probe would, so the roast really is on a probe-less setup.
+    await page.getByLabel("Roaster Setup").selectOption(setup);
+    await expect(page.getByLabel("Roaster Setup")).toHaveValue(setup);
+    await page.getByRole("button", { name: /Manual roast/ }).click();
+    await page.getByRole("button", { name: "Start roast" }).click();
+    await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+    // Past a few samples (the mock publishes every 500 ms), so "no chart" is not just "too early".
+    await expect(page.getByText("00:04", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(page.getByText("Live curve", { exact: true })).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+    await expect(liveReadout(page)).toHaveCount(0);
+
+    // Control: the absence above is the setup's doing, not a feed that never connected.
+    // Settings' bridge card reads the ungated signal, and it says Live.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByText("Receiving bean temp from the RoastLink.")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Roast", exact: true }).click();
+    await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+    await expect(liveReadout(page)).toHaveCount(0);
+  });
+}
+
+// The feed dies mid-roast (the bridge app quits). The chart stays mounted with the
+// curve it has, and the readout does NOT vanish: its slot is the probe's from START to
+// SAVE ROAST, and it says what the feed is doing. "Feed lost" is muted (no number
+// outlives its data, no error red: the roast is fine, only the feed is not), and it is
+// the same height as the live readout, so no control under the thumb moves.
+test("live chart opens itself: the chart stays mounted when the feed drops mid-roast, and the readout says Feed lost", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  // Open it however it opens (by itself, or by a tap on a build that does not yet),
+  // so this test is about what happens when the feed goes, not about getting it open.
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "a Temp line is drawn before the drop").toBeGreaterThan(0);
+
+  // The live look, for comparison: the label and the value are not the same ink.
+  const liveInk = await inkOf(beanTempReadout(page));
+  const liveLabel = liveInk.find((t) => t.text === "Bean temp");
+  const liveValue = liveInk.find((t) => /^\d+$/.test(t.text));
+  expect(liveLabel && liveValue, `live readout texts: ${JSON.stringify(liveInk)}`).toBeTruthy();
+  expect(liveValue.color, "live: the value is not painted in the muted ink").not.toBe(liveLabel.color);
+  const liveHeight = (await beanTempReadout(page).boundingBox()).height;
+  const before = await boxAtTop(page, "Mark Yellowing");
+
+  // The bridge app quits. The hook reads "no-bridge" once the last sample is STALE_MS old.
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout).toContainText("Feed lost");
+  await expect(readout).not.toContainText("Bean temp");
+  await expect(readout, "the chart is still up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // Muted: no number, and every dash is painted in the label's own ink (not the Temp
+  // colour, not the RoR colour, not error red).
+  const ink = await inkOf(readout);
+  const label = ink.find((t) => t.text === "Feed lost");
+  const dashes = ink.filter((t) => t.text === "--");
+  expect(dashes.length, `a dash for the value and one for the RoR; texts: ${JSON.stringify(ink)}`).toBe(2);
+  expect(ink.some((t) => /^[+-]?\d/.test(t.text)), `no frozen reading survives; texts: ${JSON.stringify(ink)}`).toBe(false);
+  for (const d of dashes) expect(d.color, "a stopped measurement is painted in the label's muted ink").toBe(label.color);
+
+  // Nothing under the thumb moved: same readout height, same Mark Yellowing top edge.
+  expect(Math.abs((await readout.boundingBox()).height - liveHeight), "readout height, live vs feed lost").toBeLessThanOrEqual(0.5);
+  const after = await boxAtTop(page, "Mark Yellowing");
+  expect(
+    Math.abs(after.y - before.y),
+    `Mark Yellowing top edge: ${before.y} while the feed was live, ${after.y} with the feed lost`
+  ).toBeLessThanOrEqual(0.5);
+
+  // The roast is still under way and the curve is still the roaster's: the chart
+  // stays, and keeps its Temp line, rather than blinking out for a feed that may
+  // be back in a moment.
+  for (let i = 0; i < 6; i++) {
+    await expect(liveChartSurface(page).first(), `chart, sample ${i} after the feed dropped`).toBeVisible();
+    expect((await liveTempSubpaths(page)).length, `Temp line, sample ${i}`).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// With the feed lost the chart is held open, so the roaster needs a way to close it by
+// hand (to bring Mark First crack out from under the nav, say) and to bring it back.
+test("live chart opens itself: with the feed lost, a tap on the readout closes the chart and a second tap brings it back", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout).toBeEnabled(); // there is a curve to draw, so there is something to toggle
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  // The cue is still there with the chart closed, and a second look a moment later agrees.
+  await page.waitForTimeout(1500);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost");
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "the curve the roast already has comes back with it").toBeGreaterThan(0);
+});
+
+// A reload leaves the hook in "connecting" for a few seconds (the page has not heard
+// from the channel yet). The feed here never answers at all -- no presence and, with the
+// bridge dropped before the load, no sample either -- so the hook cannot leave
+// "connecting" however long the test looks. (announce:false alone is not enough: any
+// sample flips the hook to "live" without presence.) The roast is mid-way, with a curve.
+// "Connecting" has a CEILING, though: a feed that has not answered for about 15 s (the same
+// AUTO_OPEN_WINDOW_MS that bounds the auto-open; one rule, not a setting) is not coming
+// for a moment, and a label that keeps promising it would be a lie -- offline reload, or a
+// Realtime that refused the subscribe, and the hook has no error state. Past it the readout
+// takes the feed-lost look and NOTHING ELSE changes: the chart stays, the toggle's state
+// stays, no row moves.
+test("live chart opens itself: a reload keeps the chart up while the feed is still connecting", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await mockRoastLinkFeed(page, { announce: false });
+  feed.dropBridge(); // no samples, for the reload below and every socket after it
+  await page.evaluate(() => {
+    window.localStorage.setItem("roastlogs_equipment", "razzo-v5t");
+    window.localStorage.setItem("live_curve", JSON.stringify(Array.from({ length: 130 }, (_, t) => ({ t, bt: 200 + t }))));
+  });
+  await reloadMidRoast(page);
+  const loadedAt = Date.now(); // the app mounted a moment (1-3 s) before this, so the page is a little older than this clock says
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+
+  // The roast has a curve and it is on screen -- in "connecting", where only the
+  // under-way rule keeps it mounted (the plain live/bridge-only rule would not).
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  expect((await liveTempSubpaths(page)).length, "the stored curve is drawn").toBeGreaterThan(0);
+
+  // The hook is still connecting, at the moment the chart is seen and for the next ~3 s
+  // (past the point where a sample, 500 ms apart, would have flipped it): not live and
+  // not bridge-only, so no "Bean temp" and no "No signal" -- and the chart stays up.
+  for (let i = 0; i < 6; i++) {
+    await expect(beanTempReadout(page), `Bean temp readout, check ${i}`).toHaveCount(0);
+    await expect(page.getByText("No signal", { exact: true }), `No signal, check ${i}`).toHaveCount(0);
+    await expect(liveChartSurface(page).first(), `chart, check ${i}`).toBeVisible();
+    await page.waitForTimeout(500);
+  }
+  // The readout does not vanish while it waits: it says Connecting, muted, in its own slot.
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "connecting");
+  await expect(readout).toContainText("Connecting");
+  await expect(readout, "the chart is up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // ...and the ceiling. Where everything stands while it is still Connecting: the readout's
+  // height, the run button (RESUME: a reload comes back paused) and the hero's edges.
+  const connecting = {
+    readoutHeight: (await readout.boundingBox()).height,
+    ...(await heroReading(page, "RESUME")),
+  };
+
+  // Not at once: ten seconds in it is still Connecting (a cold iOS reload takes a few seconds
+  // to resubscribe, and a ceiling that short would flash a false alarm on every reload).
+  await page.waitForTimeout(Math.max(0, loadedAt + 10_000 - Date.now()));
+  await expect(readout, "10 s after the load it is still Connecting").toHaveAttribute("data-state", "connecting");
+
+  // Then, with the feed still not heard from, the feed-lost look: about 15 s after the load.
+  await expect(readout, "about 15 s after the load, with no answer, Connecting becomes Feed lost")
+    .toHaveAttribute("data-state", "feed-lost", { timeout: 20_000 });
+  const flippedAfter = Date.now() - loadedAt;
+  expect(flippedAfter, "the ceiling is about 15 s, not sooner").toBeGreaterThanOrEqual(12_000);
+  await expect(readout).toContainText("Feed lost");
+  await expect(readout).not.toContainText("Connecting");
+  await expect(readout, "the chart is still up, so the readout still reports it open").toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first(), "the chart stayed").toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "the stored curve is still drawn").toBeGreaterThan(0);
+
+  // No layout change: same readout height, same run button, same hero.
+  const lost = await heroReading(page, "RESUME");
+  expect.soft(Math.abs((await readout.boundingBox()).height - connecting.readoutHeight), "readout height, Connecting vs Feed lost").toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.run.y - connecting.run.y), `RESUME top edge: ${connecting.run.y} while Connecting, ${lost.run.y} as Feed lost`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.hero.y - connecting.hero.y), "hero top edge").toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.hero.height - connecting.hero.height), `hero height: ${connecting.hero.height} while Connecting, ${lost.hero.height} as Feed lost`).toBeLessThanOrEqual(0.5);
+});
+
+// Phone geometry. The open chart makes the hero taller for the WHOLE roast, so the
+// buttons a thumb needs -- Mark Yellowing, then Mark First crack, and PAUSE beside them --
+// must still be reachable. "Reachable" is: fully on screen without scrolling, i.e. inside
+// <main>'s own window, which ends where the bottom nav begins. The only sticky thing in
+// the thumb zone is the round Adjustment Log button, and it opens the dial editor: it
+// cannot mark a phase, so it is no way round a button that is off screen.
+//
+// The layout is decided at design time and is the same for the whole roast (RL-039): what
+// comes and goes (the Next step strip) sits BELOW the run controls, and the bean's name is
+// shown once (the setup bar above the hero), so the controls do not depend on either.
+//
+// Every reading is taken at scrollTop 0, and the soft expectations list EVERY button that
+// is out of the window in one run: a click on a button that is partly under the nav makes
+// Playwright scroll <main>, which would otherwise move the next button's reading.
+async function expectOnScreen(page, name) {
+  await mainToTop(page);
+  const button = page.getByRole("button", { name });
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  const area = await page.locator("main").boundingBox();
+  const navTop = (await page.locator("nav").last().boundingBox()).y;
+  const top = area.y;
+  const bottom = Math.min(area.y + area.height, navTop);
+  expect.soft(box.y, `${name}: top edge ${box.y} inside the window that starts at ${top}`).toBeGreaterThanOrEqual(top - 1);
+  expect.soft(box.y + box.height, `${name}: bottom edge ${box.y + box.height} above where the window ends (${bottom})`).toBeLessThanOrEqual(bottom + 1);
+  // Reachable by moving the layout, not by shrinking the target: the buttons are 52.5 px
+  // tall, and a fit bought by making them smaller is not a fix.
+  expect.soft(box.height, `${name}: tap target is ${box.height} px tall`).toBeGreaterThanOrEqual(52);
+}
+
+async function markYellowingThenFirstCrackOnScreen(page) {
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expectOnScreen(page, "Mark Yellowing");
+  await expectOnScreen(page, "PAUSE");
+  await page.getByRole("button", { name: "Mark Yellowing" }).click();
+  // The button FIRST crack is marked with, the one a thumb must not have to hunt for.
+  await expectOnScreen(page, "Mark First crack");
+  await expectOnScreen(page, "PAUSE");
+}
+
+test("live chart opens itself: at 390x844 the next-phase button is still reachable with the chart open", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await markYellowingThenFirstCrackOnScreen(page);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+// Following a profile adds the "Next step" strip (and, when the ghost cannot draw, a
+// caption row in the chart header), and that is what Case roasts with, with a bean picked
+// in Setup. Measured on the layout before the strip moved below the run controls (chart
+// open, bean picked, main at scrollTop 0, window ends at 762): ghost drawn, Mark Yellowing
+// and PAUSE bottom 795.75 (34 px under the nav); ghost caption showing, 812.75. Both
+// variants run, because the caption is 17 px taller.
+const profileRoastVariants = [
+  { name: "ghost drawn", roasts: [fixtureRoast, sourceWithCurve], caption: false },
+  { name: "ghost caption", roasts: [fixtureRoast], caption: true },
+];
+
+// `bean` is what startProbeRoast takes: `true` for the fixture bean, or an inventory bean of
+// its own (a name that wraps, say).
+async function startProfileRoast(page, variant, bean = true) {
+  await startProbeRoast(page, { profile: fixtureGhostProfile, roasts: variant.roasts, bean });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  if (variant.caption) {
+    await expect(ghostCaption(page)).toBeVisible();
+  } else {
+    await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+    await expect(ghostCaption(page)).toHaveCount(0);
+  }
+}
+
+for (const variant of profileRoastVariants) {
+  test(`live chart opens itself: at 390x844 the next-phase button is still reachable with the chart open, following a profile (${variant.name})`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant);
+    await markYellowingThenFirstCrackOnScreen(page);
+    expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  });
+
+  // The strip is reference, so it sits BELOW the run controls: nothing that comes and goes
+  // (it leaves on PAUSE and when the last planned step passes) may sit above a control.
+  test(`live chart opens itself: the Next step strip sits below the run controls (${variant.name})`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant);
+    await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+    const strip = page.getByText("Next step", { exact: true }).locator("xpath=..");
+    await expect(strip).toBeVisible();
+    await mainToTop(page);
+    const mark = await page.getByRole("button", { name: "Mark Yellowing" }).boundingBox();
+    const pause = await page.getByRole("button", { name: "PAUSE" }).boundingBox();
+    const s = await strip.boundingBox();
+    const controlsBottom = Math.max(mark.y + mark.height, pause.y + pause.height);
+    expect(s.y, `Next step strip top edge ${s.y} below the run controls' bottom edge ${controlsBottom}`).toBeGreaterThanOrEqual(controlsBottom - 0.5);
+  });
+}
+
+// RL-039: PAUSE swaps itself for RESUME in the same spot, and the thumb that tapped it is
+// still on it. With the Next step strip above the controls, PAUSE unmounted the strip and
+// RESUME jumped 56 px up under the thumb (measured 743.25 -> 687.25). Below the controls
+// it cannot.
+test("live chart opens itself: PAUSE then RESUME keeps the run button where the thumb was", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  await startProfileRoast(page, profileRoastVariants[0]);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  const running = await boxAtTop(page, "PAUSE");
+  await page.getByRole("button", { name: "PAUSE" }).click();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+  const paused = await boxAtTop(page, "RESUME");
+  expect(
+    Math.abs(paused.y - running.y),
+    `the run button's top edge: ${running.y} as PAUSE, ${paused.y} as RESUME`
+  ).toBeLessThanOrEqual(1);
+});
+
+// ---------------------------------------------------------------------------
+// RL-063, last fix round. Six more things the chart's auto-open has to get right, each
+// with a failing-first test. The thread through all of them is RL-039: whatever is under
+// the thumb at the moment a thing happens must not move.
+//
+//   D6  a hold may only end at a stage change, never at a tap. The readout's slot and
+//       the chart stay from START until SAVE ROAST / DISCARD -- not until COOLING START --
+//       so the tap on "Mark Cooling start" does not collapse ~170 px of hero when the
+//       feed is already down. COOLING START keeps meaning "stop" only for recording and
+//       for the auto-open.
+//   D7  a chart the FEED took away is not brought back by the feed: the readout returns
+//       collapsed, and the roaster taps it when ready.
+//   D9  the held readout is legible in both themes.
+//   D10 the bean's name is shown ONCE (the setup bar above the hero), so the controls
+//       below do not depend on how long the name is.
+//   D11 the next roast starts with no chart even when the last one ended with it open.
+// ---------------------------------------------------------------------------
+
+// D6. The feed is already down when the roaster marks Yellowing, First crack and Cooling
+// start. Each tap is made with the thumb on the Mark button; the last one used to unmount
+// the chart and the readout (the hold ended at COOLING START), which pulled the run row and
+// SAVE ROAST ~170 px up as the thumb lifted. Now the hero is the same size before and
+// after the tap, and the chart and the readout are still there.
+test("live chart opens itself: with the feed lost, marking through COOLING START keeps the chart and the readout, and the run row does not move", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout, "the chart is up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // Where the run button sits with the feed lost, before any mark.
+  const start = await heroReading(page, "PAUSE");
+
+  // The first two marks: the run button stays, the chart and the cue stay.
+  for (const label of ["Yellowing", "First crack"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+    await expect.soft(liveChartSurface(page).first(), `chart after Mark ${label}`).toBeVisible();
+    await expect.soft(readout, `readout after Mark ${label}`).toHaveAttribute("data-state", "feed-lost");
+    const now = await heroReading(page, "PAUSE");
+    expect.soft(Math.abs(now.run.y - start.run.y), `PAUSE top edge after Mark ${label}: ${start.run.y} -> ${now.run.y}`).toBeLessThanOrEqual(0.5);
+  }
+
+  // The controls still read Fan -> Heat -> Temp, with the feed gone and the chart up.
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+
+  // The tap that matters. PAUSE is about to become RESUME in the same place.
+  const before = await heroReading(page, "PAUSE");
+  await page.getByRole("button", { name: "Mark Cooling start" }).click();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+  await expect(saveRoastButton(page)).toBeVisible();
+  const after = await heroReading(page, "RESUME");
+
+  // Still mounted: the chart (with the curve it has) and the readout, still saying Feed lost.
+  // (Soft, so a failure here still reports how far everything moved, below.)
+  await expect.soft(liveChartSurface(page).first(), "the chart is still up after Mark Cooling start").toBeVisible();
+  expect.soft((await liveTempSubpaths(page)).length, "the curve is still drawn").toBeGreaterThan(0);
+  await expect.soft(readout, "the readout is still in its slot after Mark Cooling start").toHaveCount(1);
+  await expect.soft(readout).toHaveAttribute("data-state", "feed-lost");
+  await expect.soft(readout, "and still reports the chart open").toHaveAttribute("aria-expanded", "true");
+
+  // Nothing under the thumb moved: the run button is where PAUSE was, and the hero ends
+  // where it did, so everything below it (the timeline, SAVE ROAST) is where it was.
+  // The run button's top edge is exact. The hero's bottom edge is exact to 2 px, not to
+  // 0.5: PAUSE has a 1 px border and the ember RESUME that replaces it does not, so the
+  // row is 2 px shorter by itself (measured 52.5 -> 50.5, with or without a chart). That is
+  // not this item's; the collapse it is here to catch is ~170 px.
+  const RESUME_HAS_NO_BORDER = 2;
+  expect.soft(Math.abs(after.run.y - before.run.y), `run button top edge: ${before.run.y} as PAUSE, ${after.run.y} as RESUME`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before the tap, ${after.heroBottom} after`).toBeLessThanOrEqual(RESUME_HAS_NO_BORDER + 0.5);
+  expect.soft(Math.abs(after.hero.height - before.hero.height), `hero height: ${before.hero.height} before, ${after.hero.height} after`).toBeLessThanOrEqual(RESUME_HAS_NO_BORDER + 0.5);
+
+  // And it stays put: neither the chart nor SAVE ROAST drifts while the feed is still down.
+  // (One line per KIND of problem, the first time it is seen, not one per check.)
+  await mainToTop(page);
+  const save0 = await saveRoastButton(page).boundingBox();
+  const drifted = {};
+  for (let i = 0; i < 6; i++) {
+    await page.waitForTimeout(500);
+    if ((await liveChartSurface(page).count()) === 0) drifted.chart ??= `check ${i} after the tap: the chart is gone`;
+    await mainToTop(page);
+    const save = await saveRoastButton(page).boundingBox();
+    if (Math.abs(save.y - save0.y) > 0.5) drifted.save ??= `check ${i}: SAVE ROAST top edge ${save0.y} -> ${save.y}`;
+  }
+  expect.soft(Object.values(drifted), "nothing drifted in the 3 s after the tap").toEqual([]);
+});
+
+// D6, the reload half. A reload after COOLING START with the feed not yet back: the chart
+// is not auto-opened (nothing about a finished roast wants it), but the readout's slot is
+// still the probe's, so when the feed answers a moment later the chrono does not change
+// size and SAVE ROAST does not move. (Before: the slot was released at COOLING START, the
+// chrono was 60 px while the feed was away and 46 px when it answered -- SAVE ROAST
+// jumped ~14 px up about a second after the reload.)
+test("live chart opens itself: a reload after COOLING START, then the feed answering, does not move SAVE ROAST", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("COOLING START");
+
+  // The bridge app is away for the reload (a new socket sees nobody on the channel).
+  feed.dropBridge();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  // Wait for the hook to settle into "no bridge" so the "before" reading is the lost look.
+  await page.waitForTimeout(2500);
+  await mainToTop(page);
+  const lost = await saveRoastButton(page).boundingBox();
+  const lostHero = await heroSection(page).boundingBox();
+
+  feed.restoreBridge();
+  await expect(beanTempReadout(page)).toBeVisible({ timeout: 15_000 });
+  await mainToTop(page);
+  const live = await saveRoastButton(page).boundingBox();
+  const liveHero = await heroSection(page).boundingBox();
+
+  expect.soft(Math.abs(live.y - lost.y), `SAVE ROAST top edge: ${lost.y} with the feed away, ${live.y} once it answered`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(liveHero.height - lostHero.height), `hero height: ${lostHero.height} with the feed away, ${liveHero.height} once it answered`).toBeLessThanOrEqual(0.5);
+  // The chart still did not open, and does not a moment later either.
+  for (let i = 0; i < 4; i++) {
+    await expect(liveChartSurface(page), `chart, check ${i} after the feed answered`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// D7, path A. The feed is lost, the roaster marks through COOLING START, and THEN the
+// bridge app comes back (it was restarted for the next roast, say). Nothing may appear or
+// move for it: the chart that was held stays as it was, and a chart that was not there
+// does not drop in over SAVE ROAST. Whichever the build does with the chart at COOLING
+// START, the feed's return changes nothing on screen.
+test("live chart opens itself: a feed that comes back after COOLING START moves nothing", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  feed.dropBridge();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+
+  const before = await heroReading(page, "RESUME");
+  const chartsBefore = await liveChartSurface(page).count();
+  await mainToTop(page);
+  const saveBefore = await saveRoastButton(page).boundingBox();
+
+  feed.restoreBridge();
+  // ~4 s of a returned feed (a sample every 500 ms): the first look and the later ones.
+  // One line per KIND of problem, the first time it is seen, not one per check.
+  const moved = {};
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(500);
+    const charts = await liveChartSurface(page).count();
+    if (charts !== chartsBefore) moved.chart ??= `check ${i} after the bridge came back: ${charts} chart surfaces (${chartsBefore} before)`;
+    const now = await heroReading(page, "RESUME");
+    if (Math.abs(now.run.y - before.run.y) > 0.5) moved.run ??= `check ${i}: RESUME top edge ${before.run.y} -> ${now.run.y}`;
+    if (Math.abs(now.heroBottom - before.heroBottom) > 0.5) moved.hero ??= `check ${i}: hero bottom edge ${before.heroBottom} -> ${now.heroBottom}`;
+    await mainToTop(page);
+    const save = await saveRoastButton(page).boundingBox();
+    if (Math.abs(save.y - saveBefore.y) > 0.5) moved.save ??= `check ${i}: SAVE ROAST top edge ${saveBefore.y} -> ${save.y}`;
+  }
+  expect(Object.values(moved), "the feed coming back moved nothing").toEqual([]);
+});
+
+// D7, path B. START while the bridge is up but the device is silent (it publishes no
+// usable bean temp: the hook reads bridge-only, "No signal"). The chart can be drawn, so it
+// opens at START -- empty. Then the bridge app quits before a single sample lands: the roast
+// has no curve and no signal, so the FEED takes the chart away. When the bridge comes back,
+// say 20 s in, the feed must not bring the chart back with it: the readout returns collapsed
+// ("Bean temp"), Mark Yellowing does not move, and the roaster taps the readout when ready.
+test("live chart opens itself: a chart the feed took away is not brought back by the feed", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page, { silent: true, feedOptions: { bt: () => NaN } });
+  const readout = liveReadout(page);
+
+  // The setup: a bridge with no usable sample -- bridge-only, and the chart opened at START.
+  await expect(readout).toHaveAttribute("data-state", "no-signal", { timeout: 10_000 });
+  await expect(readout, "the chart opened by itself at START (it can be drawn: bridge-only)").toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  // The bridge app quits before a sample: no signal and no curve. The feed takes the chart.
+  feed.dropBridge();
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(liveChartSurface(page), "nothing to draw and no signal: the chart is gone").toHaveCount(0);
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(readout, "nothing to draw, so nothing to toggle").toBeDisabled();
+
+  // About 20 s in. This is the "before": where the thumb is resting.
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  const before = await heroReading(page, "PAUSE");
+
+  // The bridge app comes back, with a device that now reads.
+  feed.set(250);
+  feed.restoreBridge();
+  await expect(readout).toHaveAttribute("data-state", "live", { timeout: 15_000 });
+  for (let i = 0; i < 8; i++) {
+    await expect(readout, `readout, check ${i} after the feed came back`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, check ${i} after the feed came back`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} before the feed came back, ${after.run.y} after`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before, ${after.heroBottom} after`).toBeLessThanOrEqual(0.5);
+
+  // The roaster can still open it when ready, and it has the readings that arrived.
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+// D9. The held look is quiet by design: no error red, no number, the label and the dashes
+// all in the muted ink. Quiet must not mean illegible. WCAG, on the real stack of layers
+// under the text (paintedInk): the 9 px label and the 12 px RoR dash need 4.5:1, the 34 px
+// dash is large text and needs 3:1. Light is the thin one (the muted ink clears 4.5:1 there
+// by well under 0.5), so one edit to the light --text-muted would fail silently without
+// this. The held-vs-live cue does NOT lean on colour (muted vs ember is ~1.2:1): it is the
+// dashes and the still dot, which is asserted elsewhere.
+for (const theme of ["dark", "light"]) {
+  test(`live chart opens itself: ${theme} theme held readout contrast`, async ({ page }) => {
+    test.setTimeout(90_000);
+    // An init script, so the theme is in place for every load startProbeRoast makes.
+    await page.addInitScript((t) => window.localStorage.setItem("roastlogs_theme", t), theme);
+    const feed = await startProbeRoast(page);
+    await expect(page.getByText("00:03", { exact: true })).toBeVisible({ timeout: 10_000 });
+    feed.dropBridge();
+    const readout = liveReadout(page);
+    await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+
+    const label = await paintedInk(readout.getByText("Feed lost", { exact: true }));
+    const value = await paintedInk(readout.getByText(/^--\s*°F$/));
+    const ror = await paintedInk(readout.getByText(/^--\s*°\/min$/));
+
+    expect(label.dataTheme, "the theme under test is actually applied").toBe(theme);
+    for (const [name, ink] of [["label", label], ["value dash", value], ["RoR dash", ror]]) {
+      expect(ink.fg, `${name} resolves to --text-muted`).toEqual(ink.muted);
+      expect(ink.fg, `${name} is muted, not the error colour`).not.toEqual(ink.error);
+    }
+    // The bars. The value dash is large text only because it really is large.
+    expect(value.size, "the value dash is large text (34 px), which is what makes 3:1 the bar").toBeGreaterThanOrEqual(24);
+    expect(label.ratio, `Feed lost label ${label.size}px: contrast ${label.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    expect(ror.ratio, `RoR dash ${ror.size}px: contrast ${ror.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    expect(value.ratio, `value dash ${value.size}px: contrast ${value.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+  });
+}
+
+// D10. E2: the bean's name is shown ONCE, in the setup summary bar right above the hero.
+// A second copy in the hero's chrono cluster (two or three lines when the name wraps) made
+// the controls below it depend on the bean: a two-line name put Mark Yellowing under the
+// nav. Pin it directly, since the geometry tests only fail when the name is long.
+test("live chart opens itself: the bean's name is shown once, above the hero, not in it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { bean: true });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  const hero = heroSection(page);
+  await expect(hero).toBeVisible();
+  await expect(hero, "the live hero does not repeat the bean's name").not.toContainText(fixtureBean.name);
+  // Control: the name is on the Roast tab exactly once -- in the setup bar, above the hero.
+  const name = page.getByText(fixtureBean.name, { exact: true });
+  await expect(name, "the name is shown, once").toHaveCount(1);
+  await mainToTop(page);
+  const n = await name.boundingBox();
+  const h = await hero.boundingBox();
+  expect(n.y + n.height, `the name (bottom ${n.y + n.height}) sits above the hero (top ${h.y})`).toBeLessThanOrEqual(h.y + 0.5);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+// D10, the geometry variant: a bean whose name wraps at 390 px. Seeded through
+// startProbeRoast's init script, so e2e/fixtures.js stays as it is. The controls must stay
+// above the nav however long the name is -- with the ghost drawn and with the caption
+// (17 px taller), the two layouts Case roasts with.
+const wrappingBean = { ...fixtureBean, name: "Ethiopia Yirgacheffe Konga Natural G1 Heirloom Reserve Lot 7" };
+for (const variant of profileRoastVariants) {
+  test(`live chart opens itself: a bean whose name wraps at 390px does not push the controls under the nav (${variant.name})`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant, wrappingBean);
+    // The name is long enough to need two lines or more at this width: the setup bar
+    // above the hero truncates it to one, so it can only wrap if it is repeated in the hero.
+    // (Soft and instant: the geometry below must be judged on its own too, and a wait here
+    // would let the roast clock run past the 0:02 it expects.)
+    expect.soft(await heroSection(page).innerText(), "the live hero does not repeat the bean's name").not.toContain(wrappingBean.name);
+    await markYellowingThenFirstCrackOnScreen(page);
+    expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  });
+}
+
+// D11. The re-arm is per roast, and it has two halves: the once-flag, and the chart
+// itself closing. The next-roast test above closes the chart on roast 1, so it can only
+// see the flag. Here roast 1 ends with the chart OPEN. On to roast 2: the chart must not
+// still be open under the preheat screen (an empty chart above the giant BT), and a roast 2
+// that starts with the feed down must not get roast 1's open chart when the bridge returns.
+test("live chart opens itself: the next roast starts with no chart, though the last one ended with it open", async ({ page }) => {
+  test.setTimeout(120_000);
+  const feed = await startProbeRoast(page);
+  const readout = beanTempReadout(page);
+  // Roast 1 opens itself and is LEFT open (the precondition).
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(liveChartSurface(page).first(), "roast 1 ends with the chart open").toBeVisible();
+  await saveRoastButton(page).click();
+  await skipDropWeight(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  expect(await roastCount(page)).toBe(2); // the fixture roast and roast 1
+
+  // Roast 2, same page session: Setup -> Begin preheat. The preheat screen is up (its
+  // Target button), and there is no chart under it, now or a moment later.
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  const target = page.getByRole("button", { name: /^Target \d+/ });
+  await expect(target, "the preheat screen is showing").toBeVisible();
+  for (let i = 0; i < 6; i++) {
+    await expect(liveChartSurface(page), `chart under the preheat screen, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+
+  // Roast 2 started with the bridge away. The preheat takeover ends the instant the reading
+  // does ("an instrument can't read a number it doesn't have"), then START.
+  feed.dropBridge();
+  await expect(target).toHaveCount(0, { timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost");
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  // The bridge comes back at 0:20: the readout appears live and collapsed, the chart does not.
+  const before = await heroReading(page, "PAUSE");
+  feed.restoreBridge();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "live", { timeout: 15_000 });
+  for (let i = 0; i < 6; i++) {
+    await expect(liveReadout(page), `readout, check ${i} after the bridge came back`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, check ${i} after the bridge came back`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} -> ${after.run.y}`).toBeLessThanOrEqual(0.5);
 });
