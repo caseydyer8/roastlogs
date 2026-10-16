@@ -7,6 +7,7 @@ import {
   computeFcEta,
   formatEta,
   etaParts,
+  chipView,
   NO_ETA,
   FC_TARGET_F,
   ROR_MIN,
@@ -50,6 +51,15 @@ describe("constants", () => {
     const m = appSource.match(/label:\s*"CARAMELIZATION",\s*f:\s*([A-Za-z_0-9]+)/);
     expect(m).not.toBeNull();
     expect(m[1] === "CARAMELIZATION_F" || Number(m[1]) === CARAMELIZATION_F).toBe(true);
+  });
+  // The test above lets a bare 340 pass (it was the only way to be green before App.js
+  // imported the constant). That left two copies of one number: change either and the chip
+  // would start at a temperature the log never recorded. The ladder reads the shared constant.
+  it("the App.js ladder reads CARAMELIZATION_F from roastPhases, not a second copy of 340", () => {
+    const m = appSource.match(/label:\s*"CARAMELIZATION",\s*f:\s*([A-Za-z_0-9]+)/);
+    expect(m).not.toBeNull();
+    expect(m[1]).toBe("CARAMELIZATION_F");
+    expect(appSource).toMatch(/import\s*\{[^}]*\bCARAMELIZATION_F\b[^}]*\}\s*from\s*"\.\/lib\/roastPhases"/);
   });
   it("the App.js turnaround window is the one the late-join rule mirrors", () => {
     const m = appSource.match(/const TURNAROUND_WINDOW\s*=\s*(\d+)/);
@@ -582,5 +592,117 @@ describe("etaParts", () => {
     expect(etaParts("counting", 125).ariaLabel).toMatch(/first crack in about 2 minutes 5 seconds/i);
     expect(etaParts("held", null).ariaLabel).toMatch(/not available|unavailable/i);
     expect(etaParts("overdue", 12).ariaLabel).toMatch(/400 degrees.*12 seconds/i);
+  });
+});
+
+// While the roast clock is paused nothing on the chip is live: a counting number is stale and an
+// overdue +m:ss is frozen too (after an iOS reload every roast comes back paused, RL-036). So a
+// paused chip takes the held look in EVERY visible state -- state "held", HELD tag, muted numeral
+// -- keeping the state's own text, and says so in its own words, not etaParts("held")'s
+// "waiting for a steady rate of rise", which would be a wrong reason for a clock that is stopped.
+describe("chipView (what the chip draws, given the roast clock)", () => {
+  const verdict = (state, seconds) => ({ state, seconds, parts: etaParts(state, seconds) });
+  const PAUSED = /while the roast is paused/;
+
+  it("running: the verdict is passed through untouched, in every state", () => {
+    for (const [state, seconds] of [["counting", 125], ["held", 125], ["held", null], ["overdue", 12]]) {
+      const v = verdict(state, seconds);
+      const view = chipView(v, false);
+      expect(view.state).toBe(state);
+      expect(view.parts).toBe(v.parts);
+    }
+  });
+
+  it("paused, counting: state held, the frozen m:ss, HELD, muted, in its own words", () => {
+    const view = chipView(verdict("counting", 125), true);
+    expect(view.state).toBe("held");
+    expect(view.parts).toEqual({
+      label: "FC IN",
+      numeral: "2:05",
+      tag: "HELD",
+      muted: true,
+      ariaLabel: "First crack estimate held at about 2 minutes 5 seconds while the roast is paused",
+    });
+  });
+
+  it("paused, overdue: state held (so no ring), the 400\u00B0 label and the frozen +m:ss, HELD, muted", () => {
+    const view = chipView(verdict("overdue", 12), true);
+    expect(view.state).toBe("held");
+    expect(view.parts).toEqual({
+      label: "400\u00B0",
+      numeral: "+0:12",
+      tag: "HELD",
+      muted: true,
+      ariaLabel: "First crack temperature passed 12 seconds ago; held while the roast is paused",
+    });
+    // ...where running, the same verdict is the live look: not muted, no tag.
+    expect(chipView(verdict("overdue", 12), false).parts).toEqual(expect.objectContaining({ tag: null, muted: false }));
+  });
+
+  it("paused, held: keeps its number (or the no-rate dashes) and drops 'waiting for a steady rate'", () => {
+    const withNumber = chipView(verdict("held", 125), true);
+    expect(withNumber.state).toBe("held");
+    expect(withNumber.parts.numeral).toBe("2:05");
+    expect(withNumber.parts.ariaLabel).toBe("First crack estimate held at about 2 minutes 5 seconds while the roast is paused");
+
+    const noRate = chipView(verdict("held", null), true);
+    expect(noRate.state).toBe("held");
+    expect(noRate.parts).toEqual(expect.objectContaining({ label: "FC IN", numeral: NO_ETA, tag: "HELD", muted: true }));
+    expect(noRate.parts.ariaLabel).toMatch(/not available yet/i);
+    expect(noRate.parts.ariaLabel).toMatch(PAUSED);
+  });
+
+  it("paused, a number too far out to show: '>9:59' and the 'more than 10 minutes' sentence, still saying paused", () => {
+    const view = chipView(verdict("counting", 654), true);
+    expect(view.parts.numeral).toBe(">9:59");
+    expect(view.parts.ariaLabel).toBe("First crack is more than 10 minutes away; held while the roast is paused");
+  });
+
+  it("no paused label ever borrows the running ones' reasons", () => {
+    const labels = [["counting", 125], ["held", 125], ["held", null], ["overdue", 12], ["counting", 654]]
+      .map(([state, seconds]) => chipView(verdict(state, seconds), true).parts.ariaLabel);
+    expect(labels.filter((l) => !PAUSED.test(l))).toEqual([]);
+    expect(labels.filter((l) => /steady rate|waiting|reached 400|first crack in about/i.test(l))).toEqual([]);
+  });
+
+  it("paused or not, a state that shows nothing still shows nothing, and keeps its state", () => {
+    for (const state of ["hidden", "resolved"]) {
+      for (const paused of [false, true]) {
+        const view = chipView(verdict(state, null), paused);
+        expect(view.state).toBe(state);
+        expect(view.parts).toBeNull();
+      }
+    }
+  });
+
+  it("works on a real overdue verdict from computeFcEta", () => {
+    const temps = Array.from({ length: 513 }, (_, t) => (t <= 500 ? 200 + (t * 2) / 5 : 398));
+    const v = eta({ temps, rors: fill(513, 20), elapsed: 512 });
+    expect(v.state).toBe("overdue");
+    const view = chipView(v, true);
+    expect(view.state).toBe("held");
+    expect(view.parts.numeral).toBe("+0:12");
+    expect(view.parts.ariaLabel).toBe("First crack temperature passed 12 seconds ago; held while the roast is paused");
+  });
+});
+
+// The late-join start (rule 3) is in no log entry and no stored crossing: the chart carries it in
+// a ref between builds. That ref is APP's (a tab switch unmounts the Roast tab, the readout
+// toggle unmounts the chart; the e2e "a start found by the late-join rule survives ..." tests
+// walk both). App.js cannot be imported into a unit test, so these read its source, like the
+// drift guards at the top of this file: it is handed down, and it is re-armed with the other
+// per-roast refs when no roast is under way (else a stale start could seed the next roast).
+describe("App.js holds the chip's late-join memory", () => {
+  const appSource = fs.readFileSync(path.join(__dirname, "..", "App.js"), "utf8");
+
+  it("passes its ref to the live chart", () => {
+    expect(appSource).toMatch(/const fcEtaPriorRef = React\.useRef\(null\)/);
+    expect(appSource).toMatch(/<LiveRoastChart[^>]*\bfcEtaPriorRef=\{fcEtaPriorRef\}/);
+  });
+
+  it("clears it in the same effect that re-arms the live chart's auto-open when no roast is under way", () => {
+    const effect = appSource.match(/React\.useEffect\(\(\) => \{\s*if \(roastStarted\) return;\s*liveChartAutoOpenedRef\.current = false;[\s\S]*?\}, \[roastStarted\]\);/);
+    expect(effect).not.toBeNull();
+    expect(effect[0]).toMatch(/fcEtaPriorRef\.current = null;/);
   });
 });

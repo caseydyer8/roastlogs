@@ -1594,15 +1594,17 @@ const ghostCaption = (page) => page.getByTestId("ghost-caption");
 // `live` is the roast's stored clock and log (reloadMidRoast's default when omitted).
 // `bt` is what the bridge publishes (a number, or a function of the sample count: see
 // mockRoastLinkFeed); `liveCurve` is the roast's recorded bean-temp curve so far, which
-// is what a reload mid-roast reads back from storage.
+// is what a reload mid-roast reads back from storage. Returns the feed controller
+// (set / dropBridge / restoreBridge); callers that only want the chart ignore it.
 async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined, bt = undefined, liveCurve = undefined } = {}) {
-  await mockRoastLinkFeed(page, { bt });
+  const feed = await mockRoastLinkFeed(page, { bt });
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
   await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
   if (liveCurve) await page.evaluate((c) => window.localStorage.setItem("live_curve", JSON.stringify(c)), liveCurve);
   await reloadMidRoast(page, { profile, profileRaw, live });
   await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  return feed;
 }
 
 // A source roast that IS on this device and has a full curve (the shape the app
@@ -2060,17 +2062,37 @@ test("ghost: hovering a second reads Temp, Temp (plan), RoR, RoR (plan)", async 
 const ROR_AXIS_CEILING = 60;
 const ROR_AXIS_FLOOR = -100;
 
+// The axis's true floor and ceiling, from the numbers printed on it. Recharts lays out
+// five evenly spaced ticks, but on this axis it does not draw the one on the bottom edge --
+// the floor itself (measured: four tick lines, 27.7 px apart, in a 110 px plot) -- so the
+// smallest label on screen is a whole step ABOVE the floor (labels -59, -19, 21, 60 for an
+// axis that bottoms out at about -99).
+// An axis squeezed far below that could still pass a check on the smallest label. The
+// ticks are evenly spaced, so the floor is the top tick less four steps (five ticks).
+// The labels are rounded to whole numbers (allowDecimals is off), so "evenly spaced" is
+// asserted to within 1, and the step is the mean of the printed ones; a label missing
+// from the MIDDLE doubles a step and fails the spacing check instead of passing for a
+// coarser axis.
+function rorAxisBounds(ticks) {
+  const sorted = [...ticks].sort((a, b) => a - b);
+  expect(sorted.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(2);
+  const steps = sorted.slice(1).map((v, i) => v - sorted[i]);
+  expect(Math.max(...steps) - Math.min(...steps), `RoR axis ticks are evenly spaced: ${ticks}`).toBeLessThanOrEqual(1);
+  const step = (sorted[sorted.length - 1] - sorted[0]) / steps.length;
+  const ceiling = sorted[sorted.length - 1];
+  return { ceiling, floor: ceiling - 4 * step, step, ticks: sorted };
+}
+
 test("ghost: the RoR axis opens at the plan's pace, on a calm live feed (390px)", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   // The default feed: 250..254 F, so the LIVE line has no pace of its own to set the axis.
   await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip] });
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
-  const ticks = await rorAxisTicks(page);
-  expect(ticks.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(1);
+  const { ceiling, floor, ticks } = rorAxisBounds(await rorAxisTicks(page));
   // Without the plan's pace the axis would stop at 10: the plan reaches 45 F/min.
-  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
-  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
-  expect(Math.min(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(floor, `RoR axis floor from ticks ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
 });
 
 test("ghost: a dipping live feed under a dipping plan keeps the RoR axis within its floor and ceiling (390px)", async ({ page }) => {
@@ -2080,11 +2102,10 @@ test("ghost: a dipping live feed under a dipping plan keeps the RoR axis within 
   // Measured with the plan's pace on screen, not before it has drawn.
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
   await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
-  const ticks = await rorAxisTicks(page);
-  expect(ticks.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(1);
-  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
-  expect(Math.max(...ticks), `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
-  expect(Math.min(...ticks), `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
+  const { ceiling, floor, ticks } = rorAxisBounds(await rorAxisTicks(page));
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(floor, `RoR axis floor from ticks ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
 });
 
 // ---------------------------------------------------------------------------
@@ -4318,4 +4339,822 @@ test("live chart opens itself: the next roast starts with no chart, though the l
   }
   const after = await heroReading(page, "PAUSE");
   expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} -> ${after.run.y}`).toBeLessThanOrEqual(0.5);
+});
+
+// ---------------------------------------------------------------------------
+// RL-058..061: the first-crack countdown ("FC IN m:ss") on the live chart.
+//
+// Case's rules, as tests:
+//   - ONE chip, top-left over the temp plot, on a Razzo roast only (an SR540 or an OEM
+//     tube has no probe, so no chart and no chip at all);
+//   - it starts when caramelization starts -- the 340 F rising crossing -- and runs until
+//     FIRST CRACK is marked or the roast is dropped. Below 340 F, and before the roast's
+//     first four minutes on a hot probe, there is nothing to count;
+//   - the NUMBER NEVER DISAPPEARS once it has started: a flat, falling or negative rate of
+//     rise makes it HELD (a frozen estimate, muted, tagged HELD), a feed that dies makes it
+//     HELD, a paused clock makes it HELD -- never blank, never gone. Only a roast that has
+//     never had a usable rate shows the no-rate dashes in its place;
+//   - past 400 F with no first crack marked it counts UP ("400°  +0:12").
+// The maths is unit-tested (src/lib/fcEta.test.js) and so is the chart model that feeds it
+// (LiveRoastChart.plan.test.js, fcEta.backtest.test.js). These tests are about what reaches the
+// screen from a real feed. The bridge is faked at the websocket (mockRoastLinkFeed), so the real
+// useLiveRoast, ladder and chart run unmodified. The mock publishes every 500 ms: a step of x
+// per sample is 2x per second, which is why the ramps below are steps of 0.25-0.5.
+//
+// A real clock is the only clock these have, so a ramp that has to reach 340 F and settle
+// takes ~25 s of wall time: the ramp specs set their own 90 s timeout. Everything that does not
+// need the climb itself is seeded instead -- the curve and log a roast keeps in storage,
+// reloaded (paused, as every reload comes back) and RESUMEd.
+// Functional assertions only: the visual baselines for the chip are Case's Mac job (pending).
+// ---------------------------------------------------------------------------
+
+const fcEta = (page) => page.getByTestId("fc-eta");
+const NO_ETA = "\u2013:\u2013\u2013"; // src/lib/fcEta.js NO_ETA: the number a chip with no rate yet shows
+const resumeRoast = (page) => page.getByRole("button", { name: "RESUME", exact: true }).click();
+
+// Seconds out of a chip's text ("FC IN 1:55" -> 115, "400° +0:12" -> 12, ">9:59" -> 599, the no-rate dashes -> null).
+const etaSecs = (text) => {
+  const m = /(\d+):(\d\d)/.exec(text);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+const oneLine = (text) => String(text).replace(/\s+/g, " ").trim();
+// The bean temp the live readout is showing, or null.
+const readoutBt = async (page) => {
+  const m = /Bean temp\s*(\d+)/i.exec(await liveReadout(page).innerText()); // innerText is the uppercased label
+  return m ? Number(m[1]) : null;
+};
+
+// A bridge reading that climbs `perTick` degrees every sample, remembering when each reading
+// went out. The chip's answer is checked against THIS, not against a formula: the feed's own
+// clock is the independent truth, and measuring the rate off it keeps the check honest if the
+// 500 ms timer is stretched on a busy machine.
+function rampFeed(from, perTick) {
+  const trace = [];
+  const read = (n) => {
+    const bt = from + perTick * n;
+    trace.push({ at: Date.now(), bt });
+    return bt;
+  };
+  read.latest = () => trace[trace.length - 1].bt;
+  // The reading that had gone out by wall-clock `at`.
+  read.btAt = (at) => {
+    let found = trace[0];
+    for (const e of trace) if (e.at <= at) found = e;
+    return found.bt;
+  };
+  // Degrees per second over the `spanMs` before `at`.
+  read.perSecond = (at, spanMs = 8000) => (read.btAt(at) - read.btAt(at - spanMs)) / (spanMs / 1000);
+  return read;
+}
+
+// Follow the chip every 500 ms until `done(snapshot)`, failing the instant it is not in the DOM.
+// A chip that blinks out for one poll between two states is the exact bug "the number never
+// disappears" is about, and expect(...).toHaveAttribute's own retrying would sail over it.
+async function followChip(page, { done, within, what }) {
+  const started = Date.now();
+  const seen = [];
+  for (;;) {
+    const found = await fcEta(page).evaluateAll((els) =>
+      els.map((el) => ({ state: el.getAttribute("data-state"), text: el.innerText })));
+    expect(found.length, `${what}: the chip must stay in the DOM; last seen: ${seen.slice(-4).join(" | ") || "nothing"}`).toBe(1);
+    const snap = found[0];
+    seen.push(`${snap.state} "${oneLine(snap.text)}"`);
+    if (done(snap)) return snap;
+    expect(Date.now() - started, `${what}: not reached within ${within} ms; saw ${seen.slice(-6).join(" | ")}`).toBeLessThan(within);
+    await page.waitForTimeout(500);
+  }
+}
+
+// The roast the stored-session tests reload: a Razzo roast 2:10 in whose bean temp climbed
+// 30 F/min (0.5 F/s) from 290 F -- past 340 F at 1:40, 355 F now. Newest-first log, like the
+// live one: the ladder's CARAMELIZATION entry, a Yellowing mark and the opening row.
+const fcCurve = (from, perSec, seconds) =>
+  Array.from({ length: seconds + 1 }, (_, t) => ({ t, bt: Math.round((from + perSec * t) * 10) / 10 }));
+const FC_START_ROW = { type: "start_settings", t: 0, heat: "7", fan: "4", temp: "", label: "Start" };
+const FC_COUNTING_CURVE = fcCurve(290, 0.5, 130);
+const FC_COUNTING_LOG = [
+  { type: "phase", label: "CARAMELIZATION", t: 100, temp: "340" },
+  { type: "phase", label: "YELLOWING", t: 50, temp: "" },
+  FC_START_ROW,
+];
+// The same, further on: 280 F climbing 0.96 F/s reads 400 F at 2:05 and 404.8 F at 2:10.
+const FC_OVERDUE_CURVE = fcCurve(280, 0.96, 130);
+const FC_OVERDUE_LOG = [
+  { type: "phase", label: "CARAMELIZATION", t: 63, temp: "340" },
+  { type: "phase", label: "YELLOWING", t: 50, temp: "" },
+  FC_START_ROW,
+];
+
+// A Razzo roast `elapsed` s in, reloaded from storage: PAUSED, the chart open by itself, the
+// bridge still publishing. `bt` is what it reads: by default the last stored reading, so the
+// paused clock's one curve point is not moved by the feed. Returns the feed controller.
+async function openFcRoast(page, { curve = FC_COUNTING_CURVE, log = FC_COUNTING_LOG, elapsed = 130, bt = () => curve[curve.length - 1].bt, theme = null } = {}) {
+  if (theme) await page.evaluate((t) => window.localStorage.setItem("roastlogs_theme", t), theme);
+  const feed = await openLiveChart(page, { profileRaw: "null", live: { elapsedSeconds: elapsed, roastLog: log }, liveCurve: curve, bt });
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  return feed;
+}
+
+// The seeded roast, running again with the climb carried on at 0.5 F/s from where it stopped.
+async function resumeClimbing(page, feed, from = 355) {
+  await resumeRoast(page);
+  const ramp = rampFeed(from, 0.25);
+  feed.set(ramp);
+  return ramp;
+}
+
+// Anything that makes a sound or a buzz, counted from page load. The preheat screen owns the only
+// chime and spoken phrase there are; the chip is silent (iOS has no haptics either). A silent
+// "warm-up" utterance (volume 0) is how the app unlocks speech on a tap, so it is not counted.
+const countSounds = () => {
+  window.__sounds = 0;
+  const bump = () => { window.__sounds += 1; };
+  if (window.speechSynthesis) {
+    const speak = window.speechSynthesis.speak.bind(window.speechSynthesis);
+    window.speechSynthesis.speak = (u) => { if (u && u.volume !== 0) bump(); return speak(u); };
+  }
+  if (window.OscillatorNode) {
+    const start = window.OscillatorNode.prototype.start;
+    window.OscillatorNode.prototype.start = function (...a) { bump(); return start.apply(this, a); };
+  }
+  if (navigator.vibrate) {
+    const vibrate = navigator.vibrate.bind(navigator);
+    navigator.vibrate = (...a) => { bump(); return vibrate(...a); };
+  }
+};
+
+test("fc-eta: counts down once the climb passes 340 F, and the number is the real one", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(countSounds);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const chip = fcEta(page);
+
+  // From START the bean climbs 1 F/s (60 F/min) from 330 F. Below 340 F there is nothing to count.
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(chip, "no chip below 340 F").toHaveCount(0);
+  await page.waitForTimeout(2500);
+  await expect(chip, "still none, a few degrees under 340 F").toHaveCount(0);
+  const before = await heroReading(page, "PAUSE");
+
+  // Past 340 F, with a rate of rise it can trust: counting.
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+  await expect(chip).toHaveText(/FC IN\s*\d:\d\d/);
+  await expect(chip).toHaveAttribute("role", "timer");
+  await expect(chip).toHaveAttribute("aria-label", /^First crack in about \d+ (minutes?|seconds?)/);
+  await expect(chip.getByText("HELD"), "a counting chip carries no HELD tag").toHaveCount(0);
+  await page.evaluate(() => { window.__sounds = 0; }); // from the first moment of counting
+
+  // ONE countdown: no second copy in the hero, and no 400 F target line on the chart (the
+  // reference lines it does have, the live edge and plan markers, are all vertical).
+  await expect(page.getByText("FC IN"), "one chip, no copy in the hero").toHaveCount(1);
+  const horizontalLines = await liveChartSurface(page).first().evaluate((surface) =>
+    [...surface.querySelectorAll(".recharts-reference-line-line")].filter((l) => l.getAttribute("y1") === l.getAttribute("y2")).length);
+  expect(horizontalLines, "no 400 F line on the chart").toBe(0);
+
+  // The number is the bean's: within 10 s of (400 F - BT) / the feed's own rate of rise.
+  const readings = [];
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now();
+    const snap = await chip.evaluate((el) => ({ state: el.getAttribute("data-state"), text: el.innerText }));
+    const at = (t0 + Date.now()) / 2;
+    readings.push({ ...snap, shown: etaSecs(snap.text), truth: (400 - ramp.btAt(at)) / ramp.perSecond(at), bt: ramp.btAt(at) });
+    await page.waitForTimeout(2000);
+  }
+  for (const r of readings) {
+    expect(r.state, `chip "${oneLine(r.text)}" with the bean at ${r.bt} F`).toBe("counting");
+    expect(
+      Math.abs(r.shown - r.truth),
+      `chip says ${r.shown} s, the feed says ${r.truth.toFixed(1)} s to 400 F (bean ${r.bt} F)`
+    ).toBeLessThanOrEqual(10);
+  }
+  // ...and it is counting DOWN: the last reading is lower than the first.
+  expect(readings[2].shown).toBeLessThan(readings[0].shown);
+
+  // An overlay: nothing under the thumb moved when it arrived (RL-039), and the dials still
+  // read Fan -> Heat -> Temp.
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} before the chip, ${after.run.y} with it`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before, ${after.heroBottom} with the chip`).toBeLessThanOrEqual(0.5);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  expect(await page.evaluate(() => window.__sounds), "the chip makes no sound").toBe(0);
+});
+
+// A GUARD, not a failing-first test: the temperature ladder (App.js LADDER_STEPS) logs
+// CARAMELIZATION on the rising 340 F crossing, and the chip starts from that same number
+// (CARAMELIZATION_F in src/lib/roastPhases.js, which the ladder now imports). Pointing the
+// ladder at the shared constant must not move it: still 330 F for the approach, 340 F for the phase.
+test("fc-eta: the temperature ladder still logs CARAMELIZATION at 340 F, the number the chip starts from", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  feed.set(rampFeed(330, 0.5)); // 1 F/s: past 340 F about 10 s in
+  const phase = async (label) =>
+    JSON.parse((await stored(page, "live_roastLog")) || "[]").find((e) => e && e.type === "phase" && e.label === label);
+  await expect.poll(() => phase("CARAMELIZATION"), { timeout: 30_000 }).toBeTruthy();
+  const entry = await phase("CARAMELIZATION");
+  expect(entry.temp, "CARAMELIZATION is stamped at 340 F").toBe("340");
+  expect(entry.t, `logged at ${entry.t} s`).toBeGreaterThanOrEqual(5);
+  expect(entry.t).toBeLessThanOrEqual(25);
+  expect((await phase("CARAMELIZATION APPROACH")).temp, "the approach is still 330 F").toBe("330");
+});
+
+test("fc-eta: when the climb stalls the number is HELD, never gone", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(fcEta(page)).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+
+  // The bean stalls exactly where it is. The rate of rise slides under 5 F/min over the next
+  // ~12 s; the chip goes HELD and keeps a number from the last rate it trusted.
+  const stalledAt = ramp.latest();
+  const stalledAtMs = Date.now();
+  feed.set(() => stalledAt);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 25_000, what: "the climb stalls" });
+  expect(held.text, "HELD is tagged").toContain("HELD");
+  expect(held.text, "a number, not the no-rate dashes").toMatch(/\d:\d\d/);
+  expect(held.text).not.toContain(NO_ETA);
+
+  // It stays held, polled every 500 ms until the ramp has left every window the rate of rise is
+  // read through (+/-15 s each side, so ~30 s after the stall): the locator count stays at 1
+  // throughout and there is always a number. Until then the value may still MOVE -- the rate it
+  // divides by is the last good run, and which run that is keeps changing while the stall settles
+  // into the windows behind it (measured on the chart model: 6:24, 7:07, 7:51, then 6:00, 6:32 ...
+  // before it lands on 8:32 and stays). Moving is allowed; going missing or going blank is not.
+  const stalledFor = () => Date.now() - stalledAtMs;
+  while (stalledFor() < 32_000) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `${Math.round(stalledFor() / 1000)} s after the stall` });
+    expect(snap.state, `${Math.round(stalledFor() / 1000)} s after the stall`).toBe("held");
+    expect(snap.text, `a number ${Math.round(stalledFor() / 1000)} s after the stall`).toMatch(/\d:\d\d/);
+    expect(snap.text).not.toContain(NO_ETA);
+    await page.waitForTimeout(500);
+  }
+  // Settled, it is a frozen estimate, not a clock: the same value for the next 4 s.
+  const settled = [];
+  for (let i = 0; i < 8; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `settled, check ${i}` });
+    settled.push(oneLine(snap.text));
+    await page.waitForTimeout(500);
+  }
+  expect(new Set(settled).size, `frozen once settled: ${settled.join(" | ")}`).toBe(1);
+  await expect(fcEta(page).getByText("HELD")).toBeVisible();
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+test("fc-eta: a falling bean temp keeps the chip up, held, even below 340 F", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(fcEta(page)).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+
+  // The heat is cut: the bean falls 2 F/s, i.e. a rate of rise of -120 F/min.
+  const from = ramp.latest();
+  feed.set((n) => from - 1.0 * n);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 20_000, what: "the bean temp turns" });
+  expect(held.text, "a number from the last good rate").toMatch(/\d:\d\d/);
+
+  // ...and keeps falling, through 340 F and a few degrees under it: the chip is LATCHED by the
+  // crossing already in the stored curve, so dipping back under 340 F does not take it away.
+  let bt = await readoutBt(page);
+  let under = 0;
+  const seen = [];
+  for (let i = 0; i < 40 && under < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `falling, check ${i}` });
+    bt = await readoutBt(page);
+    seen.push(`${bt} F ${snap.state} "${oneLine(snap.text)}"`);
+    expect(snap.state, `falling at ${bt} F`).toBe("held");
+    expect(snap.text, `a number at ${bt} F, not the no-rate dashes`).toMatch(/\d:\d\d/);
+    expect(snap.text).not.toContain(NO_ETA);
+    if (bt !== null && bt < 338) under++;
+    await page.waitForTimeout(500);
+  }
+  expect(under, `the bean fell under 338 F while the chip was watched: ${seen.slice(-6).join(" | ")}`).toBeGreaterThanOrEqual(6);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+test("fc-eta: past 400 F with no first crack marked it counts UP from the 400 F second", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openFcRoast(page, { curve: FC_OVERDUE_CURVE, log: FC_OVERDUE_LOG, bt: () => 405 });
+  const chip = fcEta(page);
+  const accent = () => page.evaluate(() => (getComputedStyle(document.documentElement).getPropertyValue("--accent-text").match(/[\d.]+/g) || []).map(Number));
+
+  // PAUSED first (as every reload comes back, RL-036): the clock is stopped, so the +m:ss is a
+  // frozen number and must not look like a live count-up -- the same held look as a held
+  // estimate (muted numeral, HELD tag, no ring), carrying the overdue chip's own text.
+  await expect(chip).toHaveAttribute("data-state", "held");
+  await expect(chip.getByText("HELD", { exact: true }), "a paused overdue chip is tagged HELD").toBeVisible();
+  await expect(chip.getByText("400\u00b0", { exact: true }), "it keeps its own label").toBeVisible();
+  await expect(chip).toHaveText(/400\u00b0\s*HELD\s*\+\d+:\d\d/);
+  await expect(chip, "its own words, not the waiting-for-a-rate ones").toHaveAttribute("aria-label", /held while the roast is paused/);
+  expect(await chip.getAttribute("aria-label")).not.toMatch(/steady rate/);
+  expect(await chip.evaluate((el) => getComputedStyle(el).boxShadow), "a paused overdue chip has no ring").toBe("none");
+  const pausedNumeral = await paintedInk(chip.getByText(/^\+\d+:\d\d$/));
+  expect(pausedNumeral.fg, "the paused numeral is the muted ink, not the live accent").toEqual(pausedNumeral.muted);
+  const frozen = oneLine(await chip.innerText());
+  await page.waitForTimeout(2500);
+  expect(oneLine(await chip.innerText()), "the paused +m:ss does not tick").toBe(frozen);
+  expect(etaSecs(frozen), `paused chip "${frozen}"`).toBeGreaterThanOrEqual(3);
+
+  // RUNNING again, the live overdue look comes back: accent numeral, ring, no HELD.
+  await resumeRoast(page);
+  await expect(chip).toHaveAttribute("data-state", "overdue", { timeout: 10_000 });
+  const liveNumeral = await paintedInk(chip.getByText(/^\+\d+:\d\d$/));
+  expect(liveNumeral.fg, "the running numeral is the accent ink").toEqual(await accent());
+  expect(liveNumeral.fg).not.toEqual(liveNumeral.muted);
+  await expect(chip).toHaveText(/400\u00b0\s*\+\d+:\d\d/);
+  await expect(chip.getByText("400\u00b0", { exact: true })).toBeVisible();
+  await expect(chip).toHaveAttribute("aria-label", /reached 400 degrees/);
+  await expect(chip.getByText("HELD"), "past 400 F is a fact, not a held estimate").toHaveCount(0);
+  // The 400 F second is 2:05 and the clock restarts at 2:10: a few seconds up, not minutes.
+  const first = etaSecs(await chip.innerText());
+  expect(first, `+${first} s`).toBeGreaterThanOrEqual(3);
+  expect(first).toBeLessThanOrEqual(25);
+  // It counts up with the clock, and keeps its ring: overdue is marked by more than colour.
+  await page.waitForTimeout(4000);
+  const later = etaSecs(await chip.innerText());
+  expect(later - first, `+${first} s, then +${later} s four seconds on`).toBeGreaterThanOrEqual(3);
+  expect(later - first).toBeLessThanOrEqual(6);
+  expect(await chip.evaluate((el) => getComputedStyle(el).boxShadow), "overdue has a ring").not.toBe("none");
+  // The bean has not moved (405 F, flat): the chip is still counting up, not falling to HELD.
+  await expect(chip).toHaveAttribute("data-state", "overdue");
+});
+
+
+// The latch lives in STORED data, so a reload loses nothing: the CARAMELIZATION entry in the
+// log, or -- when that entry is missing (the ladder was not running across the crossing) -- the
+// 340 F rising crossing in the stored curve itself. Each variant must be the ONLY thing that can
+// start the chip, or it proves nothing: the entry variant's curve (a bridge that joined at 1:42
+// with the bean at 341 F, climbing to 355 F by 2:10) has no rising crossing of 340 F in it, and
+// the clock (2:10) is short of the 4:00 late-join window, so the entry is the one starter. The
+// control after the loop is the same roast without the entry.
+const FC_NO_CROSSING_CURVE = fcCurve(341, 0.5, 28).map((p) => ({ ...p, t: p.t + 102 }));
+const FC_COUNTING_LOG_NO_ENTRY = FC_COUNTING_LOG.filter((e) => e.label !== "CARAMELIZATION");
+for (const variant of [
+  { name: "its CARAMELIZATION entry", curve: FC_NO_CROSSING_CURVE, log: FC_COUNTING_LOG },
+  { name: "the 340 F crossing in the stored curve alone (no log entry)", curve: FC_COUNTING_CURVE, log: FC_COUNTING_LOG_NO_ENTRY },
+]) {
+  test(`fc-eta: a reload mid-roast brings the chip back from ${variant.name}: held while paused, counting once running`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const feed = await openFcRoast(page, { curve: variant.curve, log: variant.log });
+    const chip = fcEta(page);
+    // Paused: the clock is frozen, so the chip says HELD on the frozen value.
+    await expect(chip).toHaveCount(1);
+    await expect(chip).toHaveAttribute("data-state", "held");
+    await expect(chip.getByText("HELD")).toBeVisible();
+    await expect(chip).toHaveAttribute("aria-label", /held/i);
+    // 355 F climbing 30 F/min is 90 s from 400 F: a number, not the no-rate dashes.
+    const text = await chip.innerText();
+    expect(text).not.toContain(NO_ETA);
+    const shown = etaSecs(text);
+    expect(shown, `chip "${oneLine(text)}"`).toBeGreaterThanOrEqual(70);
+    expect(shown).toBeLessThanOrEqual(110);
+    // Running again, the same stored climb counts.
+    await resumeClimbing(page, feed);
+    await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+    await expect(chip.getByText("HELD")).toHaveCount(0);
+  });
+}
+
+// The control for the entry variant above: the SAME stored roast (same curve, same clock, bean
+// at 355 F and climbing) minus the CARAMELIZATION entry has no chip, paused or running. Nothing
+// else in it starts the chip, so the entry alone is what brings it back.
+test("fc-eta: the entry variant's roast without its CARAMELIZATION entry has no chip (control)", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page, { curve: FC_NO_CROSSING_CURVE, log: FC_COUNTING_LOG_NO_ENTRY });
+  const chip = fcEta(page);
+  expect(Math.round(await readoutBt(page)), "the bean is hot (355 F)").toBe(355);
+  for (let i = 0; i < 4; i++) {
+    await expect(chip, `paused, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  await resumeClimbing(page, feed);
+  await expect.poll(async () => Number(await stored(page, "live_elapsedSeconds")), { timeout: 10_000, message: "the clock is running" }).toBeGreaterThanOrEqual(133);
+  for (let i = 0; i < 4; i++) {
+    await expect(chip, `running, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// FIRST CRACK answers the question the chip asks. It goes at once, not at the next tick, and
+// the chart (held until SAVE ROAST) stays up so the absence is the chip's rule and not an
+// unmounted chart.
+test("fc-eta: Mark First crack takes the chip away at once, and it stays away through the drop", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Mark First crack" }).click();
+  await expect(chip).toHaveCount(0, { timeout: 2_000 });
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("FIRST CRACK");
+  await expect(liveChartSurface(page).first(), "the chart is still up").toBeVisible();
+  for (let i = 0; i < 6; i++) {
+    await expect(chip, `chip, check ${i} after First crack`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+
+  await page.getByRole("button", { name: "Mark Cooling start" }).click();
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(liveChartSurface(page).first(), "the chart is held mounted until SAVE").toBeVisible();
+  await expect(chip).toHaveCount(0);
+});
+
+// DROP answers it too: a roast dropped without a First crack mark (it can only be reached by
+// editing the log, but the model must not care) loses the chip. The first load is the control:
+// the same roast, not yet dropped, has one.
+test("fc-eta: a roast dropped without a first crack mark loses the chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openFcRoast(page);
+  await expect(fcEta(page), "control: the same roast, not dropped, shows the chip").toHaveCount(1);
+
+  const dropped = [{ type: "phase", label: "COOLING START", t: 130, temp: "355" }, ...FC_COUNTING_LOG];
+  await page.evaluate(() => window.localStorage.setItem("live_coolingStartTime", "130"));
+  await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: dropped } });
+  // A reload after COOLING START does not open the chart by itself: tap the readout.
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  for (let i = 0; i < 4; i++) {
+    await expect(fcEta(page), `chip, check ${i} after DROP`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// ---- the chip is a Razzo thing: nothing to count without a probe -----------------------------
+
+// An SR540 and an OEM tube have no probe: the app hides the chart, the readout and the live
+// reading altogether (gatedLiveRoast), even with a bridge publishing. The stored climb and
+// CARAMELIZATION entry here would start the chip on a Razzo (see the reload test above), so
+// the absence is the equipment gate's doing and not a lack of data.
+for (const setup of ["oem-tube", "sr540"]) {
+  test(`fc-eta: ${setup} has no probe: no chart, no chip, whatever the bridge publishes and the log says`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await mockRoastLinkFeed(page, { bt: () => 355 });
+    await page.evaluate((s) => window.localStorage.setItem("roastlogs_equipment", s), setup);
+    await page.evaluate((c) => window.localStorage.setItem("live_curve", JSON.stringify(c)), FC_COUNTING_CURVE);
+    await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: FC_COUNTING_LOG } });
+    await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+    await resumeRoast(page);
+    // Past a few ticks of the running clock, so "none" is not just "too early".
+    await expect(page.getByText("02:14", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(fcEta(page)).toHaveCount(0);
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+
+    // Control: the bridge IS live -- Settings' bridge card reads the ungated signal.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByText("Receiving bean temp from the RoastLink.")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Roast", exact: true }).click();
+    await expect(fcEta(page)).toHaveCount(0);
+  });
+}
+
+// The next three are GUARDS: with no chip built they pass trivially, and they are here so the
+// chip, once built, is not started by the wrong thing. Each one pairs the absence with proof
+// that the roast is really running on a live chart.
+test("fc-eta: a Razzo roast started with the bridge away has no chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedDown: true });
+  await expect(page.getByText("00:08", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost");
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+test("fc-eta: a flat 250 F feed after START has no chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedOptions: { bt: () => 250 } });
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("00:12", { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await readoutBt(page), "the probe really reads 250 F").toBe(250);
+  expect((await liveTempSubpaths(page)).length, "and the Temp line is drawn").toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// Only a RISING crossing of 340 F starts the chip. A probe that is already at 350 F when the
+// roast starts (the preheat sat above 340) has crossed nothing, and the 4:00 turnaround window
+// has not passed: counting then would put a bogus number up at 0:00.
+test("fc-eta: a probe already at 350 F at START shows no chip in the first minutes", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedOptions: { bt: () => 350 } });
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("00:12", { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await readoutBt(page), "the probe really reads 350 F").toBe(350);
+  expect((await liveTempSubpaths(page)).length, "and the Temp line is drawn").toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// ...but a bridge that only joined AFTER the 4:00 window, already hot, cannot have a crossing to
+// show, and the chip must not wait for one. It starts when the clock passes 4:00 with the bean
+// at or above 340 F, and with no rate of rise ever seen it shows the no-rate dashes, HELD.
+test("fc-eta: a bridge that joined late, already hot, starts the chip once the clock passes 4:00 -- and not before", async ({ page }) => {
+  test.setTimeout(90_000);
+  const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 200 })); // 3:20 .. 3:45, flat 350 F
+  await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 225, bt: () => 350 });
+  const chip = fcEta(page);
+  await expect(chip, "3:45 in, paused: the window has not passed").toHaveCount(0);
+
+  await resumeRoast(page);
+  const clock = async () => Number(await stored(page, "live_elapsedSeconds"));
+  const deadline = Date.now() + 40_000;
+  let c = await clock();
+  while (c < 241 && Date.now() < deadline) {
+    // Read the clock BEFORE the chip: the chip can only be newer than the clock it is judged by.
+    if (c <= 238) expect(await chip.count(), `chip at ${c} s, before the 4:00 window`).toBe(0);
+    await page.waitForTimeout(500);
+    c = await clock();
+  }
+  expect(c, "the clock got past 4:00").toBeGreaterThanOrEqual(241);
+  await expect(chip).toHaveAttribute("data-state", "held", { timeout: 5_000 });
+  await expect(chip).toContainText(NO_ETA);
+  await expect(chip.getByText("HELD")).toBeVisible();
+});
+
+// A start found by that late-join rule is in no log entry and no stored crossing: the chart
+// keeps it in memory (the previous build's nextPrior). The heat is cut and the bean falls back
+// under 340 F -- the rule no longer holds, and without the memory the chip would simply go.
+test("fc-eta: a start found by the late-join rule survives the bean falling back under 340 F", async ({ page }) => {
+  test.setTimeout(90_000);
+  const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 213 })); // 3:33 .. 3:58, flat 350 F
+  const feed = await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 238, bt: () => 350 });
+  const chip = fcEta(page);
+  await expect(chip, "3:58, paused: the window has not passed").toHaveCount(0);
+
+  await resumeRoast(page);
+  await expect(chip).toHaveAttribute("data-state", "held", { timeout: 15_000 });
+  await expect(chip).toContainText(NO_ETA);
+
+  // The bean falls 2 F/s, through 340 F and a few degrees under it.
+  feed.set((n) => 350 - 1.0 * n);
+  let under = 0;
+  const seen = [];
+  for (let i = 0; i < 40 && under < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `falling, check ${i}` });
+    const bt = await readoutBt(page);
+    seen.push(`${bt} F ${snap.state}`);
+    expect(snap.state, `falling at ${bt} F`).toBe("held");
+    if (bt !== null && bt < 338) under++;
+    await page.waitForTimeout(500);
+  }
+  expect(under, `the bean fell under 338 F while the chip was watched: ${seen.slice(-6).join(" | ")}`).toBeGreaterThanOrEqual(6);
+});
+
+// ...and that memory is the APP's, not the chart component's. The Roast tab unmounts when the
+// user visits another tab, and the readout's toggle unmounts and remounts the chart; a start the
+// chart kept only in its own per-mount ref would be gone on return, and with the bean now under
+// 340 F (no crossing in the curve, no log entry) the chip would not come back. Both ways out are
+// checked with the bean already under 340 F when the chart is rebuilt.
+for (const route of [
+  {
+    name: "a visit to History and back",
+    async away(page) {
+      await page.getByRole("button", { name: "History" }).click();
+      await expect(fcEta(page), "the Roast tab (chip included) is unmounted while History is up").toHaveCount(0);
+      await page.getByRole("button", { name: "Roast", exact: true }).click();
+    },
+  },
+  {
+    name: "closing the chart on the readout and opening it again",
+    async away(page) {
+      await liveReadout(page).click();
+      await expect(liveChartSurface(page), "the readout's toggle closed the chart").toHaveCount(0);
+      await expect(fcEta(page)).toHaveCount(0);
+      await liveReadout(page).click();
+    },
+  },
+]) {
+  test(`fc-eta: a start found by the late-join rule survives ${route.name}, with the bean under 340 F`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 213 })); // 3:33 .. 3:58, flat 350 F
+    const feed = await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 238, bt: () => 350 });
+    const chip = fcEta(page);
+    await resumeRoast(page);
+    await expect(chip, "the late-join start: no log entry and no crossing, only the clock and a hot bean").toHaveAttribute("data-state", "held", { timeout: 15_000 });
+    await expect(chip).toContainText(NO_ETA);
+
+    // The heat is cut and the bean falls 2 F/s until it is well under 340 F. The mounted chart
+    // keeps the chip (the test above); this is the control that the bean really is under.
+    feed.set((n) => 350 - 1.0 * n);
+    await expect.poll(() => readoutBt(page), { timeout: 25_000, message: "the bean fell under 335 F" }).toBeLessThan(335);
+    await expect(chip, "control: still up with the chart mounted").toHaveCount(1);
+
+    await route.away(page);
+
+    await expect(liveChartSurface(page).first(), "the chart is back").toBeVisible({ timeout: 10_000 });
+    expect(await readoutBt(page), "the bean is still under 340 F when the chart is rebuilt").toBeLessThan(340);
+    await expect(chip, "the chip came back with the chart").toHaveCount(1, { timeout: 5_000 });
+    await expect(chip).toHaveAttribute("data-state", "held");
+    for (let i = 0; i < 6; i++) {
+      const snap = await followChip(page, { done: () => true, within: 1, what: `after returning, check ${i}` });
+      expect(snap.state).toBe("held");
+      await page.waitForTimeout(500);
+    }
+  });
+}
+
+// ---- the chip survives the feed -------------------------------------------------------------
+
+// The bridge app quits mid-roast. A reading is only a measurement while it is fresh: for the
+// 6 s the chart carries it (LIVE_GAP_S) the chip may still count; after that it is HELD, on a
+// measured bean temp and the last rate it trusted -- present, frozen, and not a 400/rate
+// answer made out of a missing reading.
+test("fc-eta: the bridge quitting mid-roast keeps the chip: counting while the last reading is fresh, then held and frozen", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  feed.dropBridge();
+  const droppedAt = Date.now();
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 14_000, what: "the bridge quits" });
+  const after = Date.now() - droppedAt;
+  expect(after, "a late sample is not an outage: held only after the 6 s the chart carries a reading").toBeGreaterThanOrEqual(4_000);
+  expect(held.text, "a number from a measured reading").toMatch(/\d:\d\d/);
+  expect(held.text).not.toContain(NO_ETA);
+
+  // The hook calls it Feed lost; the chart and the chip both stay.
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost", { timeout: 10_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  const settled = [];
+  for (let i = 0; i < 12; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `feed lost, check ${i}` });
+    expect(snap.state, `feed lost, check ${i}`).toBe("held");
+    settled.push(snap.text);
+    await page.waitForTimeout(500);
+  }
+  expect(new Set(settled.map(oneLine)).size, `frozen while the feed is gone: ${settled.map(oneLine).join(" | ")}`).toBe(1);
+});
+
+// A reload with the bridge not answering (Connecting, then Feed lost) keeps the chart mounted
+// with the curve it has, and the chip with it: the roast is under way, only the feed is not.
+// Running with no samples, the stored reading ages out and the chip goes HELD.
+test("fc-eta: a reload with the bridge not answering keeps the chip up, through Connecting", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await mockRoastLinkFeed(page, { announce: false });
+  feed.dropBridge(); // no presence and no samples, for the reload below and every socket after it
+  await page.evaluate((c) => {
+    window.localStorage.setItem("roastlogs_equipment", "razzo-v5t");
+    window.localStorage.setItem("live_curve", JSON.stringify(c));
+  }, FC_COUNTING_CURVE);
+  await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: FC_COUNTING_LOG } });
+  await expect(liveChartSurface(page).first(), "the stored curve is on screen").toBeVisible({ timeout: 5_000 });
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "connecting");
+  const chip = fcEta(page);
+  await expect(chip, "the chip is up while Connecting").toHaveCount(1);
+  await expect(chip).toHaveAttribute("data-state", "held");
+
+  await resumeRoast(page);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 12_000, what: "running with no samples" });
+  expect(held.text).toMatch(/\d:\d\d/);
+  for (let i = 0; i < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `no samples, check ${i}` });
+    expect(snap.state).toBe("held");
+    await page.waitForTimeout(500);
+  }
+});
+
+// ---- how it looks: ink, size, place -----------------------------------------------------------
+
+// The state under test, reached from a stored roast: HELD is the paused reload as it comes back;
+// COUNTING is the same roast running with the climb carried on; OVERDUE is a roast past 400 F,
+// running.
+async function reachChipState(page, state, theme) {
+  if (state === "overdue") {
+    await openFcRoast(page, { curve: FC_OVERDUE_CURVE, log: FC_OVERDUE_LOG, bt: () => 405, theme });
+    await resumeRoast(page);
+  } else {
+    const feed = await openFcRoast(page, { theme });
+    if (state === "counting") await resumeClimbing(page, feed);
+  }
+  await expect(fcEta(page)).toHaveAttribute("data-state", state, { timeout: 10_000 });
+}
+
+// Legibility, in both themes, per state (WCAG, against the real stack of layers under the text:
+// paintedInk). The 9 px label and HELD tag are small text and need 4.5:1; the 24 px numeral is
+// large text and needs 3:1. Ink is by token, not by eye: the label is always the muted ink; the
+// numeral is the accent ink while the chip is counting or overdue, and the SAME muted ink as the
+// held readout while it is held. Dark is the roomy one; light is the thin one (ember on paper
+// is 4.2:1), so one edit to a light-theme token would fail silently without this.
+for (const theme of ["dark", "light"]) {
+  for (const state of ["held", "counting", "overdue"]) {
+    test(`fc-eta: ${theme} theme, ${state}: label, numeral${state === "held" ? " and HELD tag" : ""} are legible and in the right ink`, async ({ page }) => {
+      test.setTimeout(90_000);
+      await reachChipState(page, state, theme);
+      const chip = fcEta(page);
+      const label = await paintedInk(chip.getByText(state === "overdue" ? "400°" : "FC IN", { exact: true }));
+      const numeral = await paintedInk(chip.getByText(/^(\d+:\d\d|>9:59|\+\d+:\d\d|–:––)$/).first());
+      const accent = await page.evaluate(() => (getComputedStyle(document.documentElement).getPropertyValue("--accent-text").match(/[\d.]+/g) || []).map(Number));
+
+      expect(label.dataTheme, "the theme under test is actually applied").toBe(theme);
+      expect(accent.length, "--accent-text resolves to an rgb triple").toBe(3);
+
+      // The sizes the bars below are chosen by.
+      expect(label.size, "label is 9 px").toBe(9);
+      expect(numeral.size, "numeral is 24 px").toBe(24);
+
+      // Label: always muted, never the error ink.
+      expect(label.fg, "label resolves to --text-muted").toEqual(label.muted);
+      expect(label.fg, "label is not the error ink").not.toEqual(label.error);
+      expect(label.ratio, `label ${label.size}px: contrast ${label.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+
+      // Numeral: accent while it is a live countdown, muted while held.
+      expect(numeral.fg, "numeral is not the error ink").not.toEqual(numeral.error);
+      if (state === "held") {
+        expect(numeral.fg, "held numeral resolves to --text-muted, like the held readout").toEqual(numeral.muted);
+      } else {
+        expect(numeral.fg, `${state} numeral resolves to --accent-text`).toEqual(accent);
+        expect(numeral.fg).not.toEqual(numeral.muted);
+      }
+      expect(numeral.ratio, `numeral ${numeral.size}px: contrast ${numeral.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+
+      // HELD is tagged in words as well as in colour, and only while held.
+      if (state === "held") {
+        await expect(chip.getByText("HELD", { exact: true }), "a held chip is tagged in words").toBeVisible();
+        const tag = await paintedInk(chip.getByText("HELD", { exact: true }));
+        expect(tag.size, "HELD tag is 9 px").toBe(9);
+        expect(tag.fg, "HELD tag resolves to --text-muted").toEqual(tag.muted);
+        expect(tag.ratio, `HELD tag ${tag.size}px: contrast ${tag.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      } else {
+        await expect(chip.getByText("HELD")).toHaveCount(0);
+      }
+
+      // Overdue is marked by more than colour: a ring. The other two states have none.
+      const ring = await chip.evaluate((el) => getComputedStyle(el).boxShadow);
+      if (state === "overdue") expect(ring, "overdue has a ring").not.toBe("none");
+      else expect(ring, `${state} has no ring`).toBe("none");
+
+      // Held is the one look that does not tick, so it is the one that can be photographed.
+      // The baseline is Case's Mac job (this container cannot produce it): visual-skipped here.
+      if (state === "held") await fullPageShot(page, theme === "light" ? "fc-eta-held-light.png" : "fc-eta-held.png");
+    });
+  }
+}
+
+// The chip is a read-out laid over the plot, not a control: a finger or a mouse scanning the
+// chart under it must still get the tooltip, and the tooltip must paint over the chip.
+test("fc-eta: hovering the chip still reads the chart under it, and the tooltip is painted above it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "hover needs a mouse pointer; the iphone project is touch only");
+  await openFcRoast(page);
+  const chip = fcEta(page);
+  await expect(chip).toBeVisible();
+  expect(await chip.evaluate((el) => getComputedStyle(el).pointerEvents), "the chip passes pointer events through").toBe("none");
+
+  const box = await chip.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const names = page.locator(".recharts-tooltip-item-name");
+  await expect(names.first(), "the tooltip shows with the pointer on the chip").toBeVisible();
+  expect(await names.allInnerTexts()).toContain("Temp");
+
+  // Painted above: the tooltip's z-index beats the chip's (an unset one counts as 0).
+  const z = await page.evaluate(() => ({
+    tooltip: getComputedStyle(document.querySelector(".recharts-tooltip-wrapper")).zIndex,
+    chip: getComputedStyle(document.querySelector('[data-testid="fc-eta"]')).zIndex,
+  }));
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  expect(Number.isFinite(Number(z.tooltip)), `tooltip z-index is set: ${z.tooltip}`).toBe(true);
+  expect(num(z.tooltip), `tooltip z-index ${z.tooltip} above the chip's ${z.chip}`).toBeGreaterThan(num(z.chip));
+});
+
+// Phone geometry (390 x 844): the chip sits in the top-left corner of the PLOT -- right of the
+// temp axis, left of the RoR axis, within 12 px of the plot's top edge -- and, being an overlay,
+// takes no room: Mark First crack and PAUSE are as reachable as with no chip (the same bar as the
+// chart-open geometry tests above).
+test("fc-eta: at 390x844 the chip sits inside the plot's top-left corner and Mark First crack stays reachable", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  const surface = await liveChartSurface(page).first().boundingBox();
+  const box = await chip.boundingBox();
+  const TEMP_AXIS = 42;
+  const RIGHT_INSET = 44; // the 40 px RoR axis and the chart's 4 px right margin
+  expect(box.x, `chip left ${box.x} right of the temp axis (${surface.x + TEMP_AXIS})`).toBeGreaterThanOrEqual(surface.x + TEMP_AXIS - 1);
+  expect(box.x + box.width, `chip right ${box.x + box.width} inside the plot (${surface.x + surface.width - RIGHT_INSET})`).toBeLessThanOrEqual(surface.x + surface.width - RIGHT_INSET + 1);
+  expect(box.y - surface.y, `chip top ${box.y - surface.y} px under the plot top`).toBeGreaterThanOrEqual(-1);
+  expect(box.y - surface.y).toBeLessThanOrEqual(12);
+  // One row, about 30 x 105 px (ux-ui): the label beside the numeral, not over it. A taller,
+  // wider chip would cover a good part of the plot's top-left, where the curve is by then.
+  expect(box.height, `chip is ${box.height} px tall: one row, not label over numeral`).toBeLessThanOrEqual(36);
+  expect(box.width, `chip is ${box.width} px wide`).toBeLessThanOrEqual(130);
+
+  await expectOnScreen(page, "Mark First crack");
+  await expectOnScreen(page, "PAUSE");
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
 });

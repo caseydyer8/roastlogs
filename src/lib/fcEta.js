@@ -105,6 +105,7 @@ const SNAP_ABOVE_S = 60;
 const MAX_SHOWN_S = 599;
 export const NO_ETA = "–:––";
 const FAR_AWAY_ARIA = "First crack is more than 10 minutes away";
+const OVERDUE_LABEL = "400\u00b0";
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -256,7 +257,7 @@ export function etaParts(state, seconds) {
   const numeral = formatEta(seconds, state);
   if (state === "overdue") {
     return {
-      label: "400°",
+      label: OVERDUE_LABEL,
       numeral,
       tag: null,
       muted: false,
@@ -287,5 +288,45 @@ export function etaParts(state, seconds) {
     tag: null,
     muted: farAway,
     ariaLabel: farAway ? FAR_AWAY_ARIA : `First crack in about ${about}`,
+  };
+}
+
+// What the chip draws, given the roast clock: { state, parts }, `state` being the chip's
+// data-state. Running, it is the verdict as it stands. PAUSED, nothing on it is live: the clock
+// is stopped and the model is not re-run (and every reload comes back paused, RL-036), so a
+// counting number is stale and an overdue +m:ss is frozen -- a frozen "+0:05" in the live accent
+// ink with the overdue ring would read as a count-up that stopped counting. So EVERY visible
+// state takes the held look (state "held", HELD tag, muted numeral, and so no overdue ring),
+// keeping its own text: the frozen m:ss, the "400°" label with its frozen +m:ss, or the
+// no-rate dashes. It says why in its own words -- not etaParts("held")'s "waiting for a steady
+// rate of rise", which is the wrong reason for a clock that is simply stopped. A verdict with
+// nothing to show (hidden, resolved) shows nothing, paused or not.
+export function chipView(verdict, paused) {
+  const { state, seconds, parts } = verdict;
+  if (!paused || !parts) return { state, parts };
+  return { state: "held", parts: pausedParts(state, seconds) };
+}
+
+function pausedParts(state, seconds) {
+  const held = { tag: "HELD", muted: true };
+  if (state === "overdue") {
+    return {
+      ...held,
+      label: OVERDUE_LABEL,
+      numeral: formatEta(seconds, "overdue"),
+      ariaLabel: `First crack temperature passed ${spoken(Math.max(0, Math.round(seconds) || 0))} ago; held while the roast is paused`,
+    };
+  }
+  const shown = snapped(seconds);
+  return {
+    ...held,
+    label: "FC IN",
+    numeral: formatEta(seconds, state),
+    ariaLabel:
+      shown === null
+        ? "First crack estimate not available yet while the roast is paused"
+        : shown > MAX_SHOWN_S
+        ? `${FAR_AWAY_ARIA}; held while the roast is paused`
+        : `First crack estimate held at about ${spoken(Math.max(0, shown))} while the roast is paused`,
   };
 }

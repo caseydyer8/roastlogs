@@ -19,6 +19,7 @@ import { parseRoastedWeight } from "./lib/roastedWeight";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
+import { CARAMELIZATION_F } from "./lib/roastPhases";
 import { csvEscape } from "./lib/csv";
 import { storedPreheatTarget } from "./lib/preheatTarget";
 import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
@@ -732,7 +733,7 @@ const LADDER_STEPS = [
   { label: "MAILLARD APPROACH", f: 280, kind: "moment" },
   { label: "MAILLARD", f: 305, kind: "phase" },
   { label: "CARAMELIZATION APPROACH", f: 330, kind: "moment" },
-  { label: "CARAMELIZATION", f: 340, kind: "phase" },
+  { label: "CARAMELIZATION", f: CARAMELIZATION_F, kind: "phase" },
   { label: "FC APPROACH", f: 375, kind: "moment" },
 ];
 
@@ -1877,10 +1878,15 @@ function App() {
   //     effect below the curveVisible rule).
   const liveChartAutoOpenedRef = React.useRef(false);
   const autoOpenWindowStartRef = React.useRef(null); // Date.now() at START / page load
+  // The first-crack chip's memory of a late-join start (LiveRoastChart reads and writes it). Held
+  // here, not in the chart: a tab switch unmounts the Roast tab and the readout toggle remounts
+  // the chart, and the start lives in no log and no stored crossing. Re-armed below per roast.
+  const fcEtaPriorRef = React.useRef(null);
   React.useEffect(() => {
     if (roastStarted) return;
     liveChartAutoOpenedRef.current = false;
     autoOpenWindowStartRef.current = null;
+    fcEtaPriorRef.current = null;
     setLiveChartOpen(false);
   }, [roastStarted]);
   React.useEffect(() => {
@@ -3022,6 +3028,9 @@ function App() {
                   elapsedSeconds={elapsedSeconds}
                   windowMode={liveChartWindow}
                   onWindowModeChange={setLiveChartWindow}
+                  showFcEta={hasProbe}
+                  paused={!isTimerRunning}
+                  fcEtaPriorRef={fcEtaPriorRef}
                 />
               )}
 

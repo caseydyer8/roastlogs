@@ -1,10 +1,9 @@
 import fs from "fs";
 import { buildLiveChartModel } from "../components/charts/LiveRoastChart";
-import { phaseBoundaries } from "./roastPhases";
 import { LIVE_GAP_S } from "./liveSample";
 import { MAX_ROAST_S } from "./limits";
 import { smoothSeries } from "./curveSmoothing";
-import { computeFcEta, FC_TARGET_F } from "./fcEta";
+import { FC_TARGET_F } from "./fcEta";
 import { fixtureGhostSourceRow } from "../../e2e/fixtures";
 import {
   linearRoast,
@@ -23,9 +22,12 @@ import {
 //
 // METHOD. At each second s the harness hands buildLiveChartModel only what the
 // app would hold at that moment -- the samples with t <= s, a roastLog holding
-// the CARAMELIZATION entry the temperature ladder would have logged, elapsed = s
-// -- and feeds the model's own smoothed temp and RoR rows to computeFcEta. That is
-// the path the live chart takes. Truth is the second the (centred-)smoothed BT
+// the CARAMELIZATION entry the temperature ladder would have logged, elapsed = s,
+// the equipment gate open and the previous second's memory -- and reads the
+// model's OWN fcEta verdict back. That is the path the live chart takes, glue and
+// all: the harness holds no copy of how the model feeds fcEta.js, so a change to
+// that wiring (the real-only trailing RoR, lastRealBtT, the latch) is measured
+// here and not just in the unit tests. Truth is the second the (centred-)smoothed BT
 // first reaches 400 F. Error = predicted - actual, so NEGATIVE means the chip
 // said "sooner" than it happened.
 //
@@ -78,20 +80,17 @@ function replay(curve, { fromS = 0, toS, logAt = (prefix) => ladderLog(prefix), 
     if (s < fromS) continue;
     const prefix = curve.slice(0, k);
     const roastLog = logAt(prefix, s);
-    const model = buildLiveChartModel({ curve: prefix, roastLog, elapsedSeconds: s });
-    const r = computeFcEta({
-      temps: model.data.map((d) => d.temp),
-      rors: model.data.map((d) => d.ror),
-      elapsed: s,
-      marks: phaseBoundaries(roastLog),
-      hasProbe: true,
-      prior: usePrior ? prior : null,
-      // The second of the newest REAL sample, which is what the chart model will
-      // pass once it is wired in (see the fcEta.js header). The model's own RoR still
-      // carries the last reading into the trailing seconds, so this harness cannot
-      // yet reproduce the real-only RoR that contract asks for.
-      lastRealBtT: prefix.length ? Math.round(prefix[prefix.length - 1].t) : undefined,
+    const model = buildLiveChartModel({
+      curve: prefix,
+      roastLog,
+      elapsedSeconds: s,
+      showFcEta: true,
+      fcEtaPrior: usePrior ? prior : null,
     });
+    // The verdict is the chart model's own. A model that returns none fails loudly here
+    // rather than as a TypeError three lines on.
+    if (!model.fcEta) throw new Error("buildLiveChartModel returned no fcEta verdict (is it wired in?)");
+    const r = model.fcEta;
     prior = r.nextPrior;
     rows.push({ s, state: r.state, seconds: r.seconds, btAge: r.btAgeSeconds });
   }
