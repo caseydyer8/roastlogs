@@ -24,7 +24,7 @@ import {
 import { LIVE_GAP_S } from "../../lib/liveSample";
 import { MAX_ROAST_S } from "../../lib/limits";
 import { weightLossPercent, formatWeightLoss } from "../../lib/roastedWeight";
-import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
+import { smoothSeries, chartRor } from "../../lib/curveSmoothing";
 
 // ---------------------------------------------------------------------------
 // RoastCurveChart — "Split Roast Story" History detail visualization (v1.1)
@@ -213,7 +213,7 @@ export default function RoastCurveChart({ roast }) {
     if (hasTemp) {
       const rawTemps = data.map((d) => d.rawTemp);
       const shown = smoothSeries(rawTemps, 2);
-      const rors = rorSeries(smoothSeries(rawTemps, 1), 15);
+      const rors = chartRor(rawTemps);
       for (let t = 0; t <= total; t++) {
         data[t].temp = shown[t] != null ? Math.round(shown[t] * 10) / 10 : null;
         data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;

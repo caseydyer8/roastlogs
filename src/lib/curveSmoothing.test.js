@@ -1,4 +1,4 @@
-import { smoothSeries, rorSeries } from "./curveSmoothing";
+import { smoothSeries, rorSeries, chartRor } from "./curveSmoothing";
 
 // Deterministic noise so the test is stable.
 function rng(seed) {
@@ -91,5 +91,28 @@ describe("rorSeries", () => {
   });
   it("returns null when there are too few points", () => {
     expect(rorSeries([200, 201, 202])).toEqual([null, null, null].map(() => null));
+  });
+});
+
+// chartRor is the chart's one RoR recipe: the live line and the source-roast ghost both call
+// it, so a ghost compared with the live line shows a roast difference, never a calculation
+// difference. It must stay exactly "light smoothing, then the +/-15 s slope".
+describe("chartRor", () => {
+  it("is the lightly smoothed +/-15 s slope the live chart has always drawn", () => {
+    const raw = noisyRoast(1, 0.5);
+    expect(chartRor(raw)).toEqual(rorSeries(smoothSeries(raw, 1), 15));
+  });
+  it("keeps a signal dropout as a gap, and the window next to it honest", () => {
+    const line = Array.from({ length: 100 }, (_, t) => (t < 40 ? 200 + t * 0.3 : 300 + t * 0.3));
+    for (let t = 40; t < 55; t++) line[t] = null;
+    const ror = chartRor(line);
+    expect(ror[47]).toBeNull();
+    // The light smoothing nudges the very end points, so these are 18 to within half a degree.
+    expect(ror[10]).toBeCloseTo(18, 0);
+    expect(ror[90]).toBeCloseTo(18, 0);
+  });
+  it("is null until 16 contiguous seconds exist", () => {
+    expect(chartRor(Array.from({ length: 15 }, (_, t) => 200 + t)).every((v) => v === null)).toBe(true);
+    expect(chartRor(Array.from({ length: 16 }, (_, t) => 200 + t))[0]).not.toBeNull();
   });
 });

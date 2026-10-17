@@ -17,6 +17,12 @@
 //   ~10px sliver that can never hold its own name.
 // ---------------------------------------------------------------------------
 
+// The bean temperature at which Caramelization opens: a RISING crossing of this
+// value is what the live temperature ladder logs as CARAMELIZATION, and what the
+// first-crack ETA (src/lib/fcEta.js) treats as its starting gun. One number, so
+// the logged phase and the chip that follows it cannot drift apart.
+export const CARAMELIZATION_F = 340;
+
 // Short tags for the ribbon lane, which is narrow. 3-4 characters so a brief
 // phase still shows a readable name rather than a bare colour block.
 export const PHASE_TAGS = {

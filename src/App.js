@@ -7,6 +7,7 @@ import MfaSettings from "./components/MfaSettings";
 import { useUnits } from "./hooks/useUnits"; // IDEA-009: units of measure
 import { useLiveRoast } from "./hooks/useLiveRoast";
 import LiveRoastReadout from "./components/LiveRoastReadout";
+import { shouldAutoOpenLiveChart, readoutFeedStatus, AUTO_OPEN_WINDOW_MS } from "./lib/liveChartAutoOpen";
 import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 import LiveRoastChart from "./components/charts/LiveRoastChart";
 import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
@@ -18,6 +19,7 @@ import { parseRoastedWeight } from "./lib/roastedWeight";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
+import { CARAMELIZATION_F } from "./lib/roastPhases";
 import { csvEscape } from "./lib/csv";
 import { storedPreheatTarget } from "./lib/preheatTarget";
 import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
@@ -731,7 +733,7 @@ const LADDER_STEPS = [
   { label: "MAILLARD APPROACH", f: 280, kind: "moment" },
   { label: "MAILLARD", f: 305, kind: "phase" },
   { label: "CARAMELIZATION APPROACH", f: 330, kind: "moment" },
-  { label: "CARAMELIZATION", f: 340, kind: "phase" },
+  { label: "CARAMELIZATION", f: CARAMELIZATION_F, kind: "phase" },
   { label: "FC APPROACH", f: 375, kind: "moment" },
 ];
 
@@ -1849,8 +1851,92 @@ function App() {
   // the separate phase rail is redundant whenever the curve is on screen. It is
   // still the only place those milestones appear on a probe-less manual roast,
   // where no chart renders at all, so it falls back rather than disappearing.
-  const curveVisible =
-    liveChartOpen && (gatedLiveRoast.status === "live" || gatedLiveRoast.status === "bridge-only");
+  //
+  // Four rules keep it up for a probe roast, because the curve is the roaster's
+  // own and the roaster should not have to tap to see it:
+  //   - it opens itself, once PER ROAST: at START, and when the page loads into a
+  //     roast already under way (iOS reloads a backgrounded PWA mid-roast, RL-036).
+  //     The ref is the "once": a tap on the readout that closes it sticks for the
+  //     rest of THAT roast. It re-arms whenever no roast is started, and liveChartOpen
+  //     resets with it, so roast 1's open chart never carries into roast 2.
+  //   - it opens only when it can be drawn NOW and near START or the page load
+  //     (shouldAutoOpenLiveChart): the chart is ~260 px tall and sits above the
+  //     Mark / PAUSE row, so one that drops in when a bridge joins at 6:30, or after
+  //     COOLING START, lands under the thumb. Then the readout appears collapsed and
+  //     the roaster taps it. The window is wall-clock, not the roast clock: the roast
+  //     clock is frozen while paused, and every reload comes back paused.
+  //   - it stays MOUNTED while the roast is under way (started, with a curve) whatever
+  //     the feed does, and that runs until SAVE ROAST / DISCARD, not until COOLING START:
+  //     a hold may only end at a stage change, never at a tap, or "Mark Cooling start"
+  //     with the feed already down would collapse ~170 px under the thumb. The hook
+  //     leaves live/bridge-only on every reload (a few seconds of "connecting") and
+  //     whenever the bridge app quits, and the chart used to blink out each time. The
+  //     readout, its toggle, stays on screen in those states (muted, "Feed lost" /
+  //     "Connecting"), so a close made by hand still works. Off a probe roast the old
+  //     rule holds: live or bridge-only.
+  //   - a chart the FEED took away is not brought back by the feed (see the disarm
+  //     effect below the curveVisible rule).
+  const liveChartAutoOpenedRef = React.useRef(false);
+  const autoOpenWindowStartRef = React.useRef(null); // Date.now() at START / page load
+  // The first-crack chip's memory of a late-join start (LiveRoastChart reads and writes it). Held
+  // here, not in the chart: a tab switch unmounts the Roast tab and the readout toggle remounts
+  // the chart, and the start lives in no log and no stored crossing. Re-armed below per roast.
+  const fcEtaPriorRef = React.useRef(null);
+  React.useEffect(() => {
+    if (roastStarted) return;
+    liveChartAutoOpenedRef.current = false;
+    autoOpenWindowStartRef.current = null;
+    fcEtaPriorRef.current = null;
+    setLiveChartOpen(false);
+  }, [roastStarted]);
+  React.useEffect(() => {
+    if (!hasProbe || !roastStarted || liveChartAutoOpenedRef.current) return;
+    if (autoOpenWindowStartRef.current === null) autoOpenWindowStartRef.current = Date.now();
+    if (!shouldAutoOpenLiveChart({
+      hasProbe,
+      roastStarted,
+      coolingStarted: !!coolingStartTime,
+      status: gatedLiveRoast.status,
+      curvePoints: curvePointCount,
+      sinceMs: Date.now() - autoOpenWindowStartRef.current,
+    })) return;
+    liveChartAutoOpenedRef.current = true;
+    setLiveChartOpen(true);
+  }, [hasProbe, roastStarted, coolingStartTime, gatedLiveRoast.status, curvePointCount]);
+
+  // "Connecting" has a ceiling: the hook reads "connecting" from mount until its first
+  // presence sync and has no error state, so a feed that has not answered within the
+  // auto-open window (one rule) reads as lost, not as one that is still coming. One
+  // timer from the page load -- the hook's own clock; a roast STARTed later does not
+  // restart it. The readout changes its look only: nothing moves.
+  const [feedCeilingPassed, setFeedCeilingPassed] = React.useState(false);
+  React.useEffect(() => {
+    const id = setTimeout(() => setFeedCeilingPassed(true), AUTO_OPEN_WINDOW_MS);
+    return () => clearTimeout(id);
+  }, []);
+  const readoutStatus = readoutFeedStatus(gatedLiveRoast.status, feedCeilingPassed);
+
+  // A probe roast is "on" from START until it is saved or discarded (clearLiveSession
+  // ends it). Its readout slot is the probe's for all of it (see LiveRoastReadout
+  // `held`), whatever the feed says. COOLING START is deliberately NOT the end of it:
+  // it stays only where it means "stop" (the recording gate and the auto-open).
+  const probeRoastOn = hasProbe && roastStarted;
+  const probeRoastUnderway = probeRoastOn && curvePointCount > 0;
+  const feedSignalled = gatedLiveRoast.status === "live" || gatedLiveRoast.status === "bridge-only";
+  // The chrono shrinks to make room for the readout, so its size follows whether
+  // the readout is shown -- not the feed -- and a feed change never moves a row.
+  const readoutShown = feedSignalled || probeRoastOn;
+  const curveVisible = liveChartOpen && (feedSignalled || probeRoastUnderway);
+
+  // A chart the FEED took away is not brought back by the feed (D3); the readout
+  // returns collapsed. liveChartOpen is armed only by the auto-open and by a tap, and
+  // both only happen while curveVisible is true, so this fires only when the feed (or
+  // the curve) took the chart away. The case that needs it: a roast started on a silent
+  // device whose bridge quits before the first sample; without it the bridge's return
+  // would drop an empty chart in above Mark Yellowing under the thumb.
+  React.useEffect(() => {
+    if (liveChartOpen && !curveVisible) setLiveChartOpen(false);
+  }, [liveChartOpen, curveVisible]);
 
   React.useEffect(() => {
     const el = thumbZoneRef.current;
@@ -2518,7 +2604,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.9.2",
+        appVersion: "3.10.0",
         roastSessions,
         beans,
         roastProfiles,
@@ -2842,8 +2928,9 @@ function App() {
             </button>
             )}
 
-            {/* 2) LIVE INSTRUMENT HERO — status cluster, split-flap chrono, bean +
-                derived phase, segmented Fan·Heat·Temp dials, profile guidance, phase rail. */}
+            {/* 2) LIVE INSTRUMENT HERO — status cluster, split-flap chrono, derived
+                phase, segmented Fan·Heat·Temp dials, phase rail, run controls, and
+                the profile guidance strip (reference, so it comes last). */}
             <section className="overflow-hidden rounded-3xl border border-border/60 bg-surface/30 divide-y divide-border/50">
 
               {roastStage === "preheat" ? (
@@ -2879,15 +2966,16 @@ function App() {
                 </div>
 
                 <div className={`font-mono font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink ${
-                  gatedLiveRoast.status === "live" || gatedLiveRoast.status === "bridge-only"
-                    ? "text-[46px]" : "text-[60px]"
+                  readoutShown ? "text-[46px]" : "text-[60px]"
                 }`}>
                   {formatTime(elapsedSeconds)}
                 </div>
 
-                {(beanName || (roastStarted && !curveVisible)) && (
+                {/* The bean's name is shown once, in the setup summary bar right above
+                    this hero, so it is not repeated here: a second line (two when the
+                    name wraps) would make the controls below depend on the bean (RL-039). */}
+                {roastStarted && !curveVisible && (
                   <div className="flex flex-wrap items-center gap-2">
-                    {beanName && <span className="font-cond text-[15px] font-bold text-ink">{beanName}</span>}
                     {/* The curve's phase ribbon names the current phase whenever it is
                         on screen, so this pill would say the same word twice, 200px
                         apart. It stays for the probe-less case, where the ribbon
@@ -2915,14 +3003,15 @@ function App() {
               {/* Live bean temp sits with the chrono, not in a separate card: one instrument. */}
               <LiveRoastReadout
                 cluster
-                status={gatedLiveRoast.status}
+                status={readoutStatus}
                 bt={gatedLiveRoast.bt}
                 ror={gatedLiveRoast.ror}
                 viewers={gatedLiveRoast.viewers}
                 recording={roastStarted && !coolingStartTime}
                 points={curvePointCount}
-                expanded={liveChartOpen}
-                onToggle={() => setLiveChartOpen((v) => !v)}
+                held={probeRoastOn}
+                expanded={curveVisible}
+                onToggle={!feedSignalled && curvePointCount === 0 ? undefined : () => setLiveChartOpen((v) => !v)}
               />
                 </div>
               </div>
@@ -2939,6 +3028,9 @@ function App() {
                   elapsedSeconds={elapsedSeconds}
                   windowMode={liveChartWindow}
                   onWindowModeChange={setLiveChartWindow}
+                  showFcEta={hasProbe}
+                  paused={!isTimerRunning}
+                  fcEtaPriorRef={fcEtaPriorRef}
                 />
               )}
 
@@ -2990,18 +3082,6 @@ function App() {
                   </div>
                 </div>
               )}
-
-              {/* Profile guidance strip — the next planned step */}
-              {isTimerRunning && (() => {
-                const upcoming = profileFollowing?.steps?.[currentProfileStepIdx + 1];
-                if (!upcoming) return null;
-                return (
-                  <div className={`mx-4 my-3 flex items-center justify-center gap-2.5 rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${nextProfileStep ? "animate-pulse border-accent bg-accent/10" : "border-border/60"}`}>
-                    <span className="text-ink-muted">Next step</span>
-                    <span className="font-semibold text-accent-text">{upcoming.time} · F{upcoming.fan} · H{upcoming.heat}</span>
-                  </div>
-                );
-              })()}
 
               {/* Phase rail — only when the curve is not up to carry the phases itself. */}
               {roastStarted && !curveVisible && (() => {
@@ -3078,6 +3158,20 @@ function App() {
                     >
                       {isTimerRunning ? "PAUSE" : roastStarted ? "RESUME" : "START"}
                     </button>
+                  </div>
+                );
+              })()}
+
+              {/* Profile guidance strip — the next planned step. Reference, so it sits
+                  BELOW the run controls: it comes and goes (PAUSE, last step passing),
+                  and nothing that comes and goes may sit above a control (RL-039). */}
+              {isTimerRunning && (() => {
+                const upcoming = profileFollowing?.steps?.[currentProfileStepIdx + 1];
+                if (!upcoming) return null;
+                return (
+                  <div className={`mx-4 my-3 flex items-center justify-center gap-2.5 rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${nextProfileStep ? "animate-pulse border-accent bg-accent/10" : "border-border/60"}`}>
+                    <span className="text-ink-muted">Next step</span>
+                    <span className="font-semibold text-accent-text">{upcoming.time} · F{upcoming.fan} · H{upcoming.heat}</span>
                   </div>
                 );
               })()}
@@ -5689,7 +5783,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.9.2</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.10.0</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />

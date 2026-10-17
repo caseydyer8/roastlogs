@@ -872,12 +872,14 @@ test.describe("light mode", () => {
 // -- the screenshot baseline for this screen is generated on Casey's Mac.
 // ---------------------------------------------------------------------------
 
-async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile] } = {}) {
+// `bean` is the one inventory bean the device holds. The shared fixture by default; a test
+// that needs another name (a long one) passes its own, so e2e/fixtures.js stays as it is.
+async function seedSetup(page, { setup = "sr540", profiles = [fixtureProfile], bean = fixtureBean } = {}) {
   await page.addInitScript(({ bean, profs, equipment }) => {
     window.localStorage.setItem("beans", JSON.stringify([bean]));
     window.localStorage.setItem("global_profiles", JSON.stringify(profs));
     window.localStorage.setItem("roastlogs_equipment", equipment);
-  }, { bean: fixtureBean, profs: profiles, equipment: setup });
+  }, { bean, profs: profiles, equipment: setup });
   await page.reload();
   await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
 }
@@ -1256,6 +1258,24 @@ async function reloadMidRoast(page, { profile = fixtureProfile, profileRaw, step
   await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
 }
 
+// The bean-temp readout is also the button that opens the live chart -- and a
+// tap TOGGLES it. On a probe roast the app opens the chart by itself (at START,
+// and when the page reloads into a roast under way), so a bare tap would now
+// close it. This taps only if the chart is not already open. It gives the
+// auto-open a moment to land first: the readout can render a beat before the
+// state that opens the chart settles, and a tap in that gap would close it.
+const beanTempReadout = (page) => page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ });
+
+async function ensureLiveChartOpen(page) {
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  try {
+    await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 1_500 });
+  } catch (e) {
+    await readout.click({ timeout: 15_000 });
+  }
+}
+
 const profileBadge = (page) => page.getByText("Active Profile: E2E Profile");
 
 test("profile survives a mid-roast reload: badge and plan return, and the saved roast keeps the profile", async ({ page }) => {
@@ -1537,7 +1557,7 @@ test("ghost: a source roast that syncs down AFTER the app mounts draws the dashe
     expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
 
     // The bridge is on the channel: open the live chart from the bean-temp readout.
-    await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+    await ensureLiveChartOpen(page);
     await expect(page.locator(".recharts-surface").first()).toBeVisible();
 
     // The sync is still waiting on the cloud, so the chart has no curve to ghost.
@@ -1572,13 +1592,19 @@ const ghostCaption = (page) => page.getByTestId("ghost-caption");
 // holds; it is written with an init script because beforeEach's own seed (the one
 // fixture roast) re-runs on every load and would overwrite a plain evaluate().
 // `live` is the roast's stored clock and log (reloadMidRoast's default when omitted).
-async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined } = {}) {
-  await mockRoastLinkFeed(page);
+// `bt` is what the bridge publishes (a number, or a function of the sample count: see
+// mockRoastLinkFeed); `liveCurve` is the roast's recorded bean-temp curve so far, which
+// is what a reload mid-roast reads back from storage. Returns the feed controller
+// (set / dropBridge / restoreBridge); callers that only want the chart ignore it.
+async function openLiveChart(page, { profile = undefined, profileRaw = undefined, roasts = [fixtureRoast], live = undefined, bt = undefined, liveCurve = undefined } = {}) {
+  const feed = await mockRoastLinkFeed(page, { bt });
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
   await page.evaluate(() => window.localStorage.setItem("roastlogs_equipment", "razzo-v5t"));
+  if (liveCurve) await page.evaluate((c) => window.localStorage.setItem("live_curve", JSON.stringify(c)), liveCurve);
   await reloadMidRoast(page, { profile, profileRaw, live });
-  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  return feed;
 }
 
 // A source roast that IS on this device and has a full curve (the shape the app
@@ -1606,7 +1632,7 @@ test("ghost caption: a source roast with no curve says so, and a source roast wi
   // and there is nothing to explain.
   await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), [fixtureRoast, sourceWithCurve]);
   await reloadMidRoast(page, { profile: fixtureGhostProfile });
-  await page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ }).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
   await expect(ghostCaption(page)).toHaveCount(0);
@@ -1654,11 +1680,41 @@ test("ghost caption: at 390px the header controls stay on one row with the capti
   expect(await caption.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
+// What an element's text is painted in, and how legible that is where it sits. Contrast is
+// the WCAG ratio against the real stack of translucent layers under the text (hero card at
+// 30% over the app shell), composited the way the browser paints it -- so it needs no
+// screenshot. `size` is the font size in px, for the caller to pick the bar (4.5:1 for
+// small text, 3:1 for large). Also returns the theme's own tokens so a caller can assert
+// "this is the muted ink" by value, whichever theme is on. Used by the ghost caption and
+// the held live readout.
+const paintedInk = (locator) =>
+  locator.evaluate((el) => {
+    const rgb = (s) => (s.match(/[\d.]+/g) || []).map(Number);
+    const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    // Paint the ancestors' backgrounds from the page canvas (white) down to the text.
+    const chain = [];
+    for (let n = el; n; n = n.parentElement) chain.unshift(rgb(getComputedStyle(n).backgroundColor));
+    let bg = [255, 255, 255];
+    for (const [r, g, b, a = 1] of chain) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)];
+    const fg = rgb(getComputedStyle(el).color).slice(0, 3);
+    const [hi, lo] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+    const root = getComputedStyle(document.documentElement);
+    return {
+      dataTheme: document.documentElement.getAttribute("data-theme"),
+      fg,
+      size: parseFloat(getComputedStyle(el).fontSize),
+      muted: rgb(root.getPropertyValue("--text-muted")),
+      error: rgb(root.getPropertyValue("--error-text")),
+      primary: rgb(root.getPropertyValue("--text-primary")),
+      ratio: (hi + 0.05) / (lo + 0.05),
+    };
+  });
+
 // The caption is muted text, not an error and not a raw colour: it must resolve
 // to the theme's own --text-muted token (so the Settings toggle re-colours it),
 // and it must stay readable on the surface it sits on in BOTH themes. Contrast is
-// the WCAG ratio against the real stack of translucent layers under the text
-// (hero card at 30% over the app shell), composited the way the browser paints it.
+// paintedInk's WCAG ratio.
 // This is the functional stand-in for eyeballing the light theme, which visual
 // regression would otherwise cover; it checks legibility, not appearance.
 for (const theme of ["dark", "light"]) {
@@ -1667,27 +1723,7 @@ for (const theme of ["dark", "light"]) {
     await openLiveChart(page, { profile: fixtureProfile });
     await expect(ghostCaption(page)).toBeVisible();
 
-    const m = await ghostCaption(page).evaluate((el) => {
-      const rgb = (s) => (s.match(/[\d.]+/g) || []).map(Number);
-      const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
-      const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-      // Paint the ancestors' backgrounds from the page canvas (white) down to the text.
-      const chain = [];
-      for (let n = el; n; n = n.parentElement) chain.unshift(rgb(getComputedStyle(n).backgroundColor));
-      let bg = [255, 255, 255];
-      for (const [r, g, b, a = 1] of chain) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)];
-      const fg = rgb(getComputedStyle(el).color).slice(0, 3);
-      const [hi, lo] = [lum(fg), lum(bg)].sort((x, y) => y - x);
-      const root = getComputedStyle(document.documentElement);
-      return {
-        dataTheme: document.documentElement.getAttribute("data-theme"),
-        fg,
-        muted: rgb(root.getPropertyValue("--text-muted")),
-        error: rgb(root.getPropertyValue("--error-text")),
-        primary: rgb(root.getPropertyValue("--text-primary")),
-        ratio: (hi + 0.05) / (lo + 0.05),
-      };
-    });
+    const m = await paintedInk(ghostCaption(page));
 
     expect(m.dataTheme, "the theme under test is actually applied").toBe(theme);
     expect(m.fg, "caption resolves to --text-muted").toEqual(m.muted);
@@ -1744,9 +1780,6 @@ test("ghost caption: stays in both window modes, the same distance above the plo
 // useLiveRoast runs unmodified: nothing in the app is there for the test's sake.
 // ---------------------------------------------------------------------------
 
-// The bean-temp readout is also the button that opens the live chart.
-const beanTempReadout = (page) => page.locator("button[aria-expanded]").filter({ hasText: /Bean temp/ });
-
 test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast reload", async ({ page }) => {
   await mockRoastLinkFeed(page);
   // After beforeEach's seed and before seedSetup's reload, so it wins on load.
@@ -1763,7 +1796,7 @@ test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast 
   await expect(page.getByText("00:02", { exact: true })).toBeVisible();
 
   // BEFORE the reload: the live chart is open and the ghost is on it.
-  await beanTempReadout(page).click({ timeout: 15_000 });
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect(ghostCaption(page)).toHaveCount(0); // a ghost is promised and drawn
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
@@ -1783,8 +1816,8 @@ test("ghost: followed from Setup, drawn live, and still drawn after a mid-roast 
   await expect(profileBadge(page)).toBeVisible();
 
   // AFTER the reload: the bridge is still publishing, so the feed returns by
-  // itself; the chart starts closed again (it is not persisted) -- open it.
-  await beanTempReadout(page).click({ timeout: 15_000 });
+  // itself; the chart is not persisted, so make sure it is open again.
+  await ensureLiveChartOpen(page);
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
   await expect(ghostCaption(page)).toHaveCount(0);
   await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
@@ -1826,6 +1859,253 @@ test("ghost breaks across a probe gap: a 5 s hole is still bridged, so the line 
   await openGhostWithHole(page, 200, 204);
   // Within LIVE_GAP_S the model fills the hole with a short straight run: one stretch.
   expect(await ghostSubpaths(page)).toBe(1);
+});
+
+// ---------------------------------------------------------------------------
+// RL-056 / RL-057: the RoR ghost. The source roast's rate of rise is drawn on the live
+// chart as the BT ghost's twin: same "4 3" dash and 0.5 opacity, the RoR colour, 1.2 wide,
+// on the RoR axis. It exists exactly when the BT ghost does -- never without it, never
+// after DROP -- and adds no caption, legend or toggle. The series itself (same recipe as
+// the live RoR, null around a probe gap) is unit-tested in LiveRoastChart.plan.test.js;
+// these read what reaches the SVG.
+//
+// GHOST_PATH above is scoped by the Temp colour, so the second dashed "4 3" line this adds
+// cannot be mistaken for the BT ghost by any of the specs that measure it.
+// ---------------------------------------------------------------------------
+
+const ROR_PLAN_PATH = 'path.recharts-line-curve[stroke="rgb(var(--chart-ror))"][stroke-dasharray="4 3"]';
+const rorPlanD = (page) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.getAttribute("d") || "" : "";
+  }, ROR_PLAN_PATH);
+const rorPlanLength = async (page) => (await rorPlanD(page)).length;
+const rorPlanSubpaths = async (page) => ((await rorPlanD(page)).match(/M/g) || []).length;
+
+// Every line drawn on the live chart (its first recharts surface; the second is the Fan/Heat
+// control map), in DOM order -- which is paint order, last on top. Named by what it is: the
+// RoR or the Temp colour, and "(plan)" for the dashed ones. A line with no points renders an
+// empty path (the BT ghost does, for a plan that only has milestones), and that is not drawn.
+const liveChartLines = (page) =>
+  page.evaluate(() => {
+    const surface = document.querySelector(".recharts-surface");
+    if (!surface) return [];
+    return [...surface.querySelectorAll("path.recharts-line-curve")].filter((p) => (p.getAttribute("d") || "").length > 0).map((p) => {
+      const name = p.getAttribute("stroke").includes("--chart-ror") ? "RoR" : "Temp";
+      return p.getAttribute("stroke-dasharray") ? `${name} (plan)` : name;
+    });
+  });
+
+// The numbers printed on the live chart's right-hand (RoR) axis. Recharts renders each tick
+// label as a <text>; the RoR axis is the one on the right, so it is picked by position.
+const rorAxisTicks = (page) =>
+  page.evaluate(() => {
+    const surface = document.querySelector(".recharts-surface");
+    const half = surface.getBoundingClientRect().width / 2;
+    return [...surface.querySelectorAll("text.recharts-cartesian-axis-tick-value")]
+      .filter((t) => Number(t.getAttribute("x")) > half)
+      .map((t) => Number(t.textContent));
+  });
+
+// A synthetic source (or live) roast with a hard charge dip, so the RoR axis has something
+// to be squeezed by. The pace is a piecewise-linear RoR in F/min -- -100 F/min for the first
+// 15 s (the charge dip), the turnaround, a recovery peaking at 45 F/min, then the long
+// decline through the caramelization stretch (about 25 F/min at 5:00-6:00) -- integrated
+// into a 1 Hz bean-temp curve rounded to 0.1 F, the way the app stores one. Charged at 230 F.
+const DIP_PACE = [[0, -100], [15, -100], [30, -30], [60, 40], [120, 45], [240, 32], [360, 22], [480, 15], [600, 10]];
+function dipCurve(length) {
+  const paceAt = (t) => {
+    for (let i = 1; i < DIP_PACE.length; i++) {
+      const [t1, p1] = DIP_PACE[i];
+      if (t <= t1) {
+        const [t0, p0] = DIP_PACE[i - 1];
+        return p0 + ((p1 - p0) * (t - t0)) / (t1 - t0);
+      }
+    }
+    return DIP_PACE[DIP_PACE.length - 1][1];
+  };
+  const curve = [];
+  let bt = 230;
+  for (let t = 0; t < length; t++) {
+    curve.push({ t, bt: Math.round(bt * 10) / 10 });
+    bt += paceAt(t) / 60;
+  }
+  return curve;
+}
+const sourceWithDip = { ...sourceWithCurve, curve: dipCurve(661) };
+
+// A roast `seconds` in whose own charge dipped: the curve it has recorded so far (what a
+// reload mid-roast reads back), the clock to match, and a bridge that keeps publishing the
+// newest reading so the feed stays "live" and the chart stays mounted.
+function dippedLiveRoast(seconds) {
+  const liveCurve = dipCurve(seconds + 1);
+  return {
+    liveCurve,
+    live: { ...fixtureLiveRoast, elapsedSeconds: seconds },
+    bt: () => liveCurve[liveCurve.length - 1].bt,
+  };
+}
+
+const GHOST_STATES = [
+  { name: "a source roast with a curve", profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithCurve], caption: null },
+  { name: "a profile with no source roast", profile: fixtureProfile, roasts: [fixtureRoast], caption: "No ghost · no source roast" },
+  { name: "a source roast that is not on this device", profile: fixtureGhostProfile, roasts: [fixtureRoast], caption: "No ghost · source roast not on this device" },
+  { name: "a source roast with no curve", profile: { ...fixtureGhostProfile, sourceRoastId: fixtureRoast.id }, roasts: [fixtureRoast], caption: "No ghost · source roast has no curve" },
+];
+
+for (const state of GHOST_STATES) {
+  test(`ghost: RoR plan line is drawn exactly when the BT ghost is (${state.name})`, async ({ page }) => {
+    // A live curve with a pace of its own, so the live RoR and Temp lines are really drawn
+    // and the lines asserted below are the whole stack, not whatever happened to render.
+    await openLiveChart(page, { profile: state.profile, roasts: state.roasts, ...dippedLiveRoast(130) });
+    const drawn = state.caption === null;
+
+    // The caption is the proof the plan has settled into this state: an absence asserted
+    // before the chart has caught up with it would pass for the wrong reason.
+    if (drawn) {
+      await expect(ghostCaption(page)).toHaveCount(0);
+      await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+    } else {
+      await expect(ghostCaption(page)).toHaveText(state.caption);
+    }
+
+    if (drawn) {
+      // The RoR twin: a real path (not just an element) in the RoR colour, with the
+      // BT ghost's dash and opacity and a hair thinner than the 1.4 BT ghost.
+      await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+      const style = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return { width: el.getAttribute("stroke-width"), opacity: el.getAttribute("stroke-opacity") };
+      }, ROR_PLAN_PATH);
+      expect(style).toEqual({ width: "1.2", opacity: "0.5" });
+      // The ghost stack mirrors the live stack, every ghost under every live line.
+      expect(await liveChartLines(page)).toEqual(["RoR (plan)", "Temp (plan)", "RoR", "Temp"]);
+      // One dash means "the source roast", and no new legend or caption explains it.
+      await expect(page.locator(".recharts-legend-wrapper")).toHaveCount(0);
+
+      // The controls under the chart still read Fan -> Heat -> Temp.
+      const dials = page.locator("div.grid.grid-cols-3.divide-x > button");
+      const dialLabels = await dials.locator("div:first-child").allInnerTexts();
+      expect(dialLabels.map((l) => l.toLowerCase())).toEqual(["fan", "heat", "temp"]);
+    } else {
+      expect(await ghostLength(page)).toBe(0);
+      expect(await rorPlanLength(page)).toBe(0);
+      expect(await liveChartLines(page)).toEqual(["RoR", "Temp"]);
+    }
+    // Present exactly when the BT ghost is.
+    expect((await rorPlanLength(page)) > 0).toBe((await ghostLength(page)) > 0);
+  });
+}
+
+test("ghost: RoR plan line is drawn exactly when the BT ghost is (gone with it at DROP)", async ({ page }) => {
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithCurve], ...dippedLiveRoast(130) });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+
+  await page.getByRole("button", { name: "RESUME", exact: true }).click();
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect
+    .poll(async () => (await stored(page, "live_roastLog")) || "", { timeout: 10_000 })
+    .toContain("COOLING START");
+  // The chart is still on screen, and neither dashed line is: after DROP there is nothing
+  // left to steer by.
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+  await expect.poll(() => ghostLength(page), { timeout: 10_000 }).toBe(0);
+  await expect.poll(() => rorPlanLength(page), { timeout: 10_000 }).toBe(0);
+  expect(await liveChartLines(page)).toEqual(["RoR", "Temp"]);
+});
+
+// RL-027's rule, for the RoR twin: no connectNulls. A source-roast hole longer than
+// LIVE_GAP_S leaves a RoR gap about +/-15 s wide (the slope needs an unbroken window), which is
+// honest; a short hole is bridged before the slope is taken, so the line stays whole.
+test("ghost breaks across a probe gap: the RoR plan line breaks too, in two pieces", async ({ page }) => {
+  await openGhostWithHole(page, 200, 219);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  expect(await rorPlanSubpaths(page)).toBe(2);
+});
+
+test("ghost breaks across a probe gap: a 5 s hole is bridged for the RoR plan line as well", async ({ page }) => {
+  await openGhostWithHole(page, 200, 204);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  expect(await rorPlanSubpaths(page)).toBe(1);
+});
+
+// The tooltip reads each live value with its plan underneath: Temp, Temp (plan), RoR, RoR (plan).
+// Recharts' default sorts by name, which would read RoR first. Hover needs a pointer, so
+// desktop only. The live curve is seeded so there is a live Temp and RoR at the hovered second.
+test("ghost: hovering a second reads Temp, Temp (plan), RoR, RoR (plan)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "hover needs a mouse pointer; the iphone project is touch only");
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip], ...dippedLiveRoast(300) });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+
+  // The window is the last three minutes (2:30-5:30 at 5:00), so the middle of the plot is
+  // 4:00: inside the recorded curve and inside the plan. 42 and 44 are the axis insets.
+  const box = await page.locator(".recharts-surface").first().boundingBox();
+  await page.mouse.move(box.x + 42 + (box.width - 42 - 44) / 2, box.y + 50);
+  const names = page.locator(".recharts-tooltip-item-name");
+  await expect(names.first()).toBeVisible();
+  expect(await names.allInnerTexts()).toEqual(["Temp", "Temp (plan)", "RoR", "RoR (plan)"]);
+});
+
+// The plan's pace joins the RoR axis from second 0, so the axis it opens with is the one it
+// keeps, and the source roast's charge dip (-100 F/min over the first 15 s) must not blow the
+// ceiling or the floor out and squeeze the stretch that matters (caramelization, about
+// 25 F/min). Read as the numbers printed on the axis, at the phone's width. The synthetic
+// roast peaks at 45 F/min, so the axis tops out at 60 (the model rounds 1.2x the peak up to
+// a whole 10); the floor is whatever the dip draws and is bounded by the dip itself.
+//
+// Measured on the code before the ghost RoR: a dipping LIVE curve alone already prints a
+// negative floor (the axis domain is [0, fn] with no allowDataOverflow, so Recharts widens it
+// to the most negative RoR: about -99 here). This pins "no worse than the dip", not "pinned at 0".
+const ROR_AXIS_CEILING = 60;
+const ROR_AXIS_FLOOR = -100;
+
+// The axis's true floor and ceiling, from the numbers printed on it. Recharts lays out
+// five evenly spaced ticks, but on this axis it does not draw the one on the bottom edge --
+// the floor itself (measured: four tick lines, 27.7 px apart, in a 110 px plot) -- so the
+// smallest label on screen is a whole step ABOVE the floor (labels -59, -19, 21, 60 for an
+// axis that bottoms out at about -99).
+// An axis squeezed far below that could still pass a check on the smallest label. The
+// ticks are evenly spaced, so the floor is the top tick less four steps (five ticks).
+// The labels are rounded to whole numbers (allowDecimals is off), so "evenly spaced" is
+// asserted to within 1, and the step is the mean of the printed ones; a label missing
+// from the MIDDLE doubles a step and fails the spacing check instead of passing for a
+// coarser axis.
+function rorAxisBounds(ticks) {
+  const sorted = [...ticks].sort((a, b) => a - b);
+  expect(sorted.length, `RoR axis ticks: ${ticks}`).toBeGreaterThan(2);
+  const steps = sorted.slice(1).map((v, i) => v - sorted[i]);
+  expect(Math.max(...steps) - Math.min(...steps), `RoR axis ticks are evenly spaced: ${ticks}`).toBeLessThanOrEqual(1);
+  const step = (sorted[sorted.length - 1] - sorted[0]) / steps.length;
+  const ceiling = sorted[sorted.length - 1];
+  return { ceiling, floor: ceiling - 4 * step, step, ticks: sorted };
+}
+
+test("ghost: the RoR axis opens at the plan's pace, on a calm live feed (390px)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The default feed: 250..254 F, so the LIVE line has no pace of its own to set the axis.
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip] });
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  const { ceiling, floor, ticks } = rorAxisBounds(await rorAxisTicks(page));
+  // Without the plan's pace the axis would stop at 10: the plan reaches 45 F/min.
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(floor, `RoR axis floor from ticks ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
+});
+
+test("ghost: a dipping live feed under a dipping plan keeps the RoR axis within its floor and ceiling (390px)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Five minutes into a roast whose own charge dipped, the bridge still publishing.
+  await openLiveChart(page, { profile: fixtureGhostProfile, roasts: [fixtureRoast, sourceWithDip], ...dippedLiveRoast(300) });
+  // Measured with the plan's pace on screen, not before it has drawn.
+  await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  await expect.poll(() => rorPlanLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+  const { ceiling, floor, ticks } = rorAxisBounds(await rorAxisTicks(page));
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeGreaterThanOrEqual(50);
+  expect(ceiling, `RoR axis ticks: ${ticks}`).toBeLessThanOrEqual(ROR_AXIS_CEILING);
+  expect(floor, `RoR axis floor from ticks ${ticks}`).toBeGreaterThanOrEqual(ROR_AXIS_FLOOR);
 });
 
 // ---------------------------------------------------------------------------
@@ -3074,11 +3354,12 @@ test("mock-bridge roast: a steady probe saves a continuous curve, and History's 
   await runQuickRoast(page, {
     viaPreheat: true,
     clockPast: 20,
-    // 20 s in, marks not yet logged: open the live chart (the Bean temp readout is its
-    // button) and look at the Temp line. Sampled for a few seconds, not once, because
-    // a fragment can come and go as the feed's 2 Hz and the roast's 1 Hz clock drift.
+    // 20 s in, marks not yet logged: make sure the live chart is open (the Bean temp
+    // readout is its button) and look at the Temp line. Sampled for a few seconds, not
+    // once, because a fragment can come and go as the feed's 2 Hz and the roast's 1 Hz
+    // clock drift.
     beforeMarks: async (p) => {
-      await beanTempReadout(p).click({ timeout: 15_000 });
+      await ensureLiveChartOpen(p);
       await expect(p.locator(".recharts-surface").first()).toBeVisible();
       await expect.poll(async () => (await liveTempSubpaths(p)).length, { timeout: 10_000, message: "the live Temp line is drawn" }).toBe(1);
       for (let i = 0; i < 6; i++) {
@@ -3130,4 +3411,1750 @@ test("mock-bridge roast: a steady probe saves a continuous curve, and History's 
   // still a dash, so the three above are numbers because of the data behind them and
   // not because every tile stopped printing dashes.
   await expect(historyTile(page, "Wt Loss")).toHaveText("—");
+});
+
+// ---------------------------------------------------------------------------
+// RL-063: the live chart opens itself on a probe roast. It used to start closed
+// (liveChartOpen is React state, not persisted), so the chart stayed hidden until
+// the roaster tapped the Bean temp readout -- after every START and, worse, after
+// every mid-roast reload, which iOS does to a backgrounded PWA (RL-036). Now:
+//   - a probe roast (only the Razzo has a probe) opens it at START and when the
+//     page loads into a roast under way. It is PER ROAST: a tap on the readout
+//     closes it for the rest of THAT roast, and the next roast opens it again;
+//   - it opens only when it can be drawn now and near START or the page load. A
+//     bridge that joins mid-roast does NOT make the chart drop in under the thumb
+//     (the readout shows, collapsed, and the roaster taps it), and a reload after
+//     COOLING START does not open it above SAVE ROAST;
+//   - from START until SAVE ROAST / DISCARD (not until COOLING START: a hold may only
+//     end at a stage change, never at a tap) the chart stays MOUNTED when the feed
+//     drops, with the curve it has, and the readout stays too -- muted, "Feed lost" or
+//     "Connecting", never blank -- so there is a cue that the feed is gone and a toggle
+//     to close the chart by hand. "Connecting" has a ceiling: about 15 s after the page
+//     loaded it reads "Feed lost" too, with nothing else changing;
+//   - a chart the FEED took away (a roast with no curve whose feed dies) is not
+//     brought back by the feed when it returns: the readout comes back collapsed;
+//   - the controls never move for any of it: the chart is up from START (the same
+//     layout for the whole roast) and a feed change does not change a row height;
+//   - a probe-less setup (oem-tube, sr540) still gets no chart and no readout.
+// The bridge is faked at the websocket (mockRoastLinkFeed), so the real
+// useLiveRoast runs unmodified; the controller's dropBridge()/restoreBridge() are
+// the bridge app quitting and coming back. Functional assertions only -- the
+// roast-tab baseline with the chart open by default is a Mac job (visual pending).
+// ---------------------------------------------------------------------------
+
+const liveChartSurface = (page) => page.locator(".recharts-surface");
+// The cluster readout in EVERY state (data-state: live | no-signal | feed-lost |
+// connecting). beanTempReadout above matches only the two states that print "Bean temp".
+const liveReadout = (page) => page.getByTestId("live-readout");
+
+// A Razzo roast started the way a roaster starts it: Setup -> Begin preheat -> START,
+// on the mocked bridge. Taps NOTHING that opens the chart. `profile` follows that
+// profile from Setup instead of a manual roast; `roasts` is what this device holds
+// (an init script, since beforeEach's seed re-runs on every load); `bean` picks the
+// inventory bean in Setup the way Case does (it adds the bean name to the summary bar
+// above the hero); `bean` may be an inventory bean of its own instead of `true`, to
+// roast with a name the fixture does not have. `feedDown` starts the roast with the
+// bridge already gone: Setup then reads "Continue" (nothing live to preheat against)
+// and START is on the ready hero. `silent` is the other way to read "Continue": a
+// bridge that IS on the channel (so the hook reads bridge-only) whose device sends no
+// usable bean temp -- pair it with `feedOptions: { bt: () => NaN }`.
+// Returns the feed controller.
+async function startProbeRoast(page, { feedOptions, profile = null, roasts = null, bean = false, feedDown = false, silent = false } = {}) {
+  const feed = await mockRoastLinkFeed(page, feedOptions);
+  if (feedDown) feed.dropBridge(); // before the load below: the new socket sees nobody on the channel
+  if (roasts) await page.addInitScript((r) => window.localStorage.setItem("roasts", JSON.stringify(r)), roasts);
+  const pickedBean = bean && typeof bean === "object" ? bean : fixtureBean;
+  await seedSetup(page, { setup: "razzo-v5t", profiles: profile ? [profile] : undefined, bean: pickedBean });
+  if (bean) await page.getByRole("button", { name: pickedBean.name }).click();
+  await page.getByRole("button", { name: profile ? /E2E Profile/ : /Manual roast/ }).click();
+  await page.getByRole("button", { name: feedDown || silent ? "Continue" : "Begin preheat" }).click({ timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  return feed;
+}
+
+const dialLabelsOf = async (page) =>
+  (await page.locator("div.grid.grid-cols-3.divide-x > button").locator("div:first-child").allInnerTexts())
+    .map((l) => l.toLowerCase());
+
+// <main> scrolls inside the fixed shell, and a click on a button that is partly under
+// the nav makes Playwright scroll it. Every reading of where a control sits is taken
+// at scrollTop 0, so two readings are comparable.
+const mainToTop = (page) => page.locator("main").evaluate((el) => el.scrollTo(0, 0));
+async function boxAtTop(page, name) {
+  await mainToTop(page);
+  return page.getByRole("button", { name }).boundingBox();
+}
+
+// The live instrument hero: the one overflow-hidden rounded section on the Roast tab.
+const heroSection = (page) => page.locator("section.overflow-hidden.rounded-3xl");
+
+// Where the run button (`runName`: PAUSE, or RESUME when paused) and the hero sit, both
+// read at scrollTop 0. "Nothing under the thumb moved" is these two staying put: the run
+// button is the thing the thumb is on, the hero's bottom edge is where everything below
+// it (the timeline, SAVE ROAST) starts.
+async function heroReading(page, runName) {
+  const run = await boxAtTop(page, runName);
+  const hero = await heroSection(page).boundingBox();
+  return { run, hero, heroBottom: hero.y + hero.height };
+}
+
+// Every text node in a locator with the colour it is painted in -- so "muted" can be
+// asserted as "the same ink as the label", without naming a class or a token.
+const inkOf = (locator) =>
+  locator.evaluate((root) => {
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = n.textContent.trim();
+      if (text) out.push({ text, color: getComputedStyle(n.parentElement).color });
+    }
+    return out;
+  });
+
+test("live chart opens itself at START on a Razzo roast", async ({ page }) => {
+  await startProbeRoast(page);
+  // No tap on the Bean temp readout: the chart is simply there.
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true");
+  // The controls the taller hero pushes down still read Fan -> Heat -> Temp.
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+test("live chart opens itself: a tap closes it and it stays closed", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  const readout = beanTempReadout(page);
+  // It opened by itself (no tap yet) -- so the close below is the roaster's doing.
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  // Ten seconds of a roast that keeps running: nothing may re-open it. Sampled each
+  // second rather than once, so an effect that re-fires on the clock tick is caught.
+  const clock = async () => Number(await stored(page, "live_elapsedSeconds"));
+  const before = await clock();
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(1000);
+    await expect(readout, `second ${i + 1} after the tap`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page)).toHaveCount(0);
+  }
+  expect(await clock(), "the roast clock kept running").toBeGreaterThanOrEqual(before + 8);
+});
+
+test("live chart opens itself: a reload into a running Razzo roast re-opens it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await expect(page.getByText("00:03", { exact: true })).toBeVisible({ timeout: 10_000 });
+  // Close it by hand first, so what comes back after the reload is the app's doing and
+  // not a leftover: the choice not to look at the chart is for THIS page session only.
+  await ensureLiveChartOpen(page);
+  await beanTempReadout(page).click();
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("start_settings");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // The same roast came back (paused at its clock, no Setup takeover)...
+  await expect(page.getByTestId("roast-setup")).toHaveCount(0);
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  // ...and so did the chart, with no tap. The feed returns by itself.
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true", { timeout: 15_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+// The chart opens only when it can be drawn NOW and near START or the page load.
+// Case's Razzo roast is sometimes started before the bridge app is up. The roast runs
+// with the feed down; when the bridge joins, say 20 s in, the readout appears -- and
+// the chart must NOT drop in, 260 px tall, on top of the Mark button under his thumb.
+test("live chart opens itself: a bridge that joins late does not pop the chart in under the thumb", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page, { feedDown: true });
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+
+  // The feed is down from START: the readout holds its slot as the muted "Feed lost" cue,
+  // with nothing to draw and so nothing to toggle.
+  const held = liveReadout(page);
+  await expect.soft(held, "feed down from START: the readout holds its slot").toHaveAttribute("data-state", "feed-lost");
+  await expect.soft(held, "nothing to draw yet, so nothing to toggle").toBeDisabled();
+  await expect.soft(held).toHaveAttribute("aria-expanded", "false");
+
+  // About 20 s in. This is the "before": where the thumb is resting.
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  const before = await boxAtTop(page, "Mark Yellowing");
+
+  feed.restoreBridge();
+  // The bean temp arrives: the readout reads Bean temp (live), collapsed.
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  // ...and keeps its hands off: still collapsed a few seconds later (an effect that
+  // opens it once the feed settles would land after the first look).
+  for (let i = 0; i < 6; i++) {
+    await expect(readout, `sample ${i} after the bridge joined`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, sample ${i} after the bridge joined`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  await expect.soft(liveReadout(page)).toHaveAttribute("data-state", "live");
+
+  // Nothing under the thumb moved: the Mark button is where it was before the join.
+  const after = await boxAtTop(page, "Mark Yellowing");
+  expect(
+    Math.abs(after.y - before.y),
+    `Mark Yellowing top edge: ${before.y} before the bridge joined, ${after.y} after`
+  ).toBeLessThanOrEqual(0.5);
+});
+
+// A reload after COOLING START. The roast is over bar SAVE ROAST; nothing about a
+// finished roast wants a chart, and one dropping in when the feed returns a second later
+// would push SAVE ROAST ~260 px down.
+test("live chart opens itself: a reload after COOLING START does not open the chart", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("COOLING START");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  // The finished roast came back, waiting to be saved...
+  await expect(saveRoastButton(page)).toBeVisible();
+  // ...and the feed returns by itself (Bean temp = the hook is live again).
+  const readout = beanTempReadout(page);
+  await expect(readout).toBeVisible({ timeout: 15_000 });
+  // The chart did not open, and does not open a moment later either.
+  for (let i = 0; i < 6; i++) {
+    await expect(readout, `sample ${i} after the feed returned`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, sample ${i} after the feed returned`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// The auto-open is per ROAST. A close sticks for the rest of THAT roast (through its
+// marks and the drop), and the next roast, in the same page session, opens it again. The
+// roaster who closes the chart on roast 1 must not have to tap on every roast after it.
+test("live chart opens itself: it opens again for the next roast after a close on the last one", async ({ page }) => {
+  test.setTimeout(120_000);
+  await startProbeRoast(page, { profile: singleStepProfile });
+  const readout = beanTempReadout(page);
+  // Roast 1 opens itself (the precondition: the close below is the roaster's).
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+
+  // It stays closed for the rest of roast 1: after each mark, through the drop.
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+    await page.waitForTimeout(700);
+    await expect(readout, `after Mark ${label}`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart after Mark ${label}`).toHaveCount(0);
+  }
+  await saveRoastButton(page).click();
+  await skipDropWeight(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  expect(await roastCount(page)).toBe(2); // the fixture roast and roast 1
+
+  // Roast 2, same page session: no reload in between.
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+for (const setup of ["oem-tube", "sr540"]) {
+  test(`live chart opens itself: ${setup} roast has no chart and no Bean temp readout`, async ({ page }) => {
+    // A bridge IS on the channel and publishing -- the probe-less setup must ignore it.
+    await mockRoastLinkFeed(page);
+    await seedSetup(page, { setup });
+    // A bridge on the channel makes the app GUESS the Razzo, unless the setup was picked
+    // by hand ("the app may guess; it does not argue"). Pick it, as a roaster who knows
+    // their roaster has no probe would, so the roast really is on a probe-less setup.
+    await page.getByLabel("Roaster Setup").selectOption(setup);
+    await expect(page.getByLabel("Roaster Setup")).toHaveValue(setup);
+    await page.getByRole("button", { name: /Manual roast/ }).click();
+    await page.getByRole("button", { name: "Start roast" }).click();
+    await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+    // Past a few samples (the mock publishes every 500 ms), so "no chart" is not just "too early".
+    await expect(page.getByText("00:04", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(page.getByText("Live curve", { exact: true })).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+    await expect(liveReadout(page)).toHaveCount(0);
+
+    // Control: the absence above is the setup's doing, not a feed that never connected.
+    // Settings' bridge card reads the ungated signal, and it says Live.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByText("Receiving bean temp from the RoastLink.")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Roast", exact: true }).click();
+    await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+    await expect(liveReadout(page)).toHaveCount(0);
+  });
+}
+
+// The feed dies mid-roast (the bridge app quits). The chart stays mounted with the
+// curve it has, and the readout does NOT vanish: its slot is the probe's from START to
+// SAVE ROAST, and it says what the feed is doing. "Feed lost" is muted (no number
+// outlives its data, no error red: the roast is fine, only the feed is not), and it is
+// the same height as the live readout, so no control under the thumb moves.
+test("live chart opens itself: the chart stays mounted when the feed drops mid-roast, and the readout says Feed lost", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  // Open it however it opens (by itself, or by a tap on a build that does not yet),
+  // so this test is about what happens when the feed goes, not about getting it open.
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "a Temp line is drawn before the drop").toBeGreaterThan(0);
+
+  // The live look, for comparison: the label and the value are not the same ink.
+  const liveInk = await inkOf(beanTempReadout(page));
+  const liveLabel = liveInk.find((t) => t.text === "Bean temp");
+  const liveValue = liveInk.find((t) => /^\d+$/.test(t.text));
+  expect(liveLabel && liveValue, `live readout texts: ${JSON.stringify(liveInk)}`).toBeTruthy();
+  expect(liveValue.color, "live: the value is not painted in the muted ink").not.toBe(liveLabel.color);
+  const liveHeight = (await beanTempReadout(page).boundingBox()).height;
+  const before = await boxAtTop(page, "Mark Yellowing");
+
+  // The bridge app quits. The hook reads "no-bridge" once the last sample is STALE_MS old.
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout).toContainText("Feed lost");
+  await expect(readout).not.toContainText("Bean temp");
+  await expect(readout, "the chart is still up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // Muted: no number, and every dash is painted in the label's own ink (not the Temp
+  // colour, not the RoR colour, not error red).
+  const ink = await inkOf(readout);
+  const label = ink.find((t) => t.text === "Feed lost");
+  const dashes = ink.filter((t) => t.text === "--");
+  expect(dashes.length, `a dash for the value and one for the RoR; texts: ${JSON.stringify(ink)}`).toBe(2);
+  expect(ink.some((t) => /^[+-]?\d/.test(t.text)), `no frozen reading survives; texts: ${JSON.stringify(ink)}`).toBe(false);
+  for (const d of dashes) expect(d.color, "a stopped measurement is painted in the label's muted ink").toBe(label.color);
+
+  // Nothing under the thumb moved: same readout height, same Mark Yellowing top edge.
+  expect(Math.abs((await readout.boundingBox()).height - liveHeight), "readout height, live vs feed lost").toBeLessThanOrEqual(0.5);
+  const after = await boxAtTop(page, "Mark Yellowing");
+  expect(
+    Math.abs(after.y - before.y),
+    `Mark Yellowing top edge: ${before.y} while the feed was live, ${after.y} with the feed lost`
+  ).toBeLessThanOrEqual(0.5);
+
+  // The roast is still under way and the curve is still the roaster's: the chart
+  // stays, and keeps its Temp line, rather than blinking out for a feed that may
+  // be back in a moment.
+  for (let i = 0; i < 6; i++) {
+    await expect(liveChartSurface(page).first(), `chart, sample ${i} after the feed dropped`).toBeVisible();
+    expect((await liveTempSubpaths(page)).length, `Temp line, sample ${i}`).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// With the feed lost the chart is held open, so the roaster needs a way to close it by
+// hand (to bring Mark First crack out from under the nav, say) and to bring it back.
+test("live chart opens itself: with the feed lost, a tap on the readout closes the chart and a second tap brings it back", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(beanTempReadout(page)).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout).toBeEnabled(); // there is a curve to draw, so there is something to toggle
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  // The cue is still there with the chart closed, and a second look a moment later agrees.
+  await page.waitForTimeout(1500);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost");
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "the curve the roast already has comes back with it").toBeGreaterThan(0);
+});
+
+// A reload leaves the hook in "connecting" for a few seconds (the page has not heard
+// from the channel yet). The feed here never answers at all -- no presence and, with the
+// bridge dropped before the load, no sample either -- so the hook cannot leave
+// "connecting" however long the test looks. (announce:false alone is not enough: any
+// sample flips the hook to "live" without presence.) The roast is mid-way, with a curve.
+// "Connecting" has a CEILING, though: a feed that has not answered for about 15 s (the same
+// AUTO_OPEN_WINDOW_MS that bounds the auto-open; one rule, not a setting) is not coming
+// for a moment, and a label that keeps promising it would be a lie -- offline reload, or a
+// Realtime that refused the subscribe, and the hook has no error state. Past it the readout
+// takes the feed-lost look and NOTHING ELSE changes: the chart stays, the toggle's state
+// stays, no row moves.
+test("live chart opens itself: a reload keeps the chart up while the feed is still connecting", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await mockRoastLinkFeed(page, { announce: false });
+  feed.dropBridge(); // no samples, for the reload below and every socket after it
+  await page.evaluate(() => {
+    window.localStorage.setItem("roastlogs_equipment", "razzo-v5t");
+    window.localStorage.setItem("live_curve", JSON.stringify(Array.from({ length: 130 }, (_, t) => ({ t, bt: 200 + t }))));
+  });
+  await reloadMidRoast(page);
+  const loadedAt = Date.now(); // the app mounted a moment (1-3 s) before this, so the page is a little older than this clock says
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+
+  // The roast has a curve and it is on screen -- in "connecting", where only the
+  // under-way rule keeps it mounted (the plain live/bridge-only rule would not).
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  expect((await liveTempSubpaths(page)).length, "the stored curve is drawn").toBeGreaterThan(0);
+
+  // The hook is still connecting, at the moment the chart is seen and for the next ~3 s
+  // (past the point where a sample, 500 ms apart, would have flipped it): not live and
+  // not bridge-only, so no "Bean temp" and no "No signal" -- and the chart stays up.
+  for (let i = 0; i < 6; i++) {
+    await expect(beanTempReadout(page), `Bean temp readout, check ${i}`).toHaveCount(0);
+    await expect(page.getByText("No signal", { exact: true }), `No signal, check ${i}`).toHaveCount(0);
+    await expect(liveChartSurface(page).first(), `chart, check ${i}`).toBeVisible();
+    await page.waitForTimeout(500);
+  }
+  // The readout does not vanish while it waits: it says Connecting, muted, in its own slot.
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "connecting");
+  await expect(readout).toContainText("Connecting");
+  await expect(readout, "the chart is up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // ...and the ceiling. Where everything stands while it is still Connecting: the readout's
+  // height, the run button (RESUME: a reload comes back paused) and the hero's edges.
+  const connecting = {
+    readoutHeight: (await readout.boundingBox()).height,
+    ...(await heroReading(page, "RESUME")),
+  };
+
+  // Not at once: ten seconds in it is still Connecting (a cold iOS reload takes a few seconds
+  // to resubscribe, and a ceiling that short would flash a false alarm on every reload).
+  await page.waitForTimeout(Math.max(0, loadedAt + 10_000 - Date.now()));
+  await expect(readout, "10 s after the load it is still Connecting").toHaveAttribute("data-state", "connecting");
+
+  // Then, with the feed still not heard from, the feed-lost look: about 15 s after the load.
+  await expect(readout, "about 15 s after the load, with no answer, Connecting becomes Feed lost")
+    .toHaveAttribute("data-state", "feed-lost", { timeout: 20_000 });
+  const flippedAfter = Date.now() - loadedAt;
+  expect(flippedAfter, "the ceiling is about 15 s, not sooner").toBeGreaterThanOrEqual(12_000);
+  await expect(readout).toContainText("Feed lost");
+  await expect(readout).not.toContainText("Connecting");
+  await expect(readout, "the chart is still up, so the readout still reports it open").toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first(), "the chart stayed").toBeVisible();
+  expect((await liveTempSubpaths(page)).length, "the stored curve is still drawn").toBeGreaterThan(0);
+
+  // No layout change: same readout height, same run button, same hero.
+  const lost = await heroReading(page, "RESUME");
+  expect.soft(Math.abs((await readout.boundingBox()).height - connecting.readoutHeight), "readout height, Connecting vs Feed lost").toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.run.y - connecting.run.y), `RESUME top edge: ${connecting.run.y} while Connecting, ${lost.run.y} as Feed lost`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.hero.y - connecting.hero.y), "hero top edge").toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(lost.hero.height - connecting.hero.height), `hero height: ${connecting.hero.height} while Connecting, ${lost.hero.height} as Feed lost`).toBeLessThanOrEqual(0.5);
+});
+
+// Phone geometry. The open chart makes the hero taller for the WHOLE roast, so the
+// buttons a thumb needs -- Mark Yellowing, then Mark First crack, and PAUSE beside them --
+// must still be reachable. "Reachable" is: fully on screen without scrolling, i.e. inside
+// <main>'s own window, which ends where the bottom nav begins. The only sticky thing in
+// the thumb zone is the round Adjustment Log button, and it opens the dial editor: it
+// cannot mark a phase, so it is no way round a button that is off screen.
+//
+// The layout is decided at design time and is the same for the whole roast (RL-039): what
+// comes and goes (the Next step strip) sits BELOW the run controls, and the bean's name is
+// shown once (the setup bar above the hero), so the controls do not depend on either.
+//
+// Every reading is taken at scrollTop 0, and the soft expectations list EVERY button that
+// is out of the window in one run: a click on a button that is partly under the nav makes
+// Playwright scroll <main>, which would otherwise move the next button's reading.
+async function expectOnScreen(page, name) {
+  await mainToTop(page);
+  const button = page.getByRole("button", { name });
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  const area = await page.locator("main").boundingBox();
+  const navTop = (await page.locator("nav").last().boundingBox()).y;
+  const top = area.y;
+  const bottom = Math.min(area.y + area.height, navTop);
+  expect.soft(box.y, `${name}: top edge ${box.y} inside the window that starts at ${top}`).toBeGreaterThanOrEqual(top - 1);
+  expect.soft(box.y + box.height, `${name}: bottom edge ${box.y + box.height} above where the window ends (${bottom})`).toBeLessThanOrEqual(bottom + 1);
+  // Reachable by moving the layout, not by shrinking the target: the buttons are 52.5 px
+  // tall, and a fit bought by making them smaller is not a fix.
+  expect.soft(box.height, `${name}: tap target is ${box.height} px tall`).toBeGreaterThanOrEqual(52);
+}
+
+async function markYellowingThenFirstCrackOnScreen(page) {
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expectOnScreen(page, "Mark Yellowing");
+  await expectOnScreen(page, "PAUSE");
+  await page.getByRole("button", { name: "Mark Yellowing" }).click();
+  // The button FIRST crack is marked with, the one a thumb must not have to hunt for.
+  await expectOnScreen(page, "Mark First crack");
+  await expectOnScreen(page, "PAUSE");
+}
+
+test("live chart opens itself: at 390x844 the next-phase button is still reachable with the chart open", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  await startProbeRoast(page);
+  await markYellowingThenFirstCrackOnScreen(page);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+// Following a profile adds the "Next step" strip (and, when the ghost cannot draw, a
+// caption row in the chart header), and that is what Case roasts with, with a bean picked
+// in Setup. Measured on the layout before the strip moved below the run controls (chart
+// open, bean picked, main at scrollTop 0, window ends at 762): ghost drawn, Mark Yellowing
+// and PAUSE bottom 795.75 (34 px under the nav); ghost caption showing, 812.75. Both
+// variants run, because the caption is 17 px taller.
+const profileRoastVariants = [
+  { name: "ghost drawn", roasts: [fixtureRoast, sourceWithCurve], caption: false },
+  { name: "ghost caption", roasts: [fixtureRoast], caption: true },
+];
+
+// `bean` is what startProbeRoast takes: `true` for the fixture bean, or an inventory bean of
+// its own (a name that wraps, say).
+async function startProfileRoast(page, variant, bean = true) {
+  await startProbeRoast(page, { profile: fixtureGhostProfile, roasts: variant.roasts, bean });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  if (variant.caption) {
+    await expect(ghostCaption(page)).toBeVisible();
+  } else {
+    await expect.poll(() => ghostLength(page), { timeout: 15_000 }).toBeGreaterThan(100);
+    await expect(ghostCaption(page)).toHaveCount(0);
+  }
+}
+
+for (const variant of profileRoastVariants) {
+  test(`live chart opens itself: at 390x844 the next-phase button is still reachable with the chart open, following a profile (${variant.name})`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant);
+    await markYellowingThenFirstCrackOnScreen(page);
+    expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  });
+
+  // The strip is reference, so it sits BELOW the run controls: nothing that comes and goes
+  // (it leaves on PAUSE and when the last planned step passes) may sit above a control.
+  test(`live chart opens itself: the Next step strip sits below the run controls (${variant.name})`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant);
+    await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+    const strip = page.getByText("Next step", { exact: true }).locator("xpath=..");
+    await expect(strip).toBeVisible();
+    await mainToTop(page);
+    const mark = await page.getByRole("button", { name: "Mark Yellowing" }).boundingBox();
+    const pause = await page.getByRole("button", { name: "PAUSE" }).boundingBox();
+    const s = await strip.boundingBox();
+    const controlsBottom = Math.max(mark.y + mark.height, pause.y + pause.height);
+    expect(s.y, `Next step strip top edge ${s.y} below the run controls' bottom edge ${controlsBottom}`).toBeGreaterThanOrEqual(controlsBottom - 0.5);
+  });
+}
+
+// RL-039: PAUSE swaps itself for RESUME in the same spot, and the thumb that tapped it is
+// still on it. With the Next step strip above the controls, PAUSE unmounted the strip and
+// RESUME jumped 56 px up under the thumb (measured 743.25 -> 687.25). Below the controls
+// it cannot.
+test("live chart opens itself: PAUSE then RESUME keeps the run button where the thumb was", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  await startProfileRoast(page, profileRoastVariants[0]);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  const running = await boxAtTop(page, "PAUSE");
+  await page.getByRole("button", { name: "PAUSE" }).click();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+  const paused = await boxAtTop(page, "RESUME");
+  expect(
+    Math.abs(paused.y - running.y),
+    `the run button's top edge: ${running.y} as PAUSE, ${paused.y} as RESUME`
+  ).toBeLessThanOrEqual(1);
+});
+
+// ---------------------------------------------------------------------------
+// RL-063, last fix round. Six more things the chart's auto-open has to get right, each
+// with a failing-first test. The thread through all of them is RL-039: whatever is under
+// the thumb at the moment a thing happens must not move.
+//
+//   D6  a hold may only end at a stage change, never at a tap. The readout's slot and
+//       the chart stay from START until SAVE ROAST / DISCARD -- not until COOLING START --
+//       so the tap on "Mark Cooling start" does not collapse ~170 px of hero when the
+//       feed is already down. COOLING START keeps meaning "stop" only for recording and
+//       for the auto-open.
+//   D7  a chart the FEED took away is not brought back by the feed: the readout returns
+//       collapsed, and the roaster taps it when ready.
+//   D9  the held readout is legible in both themes.
+//   D10 the bean's name is shown ONCE (the setup bar above the hero), so the controls
+//       below do not depend on how long the name is.
+//   D11 the next roast starts with no chart even when the last one ended with it open.
+// ---------------------------------------------------------------------------
+
+// D6. The feed is already down when the roaster marks Yellowing, First crack and Cooling
+// start. Each tap is made with the thumb on the Mark button; the last one used to unmount
+// the chart and the readout (the hold ended at COOLING START), which pulled the run row and
+// SAVE ROAST ~170 px up as the thumb lifted. Now the hero is the same size before and
+// after the tap, and the chart and the readout are still there.
+test("live chart opens itself: with the feed lost, marking through COOLING START keeps the chart and the readout, and the run row does not move", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  feed.dropBridge();
+  const readout = liveReadout(page);
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(readout, "the chart is up, so the readout reports it open").toHaveAttribute("aria-expanded", "true");
+
+  // Where the run button sits with the feed lost, before any mark.
+  const start = await heroReading(page, "PAUSE");
+
+  // The first two marks: the run button stays, the chart and the cue stay.
+  for (const label of ["Yellowing", "First crack"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+    await expect.soft(liveChartSurface(page).first(), `chart after Mark ${label}`).toBeVisible();
+    await expect.soft(readout, `readout after Mark ${label}`).toHaveAttribute("data-state", "feed-lost");
+    const now = await heroReading(page, "PAUSE");
+    expect.soft(Math.abs(now.run.y - start.run.y), `PAUSE top edge after Mark ${label}: ${start.run.y} -> ${now.run.y}`).toBeLessThanOrEqual(0.5);
+  }
+
+  // The controls still read Fan -> Heat -> Temp, with the feed gone and the chart up.
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+
+  // The tap that matters. PAUSE is about to become RESUME in the same place.
+  const before = await heroReading(page, "PAUSE");
+  await page.getByRole("button", { name: "Mark Cooling start" }).click();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+  await expect(saveRoastButton(page)).toBeVisible();
+  const after = await heroReading(page, "RESUME");
+
+  // Still mounted: the chart (with the curve it has) and the readout, still saying Feed lost.
+  // (Soft, so a failure here still reports how far everything moved, below.)
+  await expect.soft(liveChartSurface(page).first(), "the chart is still up after Mark Cooling start").toBeVisible();
+  expect.soft((await liveTempSubpaths(page)).length, "the curve is still drawn").toBeGreaterThan(0);
+  await expect.soft(readout, "the readout is still in its slot after Mark Cooling start").toHaveCount(1);
+  await expect.soft(readout).toHaveAttribute("data-state", "feed-lost");
+  await expect.soft(readout, "and still reports the chart open").toHaveAttribute("aria-expanded", "true");
+
+  // Nothing under the thumb moved: the run button is where PAUSE was, and the hero ends
+  // where it did, so everything below it (the timeline, SAVE ROAST) is where it was.
+  // The run button's top edge is exact. The hero's bottom edge is exact to 2 px, not to
+  // 0.5: PAUSE has a 1 px border and the ember RESUME that replaces it does not, so the
+  // row is 2 px shorter by itself (measured 52.5 -> 50.5, with or without a chart). That is
+  // not this item's; the collapse it is here to catch is ~170 px.
+  const RESUME_HAS_NO_BORDER = 2;
+  expect.soft(Math.abs(after.run.y - before.run.y), `run button top edge: ${before.run.y} as PAUSE, ${after.run.y} as RESUME`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before the tap, ${after.heroBottom} after`).toBeLessThanOrEqual(RESUME_HAS_NO_BORDER + 0.5);
+  expect.soft(Math.abs(after.hero.height - before.hero.height), `hero height: ${before.hero.height} before, ${after.hero.height} after`).toBeLessThanOrEqual(RESUME_HAS_NO_BORDER + 0.5);
+
+  // And it stays put: neither the chart nor SAVE ROAST drifts while the feed is still down.
+  // (One line per KIND of problem, the first time it is seen, not one per check.)
+  await mainToTop(page);
+  const save0 = await saveRoastButton(page).boundingBox();
+  const drifted = {};
+  for (let i = 0; i < 6; i++) {
+    await page.waitForTimeout(500);
+    if ((await liveChartSurface(page).count()) === 0) drifted.chart ??= `check ${i} after the tap: the chart is gone`;
+    await mainToTop(page);
+    const save = await saveRoastButton(page).boundingBox();
+    if (Math.abs(save.y - save0.y) > 0.5) drifted.save ??= `check ${i}: SAVE ROAST top edge ${save0.y} -> ${save.y}`;
+  }
+  expect.soft(Object.values(drifted), "nothing drifted in the 3 s after the tap").toEqual([]);
+});
+
+// D6, the reload half. A reload after COOLING START with the feed not yet back: the chart
+// is not auto-opened (nothing about a finished roast wants it), but the readout's slot is
+// still the probe's, so when the feed answers a moment later the chrono does not change
+// size and SAVE ROAST does not move. (Before: the slot was released at COOLING START, the
+// chrono was 60 px while the feed was away and 46 px when it answered -- SAVE ROAST
+// jumped ~14 px up about a second after the reload.)
+test("live chart opens itself: a reload after COOLING START, then the feed answering, does not move SAVE ROAST", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("COOLING START");
+
+  // The bridge app is away for the reload (a new socket sees nobody on the channel).
+  feed.dropBridge();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(liveChartSurface(page)).toHaveCount(0);
+  // Wait for the hook to settle into "no bridge" so the "before" reading is the lost look.
+  await page.waitForTimeout(2500);
+  await mainToTop(page);
+  const lost = await saveRoastButton(page).boundingBox();
+  const lostHero = await heroSection(page).boundingBox();
+
+  feed.restoreBridge();
+  await expect(beanTempReadout(page)).toBeVisible({ timeout: 15_000 });
+  await mainToTop(page);
+  const live = await saveRoastButton(page).boundingBox();
+  const liveHero = await heroSection(page).boundingBox();
+
+  expect.soft(Math.abs(live.y - lost.y), `SAVE ROAST top edge: ${lost.y} with the feed away, ${live.y} once it answered`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(liveHero.height - lostHero.height), `hero height: ${lostHero.height} with the feed away, ${liveHero.height} once it answered`).toBeLessThanOrEqual(0.5);
+  // The chart still did not open, and does not a moment later either.
+  for (let i = 0; i < 4; i++) {
+    await expect(liveChartSurface(page), `chart, check ${i} after the feed answered`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// D7, path A. The feed is lost, the roaster marks through COOLING START, and THEN the
+// bridge app comes back (it was restarted for the next roast, say). Nothing may appear or
+// move for it: the chart that was held stays as it was, and a chart that was not there
+// does not drop in over SAVE ROAST. Whichever the build does with the chart at COOLING
+// START, the feed's return changes nothing on screen.
+test("live chart opens itself: a feed that comes back after COOLING START moves nothing", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  feed.dropBridge();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(page.getByRole("button", { name: "RESUME" })).toBeVisible();
+
+  const before = await heroReading(page, "RESUME");
+  const chartsBefore = await liveChartSurface(page).count();
+  await mainToTop(page);
+  const saveBefore = await saveRoastButton(page).boundingBox();
+
+  feed.restoreBridge();
+  // ~4 s of a returned feed (a sample every 500 ms): the first look and the later ones.
+  // One line per KIND of problem, the first time it is seen, not one per check.
+  const moved = {};
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(500);
+    const charts = await liveChartSurface(page).count();
+    if (charts !== chartsBefore) moved.chart ??= `check ${i} after the bridge came back: ${charts} chart surfaces (${chartsBefore} before)`;
+    const now = await heroReading(page, "RESUME");
+    if (Math.abs(now.run.y - before.run.y) > 0.5) moved.run ??= `check ${i}: RESUME top edge ${before.run.y} -> ${now.run.y}`;
+    if (Math.abs(now.heroBottom - before.heroBottom) > 0.5) moved.hero ??= `check ${i}: hero bottom edge ${before.heroBottom} -> ${now.heroBottom}`;
+    await mainToTop(page);
+    const save = await saveRoastButton(page).boundingBox();
+    if (Math.abs(save.y - saveBefore.y) > 0.5) moved.save ??= `check ${i}: SAVE ROAST top edge ${saveBefore.y} -> ${save.y}`;
+  }
+  expect(Object.values(moved), "the feed coming back moved nothing").toEqual([]);
+});
+
+// D7, path B. START while the bridge is up but the device is silent (it publishes no
+// usable bean temp: the hook reads bridge-only, "No signal"). The chart can be drawn, so it
+// opens at START -- empty. Then the bridge app quits before a single sample lands: the roast
+// has no curve and no signal, so the FEED takes the chart away. When the bridge comes back,
+// say 20 s in, the feed must not bring the chart back with it: the readout returns collapsed
+// ("Bean temp"), Mark Yellowing does not move, and the roaster taps the readout when ready.
+test("live chart opens itself: a chart the feed took away is not brought back by the feed", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page, { silent: true, feedOptions: { bt: () => NaN } });
+  const readout = liveReadout(page);
+
+  // The setup: a bridge with no usable sample -- bridge-only, and the chart opened at START.
+  await expect(readout).toHaveAttribute("data-state", "no-signal", { timeout: 10_000 });
+  await expect(readout, "the chart opened by itself at START (it can be drawn: bridge-only)").toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+
+  // The bridge app quits before a sample: no signal and no curve. The feed takes the chart.
+  feed.dropBridge();
+  await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+  await expect(liveChartSurface(page), "nothing to draw and no signal: the chart is gone").toHaveCount(0);
+  await expect(readout).toHaveAttribute("aria-expanded", "false");
+  await expect(readout, "nothing to draw, so nothing to toggle").toBeDisabled();
+
+  // About 20 s in. This is the "before": where the thumb is resting.
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  const before = await heroReading(page, "PAUSE");
+
+  // The bridge app comes back, with a device that now reads.
+  feed.set(250);
+  feed.restoreBridge();
+  await expect(readout).toHaveAttribute("data-state", "live", { timeout: 15_000 });
+  for (let i = 0; i < 8; i++) {
+    await expect(readout, `readout, check ${i} after the feed came back`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, check ${i} after the feed came back`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} before the feed came back, ${after.run.y} after`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before, ${after.heroBottom} after`).toBeLessThanOrEqual(0.5);
+
+  // The roaster can still open it when ready, and it has the readings that arrived.
+  await readout.click();
+  await expect(readout).toHaveAttribute("aria-expanded", "true");
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+// D9. The held look is quiet by design: no error red, no number, the label and the dashes
+// all in the muted ink. Quiet must not mean illegible. WCAG, on the real stack of layers
+// under the text (paintedInk): the 9 px label and the 12 px RoR dash need 4.5:1, the 34 px
+// dash is large text and needs 3:1. Light is the thin one (the muted ink clears 4.5:1 there
+// by well under 0.5), so one edit to the light --text-muted would fail silently without
+// this. The held-vs-live cue does NOT lean on colour (muted vs ember is ~1.2:1): it is the
+// dashes and the still dot, which is asserted elsewhere.
+for (const theme of ["dark", "light"]) {
+  test(`live chart opens itself: ${theme} theme held readout contrast`, async ({ page }) => {
+    test.setTimeout(90_000);
+    // An init script, so the theme is in place for every load startProbeRoast makes.
+    await page.addInitScript((t) => window.localStorage.setItem("roastlogs_theme", t), theme);
+    const feed = await startProbeRoast(page);
+    await expect(page.getByText("00:03", { exact: true })).toBeVisible({ timeout: 10_000 });
+    feed.dropBridge();
+    const readout = liveReadout(page);
+    await expect(readout).toHaveAttribute("data-state", "feed-lost", { timeout: 15_000 });
+
+    const label = await paintedInk(readout.getByText("Feed lost", { exact: true }));
+    const value = await paintedInk(readout.getByText(/^--\s*°F$/));
+    const ror = await paintedInk(readout.getByText(/^--\s*°\/min$/));
+
+    expect(label.dataTheme, "the theme under test is actually applied").toBe(theme);
+    for (const [name, ink] of [["label", label], ["value dash", value], ["RoR dash", ror]]) {
+      expect(ink.fg, `${name} resolves to --text-muted`).toEqual(ink.muted);
+      expect(ink.fg, `${name} is muted, not the error colour`).not.toEqual(ink.error);
+    }
+    // The bars. The value dash is large text only because it really is large.
+    expect(value.size, "the value dash is large text (34 px), which is what makes 3:1 the bar").toBeGreaterThanOrEqual(24);
+    expect(label.ratio, `Feed lost label ${label.size}px: contrast ${label.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    expect(ror.ratio, `RoR dash ${ror.size}px: contrast ${ror.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    expect(value.ratio, `value dash ${value.size}px: contrast ${value.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+  });
+}
+
+// D10. E2: the bean's name is shown ONCE, in the setup summary bar right above the hero.
+// A second copy in the hero's chrono cluster (two or three lines when the name wraps) made
+// the controls below it depend on the bean: a two-line name put Mark Yellowing under the
+// nav. Pin it directly, since the geometry tests only fail when the name is long.
+test("live chart opens itself: the bean's name is shown once, above the hero, not in it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { bean: true });
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  const hero = heroSection(page);
+  await expect(hero).toBeVisible();
+  await expect(hero, "the live hero does not repeat the bean's name").not.toContainText(fixtureBean.name);
+  // Control: the name is on the Roast tab exactly once -- in the setup bar, above the hero.
+  const name = page.getByText(fixtureBean.name, { exact: true });
+  await expect(name, "the name is shown, once").toHaveCount(1);
+  await mainToTop(page);
+  const n = await name.boundingBox();
+  const h = await hero.boundingBox();
+  expect(n.y + n.height, `the name (bottom ${n.y + n.height}) sits above the hero (top ${h.y})`).toBeLessThanOrEqual(h.y + 0.5);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+// D10, the geometry variant: a bean whose name wraps at 390 px. Seeded through
+// startProbeRoast's init script, so e2e/fixtures.js stays as it is. The controls must stay
+// above the nav however long the name is -- with the ghost drawn and with the caption
+// (17 px taller), the two layouts Case roasts with.
+const wrappingBean = { ...fixtureBean, name: "Ethiopia Yirgacheffe Konga Natural G1 Heirloom Reserve Lot 7" };
+for (const variant of profileRoastVariants) {
+  test(`live chart opens itself: a bean whose name wraps at 390px does not push the controls under the nav (${variant.name})`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+    test.setTimeout(90_000);
+    await startProfileRoast(page, variant, wrappingBean);
+    // The name is long enough to need two lines or more at this width: the setup bar
+    // above the hero truncates it to one, so it can only wrap if it is repeated in the hero.
+    // (Soft and instant: the geometry below must be judged on its own too, and a wait here
+    // would let the roast clock run past the 0:02 it expects.)
+    expect.soft(await heroSection(page).innerText(), "the live hero does not repeat the bean's name").not.toContain(wrappingBean.name);
+    await markYellowingThenFirstCrackOnScreen(page);
+    expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  });
+}
+
+// D11. The re-arm is per roast, and it has two halves: the once-flag, and the chart
+// itself closing. The next-roast test above closes the chart on roast 1, so it can only
+// see the flag. Here roast 1 ends with the chart OPEN. On to roast 2: the chart must not
+// still be open under the preheat screen (an empty chart above the giant BT), and a roast 2
+// that starts with the feed down must not get roast 1's open chart when the bridge returns.
+test("live chart opens itself: the next roast starts with no chart, though the last one ended with it open", async ({ page }) => {
+  test.setTimeout(120_000);
+  const feed = await startProbeRoast(page);
+  const readout = beanTempReadout(page);
+  // Roast 1 opens itself and is LEFT open (the precondition).
+  await expect(readout).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible({ timeout: 10_000 });
+  for (const label of ["Yellowing", "First crack", "Cooling start"]) {
+    await page.getByRole("button", { name: `Mark ${label}` }).click();
+  }
+  await expect(liveChartSurface(page).first(), "roast 1 ends with the chart open").toBeVisible();
+  await saveRoastButton(page).click();
+  await skipDropWeight(page);
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  expect(await roastCount(page)).toBe(2); // the fixture roast and roast 1
+
+  // Roast 2, same page session: Setup -> Begin preheat. The preheat screen is up (its
+  // Target button), and there is no chart under it, now or a moment later.
+  await page.getByRole("button", { name: /Manual roast/ }).click();
+  await page.getByRole("button", { name: "Begin preheat" }).click({ timeout: 15_000 });
+  const target = page.getByRole("button", { name: /^Target \d+/ });
+  await expect(target, "the preheat screen is showing").toBeVisible();
+  for (let i = 0; i < 6; i++) {
+    await expect(liveChartSurface(page), `chart under the preheat screen, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+
+  // Roast 2 started with the bridge away. The preheat takeover ends the instant the reading
+  // does ("an instrument can't read a number it doesn't have"), then START.
+  feed.dropBridge();
+  await expect(target).toHaveCount(0, { timeout: 15_000 });
+  await page.getByRole("button", { name: "START", exact: true }).click();
+  await expect(page.getByRole("button", { name: "PAUSE" })).toBeVisible();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost");
+  await expect(page.getByText("00:20", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(liveChartSurface(page)).toHaveCount(0);
+
+  // The bridge comes back at 0:20: the readout appears live and collapsed, the chart does not.
+  const before = await heroReading(page, "PAUSE");
+  feed.restoreBridge();
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "live", { timeout: 15_000 });
+  for (let i = 0; i < 6; i++) {
+    await expect(liveReadout(page), `readout, check ${i} after the bridge came back`).toHaveAttribute("aria-expanded", "false");
+    await expect(liveChartSurface(page), `chart, check ${i} after the bridge came back`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} -> ${after.run.y}`).toBeLessThanOrEqual(0.5);
+});
+
+// ---------------------------------------------------------------------------
+// RL-058..061: the first-crack countdown ("FC IN m:ss") on the live chart.
+//
+// Case's rules, as tests:
+//   - ONE chip, top-left over the temp plot, on a Razzo roast only (an SR540 or an OEM
+//     tube has no probe, so no chart and no chip at all);
+//   - it starts when caramelization starts -- the 340 F rising crossing -- and runs until
+//     FIRST CRACK is marked or the roast is dropped. Below 340 F, and before the roast's
+//     first four minutes on a hot probe, there is nothing to count;
+//   - the NUMBER NEVER DISAPPEARS once it has started: a flat, falling or negative rate of
+//     rise makes it HELD (a frozen estimate, muted, tagged HELD), a feed that dies makes it
+//     HELD, a paused clock makes it HELD -- never blank, never gone. Only a roast that has
+//     never had a usable rate shows the no-rate dashes in its place;
+//   - past 400 F with no first crack marked it counts UP ("400°  +0:12").
+// The maths is unit-tested (src/lib/fcEta.test.js) and so is the chart model that feeds it
+// (LiveRoastChart.plan.test.js, fcEta.backtest.test.js). These tests are about what reaches the
+// screen from a real feed. The bridge is faked at the websocket (mockRoastLinkFeed), so the real
+// useLiveRoast, ladder and chart run unmodified. The mock publishes every 500 ms: a step of x
+// per sample is 2x per second, which is why the ramps below are steps of 0.25-0.5.
+//
+// A real clock is the only clock these have, so a ramp that has to reach 340 F and settle
+// takes ~25 s of wall time: the ramp specs set their own 90 s timeout. Everything that does not
+// need the climb itself is seeded instead -- the curve and log a roast keeps in storage,
+// reloaded (paused, as every reload comes back) and RESUMEd.
+// Functional assertions only: the visual baselines for the chip are Case's Mac job (pending).
+// ---------------------------------------------------------------------------
+
+const fcEta = (page) => page.getByTestId("fc-eta");
+const NO_ETA = "\u2013:\u2013\u2013"; // src/lib/fcEta.js NO_ETA: the number a chip with no rate yet shows
+const resumeRoast = (page) => page.getByRole("button", { name: "RESUME", exact: true }).click();
+
+// Seconds out of a chip's text ("FC IN 1:55" -> 115, "400° +0:12" -> 12, ">9:59" -> 599, the no-rate dashes -> null).
+const etaSecs = (text) => {
+  const m = /(\d+):(\d\d)/.exec(text);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+const oneLine = (text) => String(text).replace(/\s+/g, " ").trim();
+// The bean temp the live readout is showing, or null.
+const readoutBt = async (page) => {
+  const m = /Bean temp\s*(\d+)/i.exec(await liveReadout(page).innerText()); // innerText is the uppercased label
+  return m ? Number(m[1]) : null;
+};
+
+// A bridge reading that climbs `perTick` degrees every sample, remembering when each reading
+// went out. The chip's answer is checked against THIS, not against a formula: the feed's own
+// clock is the independent truth, and measuring the rate off it keeps the check honest if the
+// 500 ms timer is stretched on a busy machine.
+function rampFeed(from, perTick) {
+  const trace = [];
+  const read = (n) => {
+    const bt = from + perTick * n;
+    trace.push({ at: Date.now(), bt });
+    return bt;
+  };
+  read.latest = () => trace[trace.length - 1].bt;
+  // The reading that had gone out by wall-clock `at`.
+  read.btAt = (at) => {
+    let found = trace[0];
+    for (const e of trace) if (e.at <= at) found = e;
+    return found.bt;
+  };
+  // Degrees per second over the `spanMs` before `at`.
+  read.perSecond = (at, spanMs = 8000) => (read.btAt(at) - read.btAt(at - spanMs)) / (spanMs / 1000);
+  return read;
+}
+
+// Follow the chip every 500 ms until `done(snapshot)`, failing the instant it is not in the DOM.
+// A chip that blinks out for one poll between two states is the exact bug "the number never
+// disappears" is about, and expect(...).toHaveAttribute's own retrying would sail over it.
+async function followChip(page, { done, within, what }) {
+  const started = Date.now();
+  const seen = [];
+  for (;;) {
+    const found = await fcEta(page).evaluateAll((els) =>
+      els.map((el) => ({ state: el.getAttribute("data-state"), text: el.innerText })));
+    expect(found.length, `${what}: the chip must stay in the DOM; last seen: ${seen.slice(-4).join(" | ") || "nothing"}`).toBe(1);
+    const snap = found[0];
+    seen.push(`${snap.state} "${oneLine(snap.text)}"`);
+    if (done(snap)) return snap;
+    expect(Date.now() - started, `${what}: not reached within ${within} ms; saw ${seen.slice(-6).join(" | ")}`).toBeLessThan(within);
+    await page.waitForTimeout(500);
+  }
+}
+
+// The roast the stored-session tests reload: a Razzo roast 2:10 in whose bean temp climbed
+// 30 F/min (0.5 F/s) from 290 F -- past 340 F at 1:40, 355 F now. Newest-first log, like the
+// live one: the ladder's CARAMELIZATION entry, a Yellowing mark and the opening row.
+const fcCurve = (from, perSec, seconds) =>
+  Array.from({ length: seconds + 1 }, (_, t) => ({ t, bt: Math.round((from + perSec * t) * 10) / 10 }));
+const FC_START_ROW = { type: "start_settings", t: 0, heat: "7", fan: "4", temp: "", label: "Start" };
+const FC_COUNTING_CURVE = fcCurve(290, 0.5, 130);
+const FC_COUNTING_LOG = [
+  { type: "phase", label: "CARAMELIZATION", t: 100, temp: "340" },
+  { type: "phase", label: "YELLOWING", t: 50, temp: "" },
+  FC_START_ROW,
+];
+// The same, further on: 280 F climbing 0.96 F/s reads 400 F at 2:05 and 404.8 F at 2:10.
+const FC_OVERDUE_CURVE = fcCurve(280, 0.96, 130);
+const FC_OVERDUE_LOG = [
+  { type: "phase", label: "CARAMELIZATION", t: 63, temp: "340" },
+  { type: "phase", label: "YELLOWING", t: 50, temp: "" },
+  FC_START_ROW,
+];
+
+// A Razzo roast `elapsed` s in, reloaded from storage: PAUSED, the chart open by itself, the
+// bridge still publishing. `bt` is what it reads: by default the last stored reading, so the
+// paused clock's one curve point is not moved by the feed. Returns the feed controller.
+async function openFcRoast(page, { curve = FC_COUNTING_CURVE, log = FC_COUNTING_LOG, elapsed = 130, bt = () => curve[curve.length - 1].bt, theme = null } = {}) {
+  if (theme) await page.evaluate((t) => window.localStorage.setItem("roastlogs_theme", t), theme);
+  const feed = await openLiveChart(page, { profileRaw: "null", live: { elapsedSeconds: elapsed, roastLog: log }, liveCurve: curve, bt });
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  return feed;
+}
+
+// The seeded roast, running again with the climb carried on at 0.5 F/s from where it stopped.
+async function resumeClimbing(page, feed, from = 355) {
+  await resumeRoast(page);
+  const ramp = rampFeed(from, 0.25);
+  feed.set(ramp);
+  return ramp;
+}
+
+// Anything that makes a sound or a buzz, counted from page load. The preheat screen owns the only
+// chime and spoken phrase there are; the chip is silent (iOS has no haptics either). A silent
+// "warm-up" utterance (volume 0) is how the app unlocks speech on a tap, so it is not counted.
+const countSounds = () => {
+  window.__sounds = 0;
+  const bump = () => { window.__sounds += 1; };
+  if (window.speechSynthesis) {
+    const speak = window.speechSynthesis.speak.bind(window.speechSynthesis);
+    window.speechSynthesis.speak = (u) => { if (u && u.volume !== 0) bump(); return speak(u); };
+  }
+  if (window.OscillatorNode) {
+    const start = window.OscillatorNode.prototype.start;
+    window.OscillatorNode.prototype.start = function (...a) { bump(); return start.apply(this, a); };
+  }
+  if (navigator.vibrate) {
+    const vibrate = navigator.vibrate.bind(navigator);
+    navigator.vibrate = (...a) => { bump(); return vibrate(...a); };
+  }
+};
+
+test("fc-eta: counts down once the climb passes 340 F, and the number is the real one", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(countSounds);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const chip = fcEta(page);
+
+  // From START the bean climbs 1 F/s (60 F/min) from 330 F. Below 340 F there is nothing to count.
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(chip, "no chip below 340 F").toHaveCount(0);
+  await page.waitForTimeout(2500);
+  await expect(chip, "still none, a few degrees under 340 F").toHaveCount(0);
+  const before = await heroReading(page, "PAUSE");
+
+  // Past 340 F, with a rate of rise it can trust: counting.
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+  await expect(chip).toHaveText(/FC IN\s*\d:\d\d/);
+  await expect(chip).toHaveAttribute("role", "timer");
+  await expect(chip).toHaveAttribute("aria-label", /^First crack in about \d+ (minutes?|seconds?)/);
+  await expect(chip.getByText("HELD"), "a counting chip carries no HELD tag").toHaveCount(0);
+  await page.evaluate(() => { window.__sounds = 0; }); // from the first moment of counting
+
+  // ONE countdown: no second copy in the hero, and no 400 F target line on the chart (the
+  // reference lines it does have, the live edge and plan markers, are all vertical).
+  await expect(page.getByText("FC IN"), "one chip, no copy in the hero").toHaveCount(1);
+  const horizontalLines = await liveChartSurface(page).first().evaluate((surface) =>
+    [...surface.querySelectorAll(".recharts-reference-line-line")].filter((l) => l.getAttribute("y1") === l.getAttribute("y2")).length);
+  expect(horizontalLines, "no 400 F line on the chart").toBe(0);
+
+  // The number is the bean's: within 10 s of (400 F - BT) / the feed's own rate of rise.
+  const readings = [];
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now();
+    const snap = await chip.evaluate((el) => ({ state: el.getAttribute("data-state"), text: el.innerText }));
+    const at = (t0 + Date.now()) / 2;
+    readings.push({ ...snap, shown: etaSecs(snap.text), truth: (400 - ramp.btAt(at)) / ramp.perSecond(at), bt: ramp.btAt(at) });
+    await page.waitForTimeout(2000);
+  }
+  for (const r of readings) {
+    expect(r.state, `chip "${oneLine(r.text)}" with the bean at ${r.bt} F`).toBe("counting");
+    expect(
+      Math.abs(r.shown - r.truth),
+      `chip says ${r.shown} s, the feed says ${r.truth.toFixed(1)} s to 400 F (bean ${r.bt} F)`
+    ).toBeLessThanOrEqual(10);
+  }
+  // ...and it is counting DOWN: the last reading is lower than the first.
+  expect(readings[2].shown).toBeLessThan(readings[0].shown);
+
+  // An overlay: nothing under the thumb moved when it arrived (RL-039), and the dials still
+  // read Fan -> Heat -> Temp.
+  const after = await heroReading(page, "PAUSE");
+  expect.soft(Math.abs(after.run.y - before.run.y), `PAUSE top edge: ${before.run.y} before the chip, ${after.run.y} with it`).toBeLessThanOrEqual(0.5);
+  expect.soft(Math.abs(after.heroBottom - before.heroBottom), `hero bottom edge: ${before.heroBottom} before, ${after.heroBottom} with the chip`).toBeLessThanOrEqual(0.5);
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+  expect(await page.evaluate(() => window.__sounds), "the chip makes no sound").toBe(0);
+});
+
+// A GUARD, not a failing-first test: the temperature ladder (App.js LADDER_STEPS) logs
+// CARAMELIZATION on the rising 340 F crossing, and the chip starts from that same number
+// (CARAMELIZATION_F in src/lib/roastPhases.js, which the ladder now imports). Pointing the
+// ladder at the shared constant must not move it: still 330 F for the approach, 340 F for the phase.
+test("fc-eta: the temperature ladder still logs CARAMELIZATION at 340 F, the number the chip starts from", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  feed.set(rampFeed(330, 0.5)); // 1 F/s: past 340 F about 10 s in
+  const phase = async (label) =>
+    JSON.parse((await stored(page, "live_roastLog")) || "[]").find((e) => e && e.type === "phase" && e.label === label);
+  await expect.poll(() => phase("CARAMELIZATION"), { timeout: 30_000 }).toBeTruthy();
+  const entry = await phase("CARAMELIZATION");
+  expect(entry.temp, "CARAMELIZATION is stamped at 340 F").toBe("340");
+  expect(entry.t, `logged at ${entry.t} s`).toBeGreaterThanOrEqual(5);
+  expect(entry.t).toBeLessThanOrEqual(25);
+  expect((await phase("CARAMELIZATION APPROACH")).temp, "the approach is still 330 F").toBe("330");
+});
+
+test("fc-eta: when the climb stalls the number is HELD, never gone", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(fcEta(page)).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+
+  // The bean stalls exactly where it is. The rate of rise slides under 5 F/min over the next
+  // ~12 s; the chip goes HELD and keeps a number from the last rate it trusted.
+  const stalledAt = ramp.latest();
+  const stalledAtMs = Date.now();
+  feed.set(() => stalledAt);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 25_000, what: "the climb stalls" });
+  expect(held.text, "HELD is tagged").toContain("HELD");
+  expect(held.text, "a number, not the no-rate dashes").toMatch(/\d:\d\d/);
+  expect(held.text).not.toContain(NO_ETA);
+
+  // It stays held, polled every 500 ms until the ramp has left every window the rate of rise is
+  // read through (+/-15 s each side, so ~30 s after the stall): the locator count stays at 1
+  // throughout and there is always a number. Until then the value may still MOVE -- the rate it
+  // divides by is the last good run, and which run that is keeps changing while the stall settles
+  // into the windows behind it (measured on the chart model: 6:24, 7:07, 7:51, then 6:00, 6:32 ...
+  // before it lands on 8:32 and stays). Moving is allowed; going missing or going blank is not.
+  const stalledFor = () => Date.now() - stalledAtMs;
+  while (stalledFor() < 32_000) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `${Math.round(stalledFor() / 1000)} s after the stall` });
+    expect(snap.state, `${Math.round(stalledFor() / 1000)} s after the stall`).toBe("held");
+    expect(snap.text, `a number ${Math.round(stalledFor() / 1000)} s after the stall`).toMatch(/\d:\d\d/);
+    expect(snap.text).not.toContain(NO_ETA);
+    await page.waitForTimeout(500);
+  }
+  // Settled, it is a frozen estimate, not a clock: the same value for the next 4 s.
+  const settled = [];
+  for (let i = 0; i < 8; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `settled, check ${i}` });
+    settled.push(oneLine(snap.text));
+    await page.waitForTimeout(500);
+  }
+  expect(new Set(settled).size, `frozen once settled: ${settled.join(" | ")}`).toBe(1);
+  await expect(fcEta(page).getByText("HELD")).toBeVisible();
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+test("fc-eta: a falling bean temp keeps the chip up, held, even below 340 F", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await startProbeRoast(page);
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  const ramp = rampFeed(330, 0.5);
+  feed.set(ramp);
+  await expect(fcEta(page)).toHaveAttribute("data-state", "counting", { timeout: 45_000 });
+
+  // The heat is cut: the bean falls 2 F/s, i.e. a rate of rise of -120 F/min.
+  const from = ramp.latest();
+  feed.set((n) => from - 1.0 * n);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 20_000, what: "the bean temp turns" });
+  expect(held.text, "a number from the last good rate").toMatch(/\d:\d\d/);
+
+  // ...and keeps falling, through 340 F and a few degrees under it: the chip is LATCHED by the
+  // crossing already in the stored curve, so dipping back under 340 F does not take it away.
+  let bt = await readoutBt(page);
+  let under = 0;
+  const seen = [];
+  for (let i = 0; i < 40 && under < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `falling, check ${i}` });
+    bt = await readoutBt(page);
+    seen.push(`${bt} F ${snap.state} "${oneLine(snap.text)}"`);
+    expect(snap.state, `falling at ${bt} F`).toBe("held");
+    expect(snap.text, `a number at ${bt} F, not the no-rate dashes`).toMatch(/\d:\d\d/);
+    expect(snap.text).not.toContain(NO_ETA);
+    if (bt !== null && bt < 338) under++;
+    await page.waitForTimeout(500);
+  }
+  expect(under, `the bean fell under 338 F while the chip was watched: ${seen.slice(-6).join(" | ")}`).toBeGreaterThanOrEqual(6);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+});
+
+test("fc-eta: past 400 F with no first crack marked it counts UP from the 400 F second", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openFcRoast(page, { curve: FC_OVERDUE_CURVE, log: FC_OVERDUE_LOG, bt: () => 405 });
+  const chip = fcEta(page);
+  const accent = () => page.evaluate(() => (getComputedStyle(document.documentElement).getPropertyValue("--accent-text").match(/[\d.]+/g) || []).map(Number));
+
+  // PAUSED first (as every reload comes back, RL-036): the clock is stopped, so the +m:ss is a
+  // frozen number and must not look like a live count-up -- the same held look as a held
+  // estimate (muted numeral, HELD tag, no ring), carrying the overdue chip's own text.
+  await expect(chip).toHaveAttribute("data-state", "held");
+  await expect(chip.getByText("HELD", { exact: true }), "a paused overdue chip is tagged HELD").toBeVisible();
+  await expect(chip.getByText("400\u00b0", { exact: true }), "it keeps its own label").toBeVisible();
+  await expect(chip).toHaveText(/400\u00b0\s*HELD\s*\+\d+:\d\d/);
+  await expect(chip, "its own words, not the waiting-for-a-rate ones").toHaveAttribute("aria-label", /held while the roast is paused/);
+  expect(await chip.getAttribute("aria-label")).not.toMatch(/steady rate/);
+  expect(await chip.evaluate((el) => getComputedStyle(el).boxShadow), "a paused overdue chip has no ring").toBe("none");
+  const pausedNumeral = await paintedInk(chip.getByText(/^\+\d+:\d\d$/));
+  expect(pausedNumeral.fg, "the paused numeral is the muted ink, not the live accent").toEqual(pausedNumeral.muted);
+  const frozen = oneLine(await chip.innerText());
+  await page.waitForTimeout(2500);
+  expect(oneLine(await chip.innerText()), "the paused +m:ss does not tick").toBe(frozen);
+  expect(etaSecs(frozen), `paused chip "${frozen}"`).toBeGreaterThanOrEqual(3);
+
+  // RUNNING again, the live overdue look comes back: accent numeral, ring, no HELD.
+  await resumeRoast(page);
+  await expect(chip).toHaveAttribute("data-state", "overdue", { timeout: 10_000 });
+  const liveNumeral = await paintedInk(chip.getByText(/^\+\d+:\d\d$/));
+  expect(liveNumeral.fg, "the running numeral is the accent ink").toEqual(await accent());
+  expect(liveNumeral.fg).not.toEqual(liveNumeral.muted);
+  await expect(chip).toHaveText(/400\u00b0\s*\+\d+:\d\d/);
+  await expect(chip.getByText("400\u00b0", { exact: true })).toBeVisible();
+  await expect(chip).toHaveAttribute("aria-label", /reached 400 degrees/);
+  await expect(chip.getByText("HELD"), "past 400 F is a fact, not a held estimate").toHaveCount(0);
+  // The 400 F second is 2:05 and the clock restarts at 2:10: a few seconds up, not minutes.
+  const first = etaSecs(await chip.innerText());
+  expect(first, `+${first} s`).toBeGreaterThanOrEqual(3);
+  expect(first).toBeLessThanOrEqual(25);
+  // It counts up with the clock, and keeps its ring: overdue is marked by more than colour.
+  await page.waitForTimeout(4000);
+  const later = etaSecs(await chip.innerText());
+  expect(later - first, `+${first} s, then +${later} s four seconds on`).toBeGreaterThanOrEqual(3);
+  expect(later - first).toBeLessThanOrEqual(6);
+  expect(await chip.evaluate((el) => getComputedStyle(el).boxShadow), "overdue has a ring").not.toBe("none");
+  // The bean has not moved (405 F, flat): the chip is still counting up, not falling to HELD.
+  await expect(chip).toHaveAttribute("data-state", "overdue");
+});
+
+
+// The latch lives in STORED data, so a reload loses nothing: the CARAMELIZATION entry in the
+// log, or -- when that entry is missing (the ladder was not running across the crossing) -- the
+// 340 F rising crossing in the stored curve itself. Each variant must be the ONLY thing that can
+// start the chip, or it proves nothing: the entry variant's curve (a bridge that joined at 1:42
+// with the bean at 341 F, climbing to 355 F by 2:10) has no rising crossing of 340 F in it, and
+// the clock (2:10) is short of the 4:00 late-join window, so the entry is the one starter. The
+// control after the loop is the same roast without the entry.
+const FC_NO_CROSSING_CURVE = fcCurve(341, 0.5, 28).map((p) => ({ ...p, t: p.t + 102 }));
+const FC_COUNTING_LOG_NO_ENTRY = FC_COUNTING_LOG.filter((e) => e.label !== "CARAMELIZATION");
+for (const variant of [
+  { name: "its CARAMELIZATION entry", curve: FC_NO_CROSSING_CURVE, log: FC_COUNTING_LOG },
+  { name: "the 340 F crossing in the stored curve alone (no log entry)", curve: FC_COUNTING_CURVE, log: FC_COUNTING_LOG_NO_ENTRY },
+]) {
+  test(`fc-eta: a reload mid-roast brings the chip back from ${variant.name}: held while paused, counting once running`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const feed = await openFcRoast(page, { curve: variant.curve, log: variant.log });
+    const chip = fcEta(page);
+    // Paused: the clock is frozen, so the chip says HELD on the frozen value.
+    await expect(chip).toHaveCount(1);
+    await expect(chip).toHaveAttribute("data-state", "held");
+    await expect(chip.getByText("HELD")).toBeVisible();
+    await expect(chip).toHaveAttribute("aria-label", /held/i);
+    // 355 F climbing 30 F/min is 90 s from 400 F: a number, not the no-rate dashes.
+    const text = await chip.innerText();
+    expect(text).not.toContain(NO_ETA);
+    const shown = etaSecs(text);
+    expect(shown, `chip "${oneLine(text)}"`).toBeGreaterThanOrEqual(70);
+    expect(shown).toBeLessThanOrEqual(110);
+    // Running again, the same stored climb counts.
+    await resumeClimbing(page, feed);
+    await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+    await expect(chip.getByText("HELD")).toHaveCount(0);
+  });
+}
+
+// The control for the entry variant above: the SAME stored roast (same curve, same clock, bean
+// at 355 F and climbing) minus the CARAMELIZATION entry has no chip, paused or running. Nothing
+// else in it starts the chip, so the entry alone is what brings it back.
+test("fc-eta: the entry variant's roast without its CARAMELIZATION entry has no chip (control)", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page, { curve: FC_NO_CROSSING_CURVE, log: FC_COUNTING_LOG_NO_ENTRY });
+  const chip = fcEta(page);
+  expect(Math.round(await readoutBt(page)), "the bean is hot (355 F)").toBe(355);
+  for (let i = 0; i < 4; i++) {
+    await expect(chip, `paused, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+  await resumeClimbing(page, feed);
+  await expect.poll(async () => Number(await stored(page, "live_elapsedSeconds")), { timeout: 10_000, message: "the clock is running" }).toBeGreaterThanOrEqual(133);
+  for (let i = 0; i < 4; i++) {
+    await expect(chip, `running, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// FIRST CRACK answers the question the chip asks. It goes at once, not at the next tick, and
+// the chart (held until SAVE ROAST) stays up so the absence is the chip's rule and not an
+// unmounted chart.
+test("fc-eta: Mark First crack takes the chip away at once, and it stays away through the drop", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Mark First crack" }).click();
+  await expect(chip).toHaveCount(0, { timeout: 2_000 });
+  await expect.poll(async () => (await stored(page, "live_roastLog")) || "").toContain("FIRST CRACK");
+  await expect(liveChartSurface(page).first(), "the chart is still up").toBeVisible();
+  for (let i = 0; i < 6; i++) {
+    await expect(chip, `chip, check ${i} after First crack`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+
+  await page.getByRole("button", { name: "Mark Cooling start" }).click();
+  await expect(saveRoastButton(page)).toBeVisible();
+  await expect(liveChartSurface(page).first(), "the chart is held mounted until SAVE").toBeVisible();
+  await expect(chip).toHaveCount(0);
+});
+
+// DROP answers it too: a roast dropped without a First crack mark (it can only be reached by
+// editing the log, but the model must not care) loses the chip. The first load is the control:
+// the same roast, not yet dropped, has one.
+test("fc-eta: a roast dropped without a first crack mark loses the chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openFcRoast(page);
+  await expect(fcEta(page), "control: the same roast, not dropped, shows the chip").toHaveCount(1);
+
+  const dropped = [{ type: "phase", label: "COOLING START", t: 130, temp: "355" }, ...FC_COUNTING_LOG];
+  await page.evaluate(() => window.localStorage.setItem("live_coolingStartTime", "130"));
+  await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: dropped } });
+  // A reload after COOLING START does not open the chart by itself: tap the readout.
+  await ensureLiveChartOpen(page);
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  for (let i = 0; i < 4; i++) {
+    await expect(fcEta(page), `chip, check ${i} after DROP`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// ---- the chip is a Razzo thing: nothing to count without a probe -----------------------------
+
+// An SR540 and an OEM tube have no probe: the app hides the chart, the readout and the live
+// reading altogether (gatedLiveRoast), even with a bridge publishing. The stored climb and
+// CARAMELIZATION entry here would start the chip on a Razzo (see the reload test above), so
+// the absence is the equipment gate's doing and not a lack of data.
+for (const setup of ["oem-tube", "sr540"]) {
+  test(`fc-eta: ${setup} has no probe: no chart, no chip, whatever the bridge publishes and the log says`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await mockRoastLinkFeed(page, { bt: () => 355 });
+    await page.evaluate((s) => window.localStorage.setItem("roastlogs_equipment", s), setup);
+    await page.evaluate((c) => window.localStorage.setItem("live_curve", JSON.stringify(c)), FC_COUNTING_CURVE);
+    await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: FC_COUNTING_LOG } });
+    await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+    await resumeRoast(page);
+    // Past a few ticks of the running clock, so "none" is not just "too early".
+    await expect(page.getByText("02:14", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(fcEta(page)).toHaveCount(0);
+    await expect(liveChartSurface(page)).toHaveCount(0);
+    await expect(beanTempReadout(page)).toHaveCount(0);
+
+    // Control: the bridge IS live -- Settings' bridge card reads the ungated signal.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByText("Receiving bean temp from the RoastLink.")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Roast", exact: true }).click();
+    await expect(fcEta(page)).toHaveCount(0);
+  });
+}
+
+// The next three are GUARDS: with no chip built they pass trivially, and they are here so the
+// chip, once built, is not started by the wrong thing. Each one pairs the absence with proof
+// that the roast is really running on a live chart.
+test("fc-eta: a Razzo roast started with the bridge away has no chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedDown: true });
+  await expect(page.getByText("00:08", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost");
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+test("fc-eta: a flat 250 F feed after START has no chip", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedOptions: { bt: () => 250 } });
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("00:12", { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await readoutBt(page), "the probe really reads 250 F").toBe(250);
+  expect((await liveTempSubpaths(page)).length, "and the Temp line is drawn").toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// Only a RISING crossing of 340 F starts the chip. A probe that is already at 350 F when the
+// roast starts (the preheat sat above 340) has crossed nothing, and the 4:00 turnaround window
+// has not passed: counting then would put a bogus number up at 0:00.
+test("fc-eta: a probe already at 350 F at START shows no chip in the first minutes", async ({ page }) => {
+  test.setTimeout(90_000);
+  await startProbeRoast(page, { feedOptions: { bt: () => 350 } });
+  await expect(liveChartSurface(page).first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("00:12", { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await readoutBt(page), "the probe really reads 350 F").toBe(350);
+  expect((await liveTempSubpaths(page)).length, "and the Temp line is drawn").toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) {
+    await expect(fcEta(page), `chip, check ${i}`).toHaveCount(0);
+    await page.waitForTimeout(500);
+  }
+});
+
+// ...but a bridge that only joined AFTER the 4:00 window, already hot, cannot have a crossing to
+// show, and the chip must not wait for one. It starts when the clock passes 4:00 with the bean
+// at or above 340 F, and with no rate of rise ever seen it shows the no-rate dashes, HELD.
+test("fc-eta: a bridge that joined late, already hot, starts the chip once the clock passes 4:00 -- and not before", async ({ page }) => {
+  test.setTimeout(90_000);
+  const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 200 })); // 3:20 .. 3:45, flat 350 F
+  await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 225, bt: () => 350 });
+  const chip = fcEta(page);
+  await expect(chip, "3:45 in, paused: the window has not passed").toHaveCount(0);
+
+  await resumeRoast(page);
+  const clock = async () => Number(await stored(page, "live_elapsedSeconds"));
+  const deadline = Date.now() + 40_000;
+  let c = await clock();
+  while (c < 241 && Date.now() < deadline) {
+    // Read the clock BEFORE the chip: the chip can only be newer than the clock it is judged by.
+    if (c <= 238) expect(await chip.count(), `chip at ${c} s, before the 4:00 window`).toBe(0);
+    await page.waitForTimeout(500);
+    c = await clock();
+  }
+  expect(c, "the clock got past 4:00").toBeGreaterThanOrEqual(241);
+  await expect(chip).toHaveAttribute("data-state", "held", { timeout: 5_000 });
+  await expect(chip).toContainText(NO_ETA);
+  await expect(chip.getByText("HELD")).toBeVisible();
+});
+
+// A start found by that late-join rule is in no log entry and no stored crossing: the chart
+// keeps it in memory (the previous build's nextPrior). The heat is cut and the bean falls back
+// under 340 F -- the rule no longer holds, and without the memory the chip would simply go.
+test("fc-eta: a start found by the late-join rule survives the bean falling back under 340 F", async ({ page }) => {
+  test.setTimeout(90_000);
+  const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 213 })); // 3:33 .. 3:58, flat 350 F
+  const feed = await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 238, bt: () => 350 });
+  const chip = fcEta(page);
+  await expect(chip, "3:58, paused: the window has not passed").toHaveCount(0);
+
+  await resumeRoast(page);
+  await expect(chip).toHaveAttribute("data-state", "held", { timeout: 15_000 });
+  await expect(chip).toContainText(NO_ETA);
+
+  // The bean falls 2 F/s, through 340 F and a few degrees under it.
+  feed.set((n) => 350 - 1.0 * n);
+  let under = 0;
+  const seen = [];
+  for (let i = 0; i < 40 && under < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `falling, check ${i}` });
+    const bt = await readoutBt(page);
+    seen.push(`${bt} F ${snap.state}`);
+    expect(snap.state, `falling at ${bt} F`).toBe("held");
+    if (bt !== null && bt < 338) under++;
+    await page.waitForTimeout(500);
+  }
+  expect(under, `the bean fell under 338 F while the chip was watched: ${seen.slice(-6).join(" | ")}`).toBeGreaterThanOrEqual(6);
+});
+
+// ...and that memory is the APP's, not the chart component's. The Roast tab unmounts when the
+// user visits another tab, and the readout's toggle unmounts and remounts the chart; a start the
+// chart kept only in its own per-mount ref would be gone on return, and with the bean now under
+// 340 F (no crossing in the curve, no log entry) the chip would not come back. Both ways out are
+// checked with the bean already under 340 F when the chart is rebuilt.
+for (const route of [
+  {
+    name: "a visit to History and back",
+    async away(page) {
+      await page.getByRole("button", { name: "History" }).click();
+      await expect(fcEta(page), "the Roast tab (chip included) is unmounted while History is up").toHaveCount(0);
+      await page.getByRole("button", { name: "Roast", exact: true }).click();
+    },
+  },
+  {
+    name: "closing the chart on the readout and opening it again",
+    async away(page) {
+      await liveReadout(page).click();
+      await expect(liveChartSurface(page), "the readout's toggle closed the chart").toHaveCount(0);
+      await expect(fcEta(page)).toHaveCount(0);
+      await liveReadout(page).click();
+    },
+  },
+]) {
+  test(`fc-eta: a start found by the late-join rule survives ${route.name}, with the bean under 340 F`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const joined = fcCurve(350, 0, 25).map((p) => ({ ...p, t: p.t + 213 })); // 3:33 .. 3:58, flat 350 F
+    const feed = await openFcRoast(page, { curve: joined, log: [FC_START_ROW], elapsed: 238, bt: () => 350 });
+    const chip = fcEta(page);
+    await resumeRoast(page);
+    await expect(chip, "the late-join start: no log entry and no crossing, only the clock and a hot bean").toHaveAttribute("data-state", "held", { timeout: 15_000 });
+    await expect(chip).toContainText(NO_ETA);
+
+    // The heat is cut and the bean falls 2 F/s until it is well under 340 F. The mounted chart
+    // keeps the chip (the test above); this is the control that the bean really is under.
+    feed.set((n) => 350 - 1.0 * n);
+    await expect.poll(() => readoutBt(page), { timeout: 25_000, message: "the bean fell under 335 F" }).toBeLessThan(335);
+    await expect(chip, "control: still up with the chart mounted").toHaveCount(1);
+
+    await route.away(page);
+
+    await expect(liveChartSurface(page).first(), "the chart is back").toBeVisible({ timeout: 10_000 });
+    expect(await readoutBt(page), "the bean is still under 340 F when the chart is rebuilt").toBeLessThan(340);
+    await expect(chip, "the chip came back with the chart").toHaveCount(1, { timeout: 5_000 });
+    await expect(chip).toHaveAttribute("data-state", "held");
+    for (let i = 0; i < 6; i++) {
+      const snap = await followChip(page, { done: () => true, within: 1, what: `after returning, check ${i}` });
+      expect(snap.state).toBe("held");
+      await page.waitForTimeout(500);
+    }
+  });
+}
+
+// ---- the chip survives the feed -------------------------------------------------------------
+
+// The bridge app quits mid-roast. A reading is only a measurement while it is fresh: for the
+// 6 s the chart carries it (LIVE_GAP_S) the chip may still count; after that it is HELD, on a
+// measured bean temp and the last rate it trusted -- present, frozen, and not a 400/rate
+// answer made out of a missing reading.
+test("fc-eta: the bridge quitting mid-roast keeps the chip: counting while the last reading is fresh, then held and frozen", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  feed.dropBridge();
+  const droppedAt = Date.now();
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 14_000, what: "the bridge quits" });
+  const after = Date.now() - droppedAt;
+  expect(after, "a late sample is not an outage: held only after the 6 s the chart carries a reading").toBeGreaterThanOrEqual(4_000);
+  expect(held.text, "a number from a measured reading").toMatch(/\d:\d\d/);
+  expect(held.text).not.toContain(NO_ETA);
+
+  // The hook calls it Feed lost; the chart and the chip both stay.
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "feed-lost", { timeout: 10_000 });
+  await expect(liveChartSurface(page).first()).toBeVisible();
+  const settled = [];
+  for (let i = 0; i < 12; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `feed lost, check ${i}` });
+    expect(snap.state, `feed lost, check ${i}`).toBe("held");
+    settled.push(snap.text);
+    await page.waitForTimeout(500);
+  }
+  expect(new Set(settled.map(oneLine)).size, `frozen while the feed is gone: ${settled.map(oneLine).join(" | ")}`).toBe(1);
+});
+
+// A reload with the bridge not answering (Connecting, then Feed lost) keeps the chart mounted
+// with the curve it has, and the chip with it: the roast is under way, only the feed is not.
+// Running with no samples, the stored reading ages out and the chip goes HELD.
+test("fc-eta: a reload with the bridge not answering keeps the chip up, through Connecting", async ({ page }) => {
+  test.setTimeout(90_000);
+  const feed = await mockRoastLinkFeed(page, { announce: false });
+  feed.dropBridge(); // no presence and no samples, for the reload below and every socket after it
+  await page.evaluate((c) => {
+    window.localStorage.setItem("roastlogs_equipment", "razzo-v5t");
+    window.localStorage.setItem("live_curve", JSON.stringify(c));
+  }, FC_COUNTING_CURVE);
+  await reloadMidRoast(page, { profileRaw: "null", live: { elapsedSeconds: 130, roastLog: FC_COUNTING_LOG } });
+  await expect(liveChartSurface(page).first(), "the stored curve is on screen").toBeVisible({ timeout: 5_000 });
+  await expect(liveReadout(page)).toHaveAttribute("data-state", "connecting");
+  const chip = fcEta(page);
+  await expect(chip, "the chip is up while Connecting").toHaveCount(1);
+  await expect(chip).toHaveAttribute("data-state", "held");
+
+  await resumeRoast(page);
+  const held = await followChip(page, { done: (s) => s.state === "held", within: 12_000, what: "running with no samples" });
+  expect(held.text).toMatch(/\d:\d\d/);
+  for (let i = 0; i < 6; i++) {
+    const snap = await followChip(page, { done: () => true, within: 1, what: `no samples, check ${i}` });
+    expect(snap.state).toBe("held");
+    await page.waitForTimeout(500);
+  }
+});
+
+// ---- how it looks: ink, size, place -----------------------------------------------------------
+
+// The state under test, reached from a stored roast: HELD is the paused reload as it comes back;
+// COUNTING is the same roast running with the climb carried on; OVERDUE is a roast past 400 F,
+// running.
+async function reachChipState(page, state, theme) {
+  if (state === "overdue") {
+    await openFcRoast(page, { curve: FC_OVERDUE_CURVE, log: FC_OVERDUE_LOG, bt: () => 405, theme });
+    await resumeRoast(page);
+  } else {
+    const feed = await openFcRoast(page, { theme });
+    if (state === "counting") await resumeClimbing(page, feed);
+  }
+  await expect(fcEta(page)).toHaveAttribute("data-state", state, { timeout: 10_000 });
+}
+
+// Legibility, in both themes, per state (WCAG, against the real stack of layers under the text:
+// paintedInk). The 9 px label and HELD tag are small text and need 4.5:1; the 24 px numeral is
+// large text and needs 3:1. Ink is by token, not by eye: the label is always the muted ink; the
+// numeral is the accent ink while the chip is counting or overdue, and the SAME muted ink as the
+// held readout while it is held. Dark is the roomy one; light is the thin one (ember on paper
+// is 4.2:1), so one edit to a light-theme token would fail silently without this.
+for (const theme of ["dark", "light"]) {
+  for (const state of ["held", "counting", "overdue"]) {
+    test(`fc-eta: ${theme} theme, ${state}: label, numeral${state === "held" ? " and HELD tag" : ""} are legible and in the right ink`, async ({ page }) => {
+      test.setTimeout(90_000);
+      await reachChipState(page, state, theme);
+      const chip = fcEta(page);
+      const label = await paintedInk(chip.getByText(state === "overdue" ? "400°" : "FC IN", { exact: true }));
+      const numeral = await paintedInk(chip.getByText(/^(\d+:\d\d|>9:59|\+\d+:\d\d|–:––)$/).first());
+      const accent = await page.evaluate(() => (getComputedStyle(document.documentElement).getPropertyValue("--accent-text").match(/[\d.]+/g) || []).map(Number));
+
+      expect(label.dataTheme, "the theme under test is actually applied").toBe(theme);
+      expect(accent.length, "--accent-text resolves to an rgb triple").toBe(3);
+
+      // The sizes the bars below are chosen by.
+      expect(label.size, "label is 9 px").toBe(9);
+      expect(numeral.size, "numeral is 24 px").toBe(24);
+
+      // Label: always muted, never the error ink.
+      expect(label.fg, "label resolves to --text-muted").toEqual(label.muted);
+      expect(label.fg, "label is not the error ink").not.toEqual(label.error);
+      expect(label.ratio, `label ${label.size}px: contrast ${label.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+
+      // Numeral: accent while it is a live countdown, muted while held.
+      expect(numeral.fg, "numeral is not the error ink").not.toEqual(numeral.error);
+      if (state === "held") {
+        expect(numeral.fg, "held numeral resolves to --text-muted, like the held readout").toEqual(numeral.muted);
+      } else {
+        expect(numeral.fg, `${state} numeral resolves to --accent-text`).toEqual(accent);
+        expect(numeral.fg).not.toEqual(numeral.muted);
+      }
+      expect(numeral.ratio, `numeral ${numeral.size}px: contrast ${numeral.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+
+      // HELD is tagged in words as well as in colour, and only while held.
+      if (state === "held") {
+        await expect(chip.getByText("HELD", { exact: true }), "a held chip is tagged in words").toBeVisible();
+        const tag = await paintedInk(chip.getByText("HELD", { exact: true }));
+        expect(tag.size, "HELD tag is 9 px").toBe(9);
+        expect(tag.fg, "HELD tag resolves to --text-muted").toEqual(tag.muted);
+        expect(tag.ratio, `HELD tag ${tag.size}px: contrast ${tag.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      } else {
+        await expect(chip.getByText("HELD")).toHaveCount(0);
+      }
+
+      // Overdue is marked by more than colour: a ring. The other two states have none.
+      const ring = await chip.evaluate((el) => getComputedStyle(el).boxShadow);
+      if (state === "overdue") expect(ring, "overdue has a ring").not.toBe("none");
+      else expect(ring, `${state} has no ring`).toBe("none");
+
+      // Held is the one look that does not tick, so it is the one that can be photographed.
+      // The baseline is Case's Mac job (this container cannot produce it): visual-skipped here.
+      if (state === "held") await fullPageShot(page, theme === "light" ? "fc-eta-held-light.png" : "fc-eta-held.png");
+    });
+  }
+}
+
+// The chip is a read-out laid over the plot, not a control: a finger or a mouse scanning the
+// chart under it must still get the tooltip, and the tooltip must paint over the chip.
+test("fc-eta: hovering the chip still reads the chart under it, and the tooltip is painted above it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "hover needs a mouse pointer; the iphone project is touch only");
+  await openFcRoast(page);
+  const chip = fcEta(page);
+  await expect(chip).toBeVisible();
+  expect(await chip.evaluate((el) => getComputedStyle(el).pointerEvents), "the chip passes pointer events through").toBe("none");
+
+  const box = await chip.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const names = page.locator(".recharts-tooltip-item-name");
+  await expect(names.first(), "the tooltip shows with the pointer on the chip").toBeVisible();
+  expect(await names.allInnerTexts()).toContain("Temp");
+
+  // Painted above: the tooltip's z-index beats the chip's (an unset one counts as 0).
+  const z = await page.evaluate(() => ({
+    tooltip: getComputedStyle(document.querySelector(".recharts-tooltip-wrapper")).zIndex,
+    chip: getComputedStyle(document.querySelector('[data-testid="fc-eta"]')).zIndex,
+  }));
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  expect(Number.isFinite(Number(z.tooltip)), `tooltip z-index is set: ${z.tooltip}`).toBe(true);
+  expect(num(z.tooltip), `tooltip z-index ${z.tooltip} above the chip's ${z.chip}`).toBeGreaterThan(num(z.chip));
+});
+
+// Phone geometry (390 x 844): the chip sits in the top-left corner of the PLOT -- right of the
+// temp axis, left of the RoR axis, within 12 px of the plot's top edge -- and, being an overlay,
+// takes no room: Mark First crack and PAUSE are as reachable as with no chip (the same bar as the
+// chart-open geometry tests above).
+test("fc-eta: at 390x844 the chip sits inside the plot's top-left corner and Mark First crack stays reachable", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "phone geometry: only the iphone project is 390x844 with touch");
+  test.setTimeout(90_000);
+  const feed = await openFcRoast(page);
+  await resumeClimbing(page, feed);
+  const chip = fcEta(page);
+  await expect(chip).toHaveAttribute("data-state", "counting", { timeout: 10_000 });
+
+  const surface = await liveChartSurface(page).first().boundingBox();
+  const box = await chip.boundingBox();
+  const TEMP_AXIS = 42;
+  const RIGHT_INSET = 44; // the 40 px RoR axis and the chart's 4 px right margin
+  expect(box.x, `chip left ${box.x} right of the temp axis (${surface.x + TEMP_AXIS})`).toBeGreaterThanOrEqual(surface.x + TEMP_AXIS - 1);
+  expect(box.x + box.width, `chip right ${box.x + box.width} inside the plot (${surface.x + surface.width - RIGHT_INSET})`).toBeLessThanOrEqual(surface.x + surface.width - RIGHT_INSET + 1);
+  expect(box.y - surface.y, `chip top ${box.y - surface.y} px under the plot top`).toBeGreaterThanOrEqual(-1);
+  expect(box.y - surface.y).toBeLessThanOrEqual(12);
+  // One row, about 30 x 105 px (ux-ui): the label beside the numeral, not over it. A taller,
+  // wider chip would cover a good part of the plot's top-left, where the curve is by then.
+  expect(box.height, `chip is ${box.height} px tall: one row, not label over numeral`).toBeLessThanOrEqual(36);
+  expect(box.width, `chip is ${box.width} px wide`).toBeLessThanOrEqual(130);
+
+  await expectOnScreen(page, "Mark First crack");
+  await expectOnScreen(page, "PAUSE");
+  expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
 });
