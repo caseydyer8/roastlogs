@@ -1,5 +1,6 @@
 import React from "react";
 import { planFromRoast, formatMMSS } from "../lib/profileFromRoast";
+import { ownEntry } from "../lib/roastPhases";
 
 // The two moments a finished roast can feed a profile:
 //
@@ -16,8 +17,8 @@ function planSummary(roast) {
   const { steps, milestones } = planFromRoast(roast);
   const bits = [`${steps.length} ${steps.length === 1 ? "step" : "steps"}`];
   milestones
-    .filter((m) => SHORT[m.label])
-    .forEach((m) => bits.push(`${SHORT[m.label]} ${formatMMSS(m.t)}`));
+    .filter((m) => ownEntry(SHORT, m.label))
+    .forEach((m) => bits.push(`${ownEntry(SHORT, m.label)} ${formatMMSS(m.t)}`));
   return bits.join(" · ");
 }
 

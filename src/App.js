@@ -11,11 +11,16 @@ import RoastLinkStatusCard from "./components/RoastLinkStatusCard";
 import LiveRoastChart from "./components/charts/LiveRoastChart";
 import PreheatScreen, { primeAudio } from "./components/PreheatScreen";
 import RoastSetupScreen, { profileStartStep } from "./components/RoastSetupScreen";
-import { beanStock } from "./lib/inventory";
+import { beanStock, beanHistory, sameHistorySets } from "./lib/inventory";
 import ProfileFromRoastSheet from "./components/ProfileFromRoastSheet";
+import RoastDropWeightModal from "./components/RoastDropWeightModal";
+import { parseRoastedWeight } from "./lib/roastedWeight";
 import { profileFromRoast, planFromRoast, resolveProfilePlan, stepsFromRoast, milestonesFromRoast, roastDeviatedFromPlan, planDiffers, isFollowableProfile, lastStepBefore } from "./lib/profileFromRoast";
 import { EQUIPMENT_OPTIONS, equipmentLabel, equipmentHasProbe } from "./lib/equipment";
 import { LIVE_GAP_S } from "./lib/liveSample";
+import { csvEscape } from "./lib/csv";
+import { storedPreheatTarget } from "./lib/preheatTarget";
+import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
 function BrandMark({ className = "h-6 w-6" }) {
@@ -776,8 +781,6 @@ function curveTempAt(curve, t) {
   return best ? Math.round(best.bt) : null;
 }
 
-const LIVE_CURVE_KEY = "live_curve";
-
 function readStoredCurve() {
   try {
     const raw = localStorage.getItem(LIVE_CURVE_KEY);
@@ -860,6 +863,14 @@ function readStoredRoasts(rev) {
 }
 
 function App() {
+  // A roast saved just before a reload is finished, not paused (RL-043): settle
+  // that BEFORE any state below hydrates from live_*, or it would come back as a
+  // paused roast with SAVE ROAST showing. A lazy initialiser rather than an
+  // effect for exactly that reason; it is safe to run twice.
+  // The roasts blob can run to several MB of curves, so it is only parsed when a
+  // marker is actually there to be checked against it.
+  React.useState(() => (localStorage.getItem(SAVED_ROAST_KEY) === null ? false : settleSavedLiveSession(readStoredRoasts())));
+
   // Live bean temp from the RoastLink bridge (Supabase Realtime). Additive:
   // renders nothing until a bridge is publishing; manual entry is untouched.
   const liveRoast = useLiveRoast();
@@ -973,7 +984,7 @@ function App() {
   // Preheat target lives with the device prefs, not per-roast -- only the
   // Razzo has a target at all, so one value covers it.
   const [preheatTarget, setPreheatTarget] = React.useState(
-    () => Number(localStorage.getItem("roastlogs_preheat_target")) || 315
+    () => storedPreheatTarget(localStorage.getItem("roastlogs_preheat_target"))
   );
   React.useEffect(() => {
     localStorage.setItem("roastlogs_preheat_target", String(preheatTarget));
@@ -1046,6 +1057,12 @@ function App() {
   // { mode: "saved", roast, followedId } right after a save, or
   // { mode: "history", roast, profileId } after editing a roast a profile came from.
   const [profileSheet, setProfileSheet] = React.useState(null);
+  // The roasted-weight prompt that follows SAVE ROAST (RL-025): null, or
+  // { roast, firstSync, sheet } -- the roast as handleStop saved it, that save's
+  // cloud write (the weight's own write queues behind it), and the profileSheet
+  // to open once the weight has been answered (null when none is due). React
+  // state at the root, so the 2 s live-session clear and tab flip leave it open.
+  const [dropWeight, setDropWeight] = React.useState(null);
 
   const [profiles, setProfiles] = React.useState(() => {
     try {
@@ -1464,31 +1481,9 @@ function App() {
 
   // keepSetup: after a SAVE the last bean / weight / level carry forward so a
   // back-to-back roast is a click-through. Discard still wipes everything.
+  // The key list lives in lib/liveSession.js: boot finishes this same clear.
   const clearLiveSession = ({ keepSetup = false } = {}) => {
-    const keys = [
-      ...(keepSetup ? [] : ["live_beanName", "live_beanId", "live_greenWeightGrams", "live_targetRoastLevel"]),
-      "live_startingHeat",
-      "live_startingFan",
-      "live_startingTemp",
-      "live_elapsedSeconds",
-      "live_devSeconds",
-      "live_firstCrackTime",
-      "live_coolingStartTime",
-      "live_roastLog",
-      "live_profileFollowing",
-      "live_currentProfileStepIdx",
-      // The curve was persisted so a mid-roast reload keeps its trace, but
-      // Discard never cleared it. startRoast masked that by resetting curveRef
-      // on a fresh roast -- until the timeline gained a curve fallback for
-      // missing temperatures, which would then paint a DISCARDED roast's
-      // readings onto the next one after a reload. Same-account bleed, not a
-      // cross-account leak: the "live_" prefix purge already covers sign-in.
-      LIVE_CURVE_KEY,
-      // Vestigial: read at startup but never written since an old version.
-      // Purged so a stale copy on a long-lived install cannot hydrate.
-      "live_adjustments"
-    ];
-    keys.forEach(k => localStorage.removeItem(k));
+    liveSessionKeys({ keepSetup }).forEach(k => localStorage.removeItem(k));
     curveRef.current = [];
     setCurvePointCount(0);
     turnaroundLowRef.current = null;
@@ -1663,6 +1658,7 @@ function App() {
     setSetupOpen(false); // collapse the setup card so the hero leads the screen
 
     if (!roastStarted) {
+      clearSavedMarker(); // a new roast has not been saved
       curveRef.current = [];
       setCurvePointCount(0);
       writeStoredCurve([]);
@@ -1689,6 +1685,13 @@ function App() {
   };
 
   const handleStop = () => {
+    // Saved already? SAVE ROAST stays on screen until the live session clears
+    // 2 s later, so a second tap would otherwise add the same roast again under
+    // a new id. The marker counts only for a roast still in History that this
+    // very session saved (lib/liveSession.js): anything stale saves as normal.
+    const stamp = liveSessionStamp(elapsedSeconds, roastLog.length);
+    if (liveSessionAlreadySaved(stamp, readStoredRoasts())) return;
+
     setIsTimerRunning(false);
 
     const newRoast = {
@@ -1737,10 +1740,11 @@ function App() {
     }
 
     localStorage.setItem("roasts", JSON.stringify([newRoast, ...existingRoasts]));
+    markRoastSaved(newRoast.id, stamp); // after the write: never names a roast that is not there
 
     // Supabase Sync
     setSyncStatus('syncing');
-    syncRoastToSupabase(newRoast).then(success => {
+    const firstSync = syncRoastToSupabase(newRoast).then(success => {
       setSyncStatus(success ? 'success' : 'error');
     });
 
@@ -1748,12 +1752,17 @@ function App() {
     // dismissing the sheet can never lose anything. Offered when there is a plan
     // to save, and -- for a roast that followed a profile -- only if the hands
     // actually departed from it (milestones drift run to run and would nag).
+    let sheet = null;
     if (stepsFromRoast(newRoast).length > 0 && (!profileFollowing || roastDeviatedFromPlan(newRoast, profileFollowing))) {
       const followed = profileFollowing
         ? (profiles || []).find((p) => String(p.id) === String(profileFollowing.id))
         : null;
-      setProfileSheet({ mode: "saved", roast: newRoast, followedId: followed ? followed.id : null });
+      sheet = { mode: "saved", roast: newRoast, followedId: followed ? followed.id : null };
     }
+
+    // One question at a time: the roasted weight first (RL-025), then the sheet,
+    // if one is due (answerDropWeight opens it). Both come after the write above.
+    setDropWeight({ roast: newRoast, firstSync, sheet });
 
     // saveSuccess outlives the clear: at +2s the tab flips to Setup, which shows
     // "saved -- setup carried forward" until +6s.
@@ -2147,25 +2156,64 @@ function App() {
     setSelectedTastingNote(null);
   };
 
-  // cascade: also deletes every roast/tasting linked to this bean by name, not just the bean profile.
-  const handleDeleteBean = (bean, cascade) => {
-    if (prefillBean && prefillBean.name === bean.name) {
+  // cascade: also deletes the roasts/tastings that belong to THIS bag (matched by bag id, see
+  // beanHistory), not every one that shares its name. History tied only to a name that another
+  // bag also carries stays. Must run before the bean is dropped from "beans" below: the bean
+  // list is how beanHistory knows the name is shared.
+  //
+  // renderedHistory is the beanHistory the delete modal was DRAWN from -- the set its button
+  // label promised. A cascade re-reads storage at the tap (the launch sync may have written
+  // since the last render), and if the bag's own sets no longer match what was shown it deletes
+  // NOTHING, redraws the modal with the fresh counts, and lets the user decide again. A cascade
+  // called without one is refused the same way: only a confirmed set may be deleted.
+  const handleDeleteBean = (bean, cascade, renderedHistory) => {
+    if (!bean) return;
+    // Parsed ONCE: these are the very arrays handed to beanHistory, and beanHistory returns
+    // those same objects, so the local filter below can match by object identity.
+    const existingRoasts = cascade ? readLocalJSON("roasts") : null;
+    const existingBrews = cascade ? readLocalJSON("tastingNotes") : null;
+    // The set the cascade would delete NOW: it feeds the local filter and the cloud deletes.
+    const matched = cascade ? beanHistory(bean, { roasts: existingRoasts, tastings: existingBrews, beans: readLocalJSON("beans") }) : null;
+
+    if (cascade && !sameHistorySets(renderedHistory, matched)) {
+      // Before anything else changes: no prefill cleared, nothing removed, modal stays open.
+      // Never reopens a modal that has already closed (a stale double tap).
+      setConfirmDelete((cur) => (cur ? { ...bean } : cur));
+      showToast("Your history changed while this was open. Check the counts and tap again.", "error");
+      return;
+    }
+
+    // A Setup prefill for a DIFFERENT, same-named bag is not this bag's to drop: match on id
+    // when the bag has one, on name only for a bag with no saved record.
+    if (prefillBean && (bean.id ? Number(prefillBean.id) === Number(bean.id) : prefillBean.name === bean.name)) {
       setPrefillBean(null);
     }
 
+    // Setup carries the last roast's bag forward by id. If that bag is THIS one, the id is about
+    // to point at nothing; Setup's relink-by-name only runs while it holds NO id, so left alone the
+    // next roast would save a beanId for a bag that is gone (and sit "unlinked" under a same-named
+    // restock). Clear it so Setup relinks the one bag left with that name. Never touches a roast
+    // that has begun: that one genuinely used this bag.
+    if (!roastStarted && !isTimerRunning && bean.id && beanId != null && Number(beanId) === Number(bean.id)) {
+      setBeanId(null);
+    }
+
     if (cascade) {
-      const existingRoasts = readLocalJSON("roasts");
-      const matchedRoasts = existingRoasts.filter(r => r.beanName === bean.name);
-      localStorage.setItem("roasts", JSON.stringify(existingRoasts.filter(r => r.beanName !== bean.name)));
+      const { roasts: matchedRoasts, tastings: matchedBrews } = matched;
+      // By identity, not by id: two records sharing an id, or an id-less one, must not take an
+      // unmatched record with them. Never removes more locally than the modal counted.
+      const goneRoasts = new Set(matchedRoasts);
+      const goneBrews = new Set(matchedBrews);
+      localStorage.setItem("roasts", JSON.stringify(existingRoasts.filter(r => !goneRoasts.has(r))));
+      localStorage.setItem("tastingNotes", JSON.stringify(existingBrews.filter(t => !goneBrews.has(t))));
 
-      const existingBrews = readLocalJSON("tastingNotes");
-      const matchedBrews = existingBrews.filter(t => t.beanName === bean.name);
-      localStorage.setItem("tastingNotes", JSON.stringify(existingBrews.filter(t => t.beanName !== bean.name)));
-
+      // A record without a usable id is removed locally (above) but never sent to the cloud: a
+      // missing id would otherwise become id=eq.NaN, and null or "" would become id=eq.0.
+      const hasCloudId = (x) => x.id != null && x.id !== "" && Number.isFinite(Number(x.id)) && Number(x.id) > 0;
       setSyncStatus('syncing');
       Promise.all([
-        ...matchedRoasts.map(r => deleteRoastFromSupabase(r.id)),
-        ...matchedBrews.map(t => deleteBrewFromSupabase(t.id)),
+        ...matchedRoasts.filter(hasCloudId).map(r => deleteRoastFromSupabase(r.id)),
+        ...matchedBrews.filter(hasCloudId).map(t => deleteBrewFromSupabase(t.id)),
         ...(bean.id ? [deleteBeanFromSupabase(bean.id)] : []),
       ]).then((results) => setSyncStatus(results.every(Boolean) ? 'success' : 'error'))
         .catch(() => setSyncStatus('error'));
@@ -2283,9 +2331,99 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  // Always an array: a stored null or object would otherwise throw inside the delete cascade.
   const readLocalJSON = (key) => {
-    try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) { return []; }
+    try {
+      const v = JSON.parse(localStorage.getItem(key) || "[]");
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
   };
+
+  // What belongs to one bag, read fresh from storage. Bean Detail and the delete modal both
+  // read this, so the lists and counts the user sees are the ones a cascade acts on.
+  const historyOfBean = (bean) => beanHistory(bean, {
+    roasts: readLocalJSON("roasts"),
+    tastings: readLocalJSON("tastingNotes"),
+    beans: readLocalJSON("beans"),
+  });
+  const beanDetailHistory = activeTab === "Beans" && beansView === "beanDetail" && selectedBean ? historyOfBean(selectedBean) : null;
+
+  // "1 older roast + 2 older tastings" -- the history a shared name leaves unclaimed, or "".
+  const unlinkedSummary = ({ roasts, tastings }) => [
+    roasts.length > 0 && `${roasts.length} older roast${roasts.length === 1 ? "" : "s"}`,
+    tastings.length > 0 && `${tastings.length} older tasting${tastings.length === 1 ? "" : "s"}`,
+  ].filter(Boolean).join(" + ");
+
+  // Bean Detail's line for history that belongs to a DIFFERENT saved bag of the same name, which
+  // Bean Detail (one bag at a time) does not list: '1 roast and 1 tasting note belong to another
+  // bag named "X" and are not listed here.' Empty when there is none. Display only -- nothing
+  // in otherBag is ever deleted or counted by the delete modal.
+  const otherBagNote = ({ roasts, tastings }, name) => {
+    const parts = [
+      roasts.length > 0 && `${roasts.length} roast${roasts.length === 1 ? "" : "s"}`,
+      tastings.length > 0 && `${tastings.length} tasting note${tastings.length === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+    if (parts.length === 0) return "";
+    const many = roasts.length + tastings.length > 1;
+    return `${parts.join(" and ")} ${many ? "belong" : "belongs"} to another bag named "${name}" and ${many ? "are" : "is"} not listed here.`;
+  };
+
+  // Caption for Bean Detail's "Older ... with this name" lists (history the bag keeps if it is
+  // deleted). `noun` is "roast" or "tasting note". Only claims "one bag" when another bag
+  // really does share the name; otherwise these are simply not tied to THIS bag.
+  const olderListNote = (count, noun, nameShared) => {
+    const one = count === 1;
+    return `${count} older ${noun}${one ? "" : "s"} with this name ${one ? "is" : "are"} not tied to ${nameShared ? "one bag" : "this bag"}. ${one ? "It is" : "They are"} listed below and kept if you delete ${nameShared ? "this bag" : "it"}.`;
+  };
+
+  // One row of Bean Detail's roast and tasting lists. The "older" lists reuse them with
+  // muted=true so those records read as the same kind of thing, just visibly set apart.
+  const mutedRow = (muted) => (muted ? " opacity-75" : "");
+  const renderBeanRoastRow = (r, muted = false) => (
+    <button
+      key={r.id}
+      onClick={() => {
+        setSelectedRoast(r);
+        setBeansView("roastDetail");
+      }}
+      className={`w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30${mutedRow(muted)}`}
+    >
+      <div className="flex justify-between items-center">
+        <div>
+          <div className="text-sm font-bold text-ink">{r.date}</div>
+          <div className="text-[11px] text-ink-muted">{r.targetLevel} · {r.greenWeight}g</div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-mono font-bold text-accent-text">{r.duration}</div>
+        </div>
+      </div>
+    </button>
+  );
+  const renderBeanTastingRow = (t, muted = false) => (
+    <button
+      key={t.id}
+      onClick={() => {
+        setSelectedTastingNote(t);
+        setBeansView("tastingDetail");
+      }}
+      className={`w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30${mutedRow(muted)}`}
+    >
+      <div className="flex justify-between items-start mb-2">
+        <div>
+          <div className="text-sm font-bold text-ink">{t.date}</div>
+          <div className="text-[11px] text-ink-muted">{t.method}</div>
+        </div>
+        {t.rating > 0 && <StarRow rating={t.rating} size={10} />}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {t.descriptors?.slice(0, 3).map((d, i) => (
+          <span key={i} className="rounded-full bg-accent/5 border border-accent/10 px-2 py-0.5 text-[9px] font-bold text-accent-text/80">
+            {d}
+          </span>
+        ))}
+      </div>
+    </button>
+  );
 
   // Merge two id-keyed lists, deduplicating by id (later source wins on conflict).
   const mergeById = (local, remote) => {
@@ -2326,11 +2464,6 @@ function App() {
     };
   };
 
-  const csvEscape = (val) => {
-    const s = (val === null || val === undefined) ? "" : String(val);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-
   const handleExportCSV = async () => {
     setIsExporting(true);
     try {
@@ -2341,17 +2474,25 @@ function App() {
       brews.forEach(t => { if (t && t.roastId != null && t.roastId !== "") noteByRoastId[String(t.roastId)] = t; });
 
       const headers = ["Date", "Bean Name", "Origin", "Green Weight (g)", "Roasted Weight (g)", "Weight Loss %", "Target Roast Level", "Visual Color", "Rating (0.5-5)", "Brew Again (Yes/No/Maybe)", "Session Notes"];
+      // Weight Loss % is the one cell the exporter COMPUTES (a toFixed(1) string such as
+      // "-5.0", negative when a roast gained weight), so it is written as it is.
+      // csvEscape decides by type and would put the formula-guard quote on that string,
+      // because it can't tell it from text a person typed.
+      const lossCol = headers.indexOf("Weight Loss %");
       const rows = roasts.map(r => {
         const bean = beanByName[r.beanName] || {};
         const note = noteByRoastId[String(r.id)] || {};
         const green = Number(r.greenWeight);
         const roasted = Number(r.roastedWeight);
-        const loss = (green > 0 && roasted > 0) ? (((green - roasted) / green) * 100).toFixed(1) : "";
+        // Number("1e999") is Infinity, which passes `> 0` and would write "-Infinity".
+        const loss = (Number.isFinite(green) && Number.isFinite(roasted) && green > 0 && roasted > 0)
+          ? (((green - roasted) / green) * 100).toFixed(1)
+          : "";
         return [
           r.date, r.beanName, bean.origin || "", r.greenWeight || "", r.roastedWeight || "",
           loss, r.targetLevel || "", r.visualColor || "", note.rating || "",
           note.brewAgain || "", note.notes || "",
-        ].map(csvEscape).join(",");
+        ].map((cell, i) => (i === lossCol ? cell : csvEscape(cell))).join(",");
       });
       const csv = [headers.join(","), ...rows].join("\n");
       const date = new Date().toISOString().slice(0, 10);
@@ -2377,7 +2518,7 @@ function App() {
       }));
       const backup = {
         exportDate: new Date().toISOString(),
-        appVersion: "3.9.1",
+        appVersion: "3.9.2",
         roastSessions,
         beans,
         roastProfiles,
@@ -2408,6 +2549,52 @@ function App() {
       }}
     />
   );
+
+  // Answers the roasted-weight prompt (RL-025). `grams` is what was typed, or
+  // undefined for SKIP. The roast is already in storage (and its own cloud write is
+  // under way), so either way it is safe; SKIP touches nothing. SAVE WEIGHT writes the
+  // weight onto THAT roast -- found by id in a fresh read of storage, because the
+  // launch sync can merge other roasts in ahead of it while the prompt is open -- and
+  // sends it through the usual upsert, chained behind the save's own write so a slow
+  // first upsert cannot land last and reset roasted_weight to 0. That is ONE cloud
+  // write with no retry: if the app is killed or offline first, the weight stays on
+  // this device only (a History edit re-syncs it). Anything that is not a real
+  // weight saves nothing: an empty entry is never stored as 0.
+  //
+  // The chained write is built when it is SENT, not when SAVE WEIGHT was tapped: it
+  // can wait a long time behind a slow first write, and in that gap the roast may be
+  // edited or deleted in History. So it re-reads the roast by id from storage then --
+  // an edit is sent as edited (the weight is already in that copy), and a roast that
+  // is gone is not sent at all, so it cannot be re-created in the cloud.
+  const answerDropWeight = (grams) => {
+    if (!dropWeight) return;
+    const { roast, firstSync, sheet } = dropWeight;
+    setDropWeight(null);
+
+    const weight = parseRoastedWeight(grams);
+    const stored = weight === null ? [] : readStoredRoasts();
+    const saved = stored.find((r) => r && Number(r.id) === Number(roast.id));
+    if (saved) {
+      const patched = { ...saved, roastedWeight: weight };
+      try {
+        localStorage.setItem("roasts", JSON.stringify(stored.map((r) => (r === saved ? patched : r))));
+        firstSync.then(() => {
+          const latest = readStoredRoasts().find((r) => r && Number(r.id) === Number(roast.id));
+          if (!latest) return null; // deleted meanwhile: send nothing, and it is not an error
+          setSyncStatus('syncing');
+          return syncRoastToSupabase(latest);
+        }).then(success => {
+          if (success === null) return; // nothing was sent, so there is no result to show
+          setSyncStatus(success ? 'success' : 'error');
+        });
+      } catch (e) {
+        // Storage refused the write. The roast itself is untouched; only the weight is lost.
+        showToast("Couldn't store the roasted weight. Add it from History.", "error");
+      }
+    }
+
+    if (sheet) setProfileSheet(sheet);
+  };
 
   const saveProfileFromSheet = (name) => {
     if (!profileSheet) return;
@@ -4965,21 +5152,18 @@ function App() {
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black uppercase tracking-[0.15em] text-ink-muted">Roast Sessions</h3>
-                    {(() => {
-                      const roasts = (() => {
-                        try {
-                          return JSON.parse(localStorage.getItem("roasts") || "[]");
-                        } catch (e) {
-                          return [];
-                        }
-                      })().filter(r => r.beanName === selectedBean.name);
-                      return <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{roasts.length} sessions</span>;
-                    })()}
+                    <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{beanDetailHistory.roasts.length} sessions</span>
                   </div>
+
+                  {/* Records that belong to a DIFFERENT saved bag with this name: not listed (this page is one bag's), but never hidden without a word */}
+                  {(() => {
+                    const note = otherBagNote(beanDetailHistory.otherBag, selectedBean.name);
+                    return note ? <p className="text-[11px] text-ink-muted italic">{note}</p> : null;
+                  })()}
 
                   {/* Same-bean comparison — overlay up to 3 roasts of this bean */}
                   {(() => {
-                    const beanRoasts = (() => { try { return JSON.parse(localStorage.getItem("roasts") || "[]"); } catch (e) { return []; } })().filter(r => r.beanName === selectedBean.name);
+                    const beanRoasts = beanDetailHistory.roasts;
                     if (beanRoasts.length < 2) return null;
                     const top = [...beanRoasts].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 3);
                     return (
@@ -5014,89 +5198,44 @@ function App() {
                   </button>
                   <div className="space-y-2">
                     {(() => {
-                      const roasts = (() => {
-                        try {
-                          return JSON.parse(localStorage.getItem("roasts") || "[]");
-                        } catch (e) {
-                          return [];
-                        }
-                      })().filter(r => r.beanName === selectedBean.name);
+                      const roasts = beanDetailHistory.roasts;
                       if (roasts.length === 0) return <p className="text-sm text-ink-muted italic py-2">No roast sessions found for this bean.</p>;
-                      return roasts.map(r => (
-                        <button
-                          key={r.id}
-                          onClick={() => {
-                            setSelectedRoast(r);
-                            setBeansView("roastDetail");
-                          }}
-                          className="w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30"
-                        >
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <div className="text-sm font-bold text-ink">{r.date}</div>
-                              <div className="text-[11px] text-ink-muted">{r.targetLevel} · {r.greenWeight}g</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-sm font-mono font-bold text-accent-text">{r.duration}</div>
-                            </div>
-                          </div>
-                        </button>
-                      ));
+                      return roasts.map(r => renderBeanRoastRow(r));
                     })()}
                   </div>
+
+                  {/* Older roasts that carry only this name: set apart, muted, outside the session count
+                      and the comparison above, and kept if this bag is deleted (never in the cascade) */}
+                  {beanDetailHistory.unlinked.roasts.length > 0 && (
+                    <div data-testid="older-roasts" className="space-y-2 border-t border-border/40 pt-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.15em] text-ink-muted">Older roasts with this name — kept if this bag is deleted</h4>
+                      <p className="text-[11px] text-ink-muted italic">{olderListNote(beanDetailHistory.unlinked.roasts.length, "roast", beanDetailHistory.nameShared)}</p>
+                      {beanDetailHistory.unlinked.roasts.map(r => renderBeanRoastRow(r, true))}
+                    </div>
+                  )}
                 </section>
 
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black uppercase tracking-[0.15em] text-ink-muted">Tasting Notes</h3>
-                    {(() => {
-                      const tastings = (() => {
-                        try {
-                          return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
-                        } catch (e) {
-                          return [];
-                        }
-                      })().filter(t => t.beanName === selectedBean.name);
-                      return <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{tastings.length} notes</span>;
-                    })()}
+                    <span className="text-[10px] font-bold text-accent-text/80 bg-accent/10 px-2 py-0.5 rounded-full">{beanDetailHistory.tastings.length} notes</span>
                   </div>
                   <div className="space-y-2">
                     {(() => {
-                      const tastings = (() => {
-                        try {
-                          return JSON.parse(localStorage.getItem("tastingNotes") || "[]");
-                        } catch (e) {
-                          return [];
-                        }
-                      })().filter(t => t.beanName === selectedBean.name);
+                      const tastings = beanDetailHistory.tastings;
                       if (tastings.length === 0) return <p className="text-sm text-ink-muted italic py-2">No tasting notes found for this bean.</p>;
-                      return tastings.map(t => (
-                        <button
-                          key={t.id}
-                          onClick={() => {
-                            setSelectedTastingNote(t);
-                            setBeansView("tastingDetail");
-                          }}
-                          className="w-full rounded-2xl border border-border/40 bg-surface/15 p-4 text-left transition hover:bg-surface/30"
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <div className="text-sm font-bold text-ink">{t.date}</div>
-                              <div className="text-[11px] text-ink-muted">{t.method}</div>
-                            </div>
-                            {t.rating > 0 && <StarRow rating={t.rating} size={10} />}
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {t.descriptors?.slice(0, 3).map((d, i) => (
-                              <span key={i} className="rounded-full bg-accent/5 border border-accent/10 px-2 py-0.5 text-[9px] font-bold text-accent-text/80">
-                                {d}
-                              </span>
-                            ))}
-                          </div>
-                        </button>
-                      ));
+                      return tastings.map(t => renderBeanTastingRow(t));
                     })()}
                   </div>
+
+                  {/* Older tasting notes that carry only this name: same treatment as the older roasts */}
+                  {beanDetailHistory.unlinked.tastings.length > 0 && (
+                    <div data-testid="older-tastings" className="space-y-2 border-t border-border/40 pt-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.15em] text-ink-muted">Older tasting notes with this name — kept if this bag is deleted</h4>
+                      <p className="text-[11px] text-ink-muted italic">{olderListNote(beanDetailHistory.unlinked.tastings.length, "tasting note", beanDetailHistory.nameShared)}</p>
+                      {beanDetailHistory.unlinked.tastings.map(t => renderBeanTastingRow(t, true))}
+                    </div>
+                  )}
                 </section>
 
                 <button
@@ -5417,6 +5556,14 @@ function App() {
         )}
       </main>
 
+      {dropWeight && (
+        <RoastDropWeightModal
+          roast={dropWeight.roast}
+          onSave={answerDropWeight}
+          onSkip={() => answerDropWeight()}
+        />
+      )}
+
       {profileSheet && (
         <ProfileFromRoastSheet
           mode={profileSheet.mode}
@@ -5542,7 +5689,7 @@ function App() {
             </button>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2 text-3xl font-bold text-accent-text"><BrandMark className="h-7 w-7" /> RoastLogs</div>
-              <div className="mt-1 text-sm font-mono text-ink-muted">v3.9.1</div>
+              <div className="mt-1 text-sm font-mono text-ink-muted">v3.9.2</div>
               <div className="mt-3 text-sm text-ink">Built for the Fresh Roast SR540 + Extension Tube</div>
             </div>
             <div className="my-5 border-t border-border/60" />
@@ -5572,22 +5719,33 @@ function App() {
               {confirmDelete.type === "roast" ? "Delete this roast?" : confirmDelete.type === "tasting" ? "Delete this tasting?" : "Delete this bean?"}
             </h3>
             {confirmDelete.type === "bean" ? (() => {
-              const linkedRoasts = readLocalJSON("roasts").filter(r => r.beanName === confirmDelete.name);
-              const linkedTastings = readLocalJSON("tastingNotes").filter(t => t.beanName === confirmDelete.name);
+              // This bag's own history, matched by bag id -- the set the cascade buttons below promise.
+              // Each cascade button hands THIS object to handleDeleteBean, which re-reads storage at the
+              // tap and deletes only if the own sets still match; otherwise it deletes nothing and this
+              // modal redraws with the fresh counts. Nothing in unlinked/otherBag is ever deleted.
+              const history = historyOfBean(confirmDelete);
+              const linkedRoasts = history.roasts;
+              const linkedTastings = history.tastings;
               const hasHistory = linkedRoasts.length + linkedTastings.length > 0;
               const hasSavedRecord = !!confirmDelete.id;
               const historyLabel = `${linkedRoasts.length} roast${linkedRoasts.length === 1 ? "" : "s"} + ${linkedTastings.length} tasting${linkedTastings.length === 1 ? "" : "s"}`;
-              // History is matched by bean name, not id — a duplicate name means cascade delete
-              // here would also remove the other same-named bean's roasts/tastings.
+              // Two bags can share a name (a restock). Their history is told apart by bag id, so
+              // deleting one bag's history leaves the other's alone.
               const hasDuplicateBeanName = readLocalJSON("beans").filter(b => b.name === confirmDelete.name).length > 1;
               const duplicateWarning = hasDuplicateBeanName && (
-                <p className="text-xs text-error-text mb-3">You have more than one bean named "{confirmDelete.name}" — deleting history here removes it for all of them, since roasts/tastings are matched by name.</p>
+                <p className="text-xs text-ink-muted mb-3">You have more than one bean named "{confirmDelete.name}". Deleting history here removes only this bag's own roasts and tastings.</p>
+              );
+              // Older history that carries just the shared name can't be assigned to one bag, so it stays.
+              const unlinkedTotal = history.unlinked.roasts.length + history.unlinked.tastings.length;
+              const unlinkedNote = unlinkedTotal > 0 && (
+                <p className="text-xs text-ink-muted mb-3">{unlinkedSummary(history.unlinked)} {unlinkedTotal === 1 ? "is" : "are"} not tied to one bag and will be kept.</p>
               );
 
               if (!hasHistory) {
                 return (
                   <>
                     <p className="text-sm text-ink-muted mb-6">This cannot be undone.</p>
+                    {unlinkedNote}
                     <div className="flex gap-3">
                       <button onClick={() => setConfirmDelete(null)} className="flex-1 py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
                       <button onClick={() => handleDeleteBean(confirmDelete, false)} className="flex-1 py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE</button>
@@ -5601,8 +5759,9 @@ function App() {
                   <>
                     <p className="text-sm text-ink-muted mb-6">This will delete {historyLabel} for this bean. This cannot be undone.</p>
                     {duplicateWarning}
+                    {unlinkedNote}
                     <div className="flex flex-col gap-2">
-                      <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE {historyLabel.toUpperCase()}</button>
+                      <button onClick={() => handleDeleteBean(confirmDelete, true, history)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE {historyLabel.toUpperCase()}</button>
                       <button onClick={() => setConfirmDelete(null)} className="w-full py-3 rounded-2xl bg-surface text-ink font-bold hover:bg-card transition">CANCEL</button>
                     </div>
                   </>
@@ -5613,8 +5772,9 @@ function App() {
                 <>
                   <p className="text-sm text-ink-muted mb-6">This bean has {historyLabel}. Choose whether to keep or remove them too.</p>
                   {duplicateWarning}
+                  {unlinkedNote}
                   <div className="flex flex-col gap-2">
-                    <button onClick={() => handleDeleteBean(confirmDelete, true)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
+                    <button onClick={() => handleDeleteBean(confirmDelete, true, history)} className="w-full py-3 rounded-2xl bg-error text-white font-bold hover:brightness-110 transition">DELETE BEAN + {historyLabel.toUpperCase()}</button>
                     <button onClick={() => handleDeleteBean(confirmDelete, false)} className="w-full py-3 rounded-2xl border border-border/60 text-ink font-bold hover:bg-card transition">KEEP HISTORY, DELETE BEAN ONLY</button>
                     <button onClick={() => setConfirmDelete(null)} className="w-full py-3 text-ink-muted font-bold hover:text-ink transition">CANCEL</button>
                   </div>
@@ -5634,7 +5794,7 @@ function App() {
                     onClick={() => {
                       if (confirmDelete.type === "roast") {
                         handleDeleteRoast(confirmDelete.id);
-                      } else {
+                      } else if (confirmDelete.type === "tasting") {
                         handleDeleteTasting(confirmDelete.id);
                       }
                       setConfirmDelete(null);

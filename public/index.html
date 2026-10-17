@@ -12,8 +12,11 @@
         img/font   data:         — the MFA QR code and roast photos are data: URIs.
         connect-src              — REST + realtime only to our Supabase project.
         object-src 'none'        — no <object>/<embed> plugins.
-      NOTE: frame-ancestors and HSTS are header-only (a meta tag can't set them),
-      so clickjacking/HSTS protection is not available on GitHub Pages hosting.
+      NOTE: frame-ancestors and HSTS are header-only (a meta tag can't set them).
+      GitHub Pages already sends its own Strict-Transport-Security header, which
+      this repo can't configure, so there is nothing to add here for HSTS.
+      Clickjacking protection (frame-ancestors) is the one that is not available
+      on GitHub Pages hosting.
     -->
     <meta
       http-equiv="Content-Security-Policy"

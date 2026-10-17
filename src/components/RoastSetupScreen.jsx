@@ -2,6 +2,7 @@ import React from "react";
 import { EQUIPMENT_OPTIONS, equipmentHasProbe } from "../lib/equipment";
 import { beanStock } from "../lib/inventory";
 import { formatMMSS } from "../lib/profileFromRoast";
+import { parsePreheatTarget } from "../lib/preheatTarget";
 
 // The Roast tab's front door. Everything a roast needs decided BEFORE the beans
 // go in -- bean, weight, level, profile, hardware, preheat target -- on one
@@ -117,6 +118,29 @@ export default function RoastSetupScreen({
 
   const primaryLabel = !hasProbe ? "Start roast" : probeLive ? "Begin preheat" : "Continue";
   const ready = profileChosen;
+
+  // The preheat field keeps what is being typed as its own text, because a field
+  // that snapped to a number mid-edit could never be cleared and retyped. The app
+  // is handed a target only when the draft is an in-range whole number, as it is
+  // typed -- never the 0 of a cleared field or the 3 of a half-typed 330, and
+  // never a clamp of them (a "3" must not become a near-cold 200 F target).
+  // Anything else stays in the field while editing and is dropped when it is left,
+  // so the field shows the last valid target again (RL-029). Committing as typed
+  // also means nothing depends on a blur, which iOS does not send for a tap on a
+  // button. null = not editing, so the field shows the app's saved target.
+  const [targetDraft, setTargetDraft] = React.useState(null);
+  const typedTarget = (text) => parsePreheatTarget(text, null); // null: not a valid target, change nothing
+  const onTargetInput = (text) => {
+    setTargetDraft(text);
+    const typed = typedTarget(text);
+    if (typed !== null) onPreheatTargetChange(typed);
+  };
+  const commitTarget = () => {
+    if (targetDraft === null) return;
+    const typed = typedTarget(targetDraft);
+    if (typed !== null) onPreheatTargetChange(typed);
+    setTargetDraft(null);
+  };
 
   return (
     <div className="space-y-5" data-testid="roast-setup">
@@ -337,8 +361,9 @@ export default function RoastSetupScreen({
               </div>
               <div className="flex items-baseline gap-1 rounded-2xl border border-border/70 bg-primary/40 px-3 py-2 focus-within:border-accent/60">
                 <input
-                  value={preheatTarget}
-                  onChange={(e) => onPreheatTargetChange(Number(e.target.value) || 0)}
+                  value={targetDraft ?? preheatTarget}
+                  onChange={(e) => onTargetInput(e.target.value)}
+                  onBlur={commitTarget}
                   type="number"
                   inputMode="numeric"
                   aria-label="Preheat target in degrees Fahrenheit"
@@ -357,7 +382,10 @@ export default function RoastSetupScreen({
       <div className="pb-2">
         <button
           type="button"
-          onClick={onPrimary}
+          onClick={() => {
+            commitTarget(); // belt and braces: the draft is already committed as typed, this just closes it
+            onPrimary();
+          }}
           disabled={!ready}
           className="w-full rounded-3xl bg-accent px-4 py-4 font-cond text-lg font-bold uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
         >

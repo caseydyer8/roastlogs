@@ -1,4 +1,5 @@
 import { buildLiveChartModel, GHOST_CAPTION } from "./LiveRoastChart";
+import { LIVE_GAP_S } from "../../lib/liveSample";
 
 // Source roast: 1 Hz curve rising 200 -> 300F over 100s, with milestones.
 const curve = Array.from({ length: 101 }, (_, t) => ({ t, bt: 200 + t }));
@@ -174,5 +175,149 @@ describe("GHOST_CAPTION", () => {
       "source-missing": "No ghost \u00b7 source roast not on this device",
       "source-no-curve": "No ghost \u00b7 source roast has no curve",
     });
+  });
+});
+
+// RL-027: the ghost stays a gap where the source roast's probe was out. The
+// model has always emitted null there, so this only guards that (and the short
+// bridging next to it). Whether the dashed LINE then breaks is decided when it
+// is drawn, and is covered in the browser: "ghost breaks across a probe gap" in
+// e2e/app.spec.js.
+describe("buildLiveChartModel ghost across a probe gap", () => {
+  const longCurve = Array.from({ length: 301 }, (_, t) => ({ t, bt: 200 + t / 2 }));
+  // The source curve with seconds `from`..`to` (inclusive) never recorded.
+  const withHole = (from, to) => ({ curve: longCurve.filter((p) => p.t < from || p.t > to), milestones: [] });
+  const rows = (m, from, to) => m.data.slice(from, to + 1).map((d) => d.planTemp);
+
+  it("a 20 s hole stays null, and the seconds either side of it are drawn", () => {
+    const m = buildLiveChartModel({ ...base, plan: withHole(200, 219) });
+    expect(rows(m, 200, 219).every((v) => v === null)).toBe(true);
+    expect(m.data[199].planTemp).not.toBeNull();
+    expect(m.data[220].planTemp).not.toBeNull();
+  });
+
+  it("a 5 s hole is bridged with a straight run", () => {
+    const m = buildLiveChartModel({ ...base, plan: withHole(200, 204) });
+    expect(rows(m, 200, 204).every((v) => v != null)).toBe(true);
+  });
+
+  it("the bridge ends at LIVE_GAP_S: a hole of that many seconds is filled, one second more is not", () => {
+    const at = (len) => buildLiveChartModel({ ...base, plan: withHole(200, 200 + len - 1) });
+    expect(rows(at(LIVE_GAP_S), 200, 200 + LIVE_GAP_S - 1).every((v) => v != null)).toBe(true);
+    expect(rows(at(LIVE_GAP_S + 1), 200, 200 + LIVE_GAP_S).every((v) => v === null)).toBe(true);
+  });
+});
+
+// RL-030: every time the model sizes its rows by is bounded. It builds one row
+// per second up to the largest t it is handed, so a damaged or hand-edited t of
+// 1e9 froze the tab and one of 2^32 or more threw a RangeError out of render.
+// The bound is 7200 s (src/lib/limits.js): the ledger text said ~1800, but a
+// normal SR540 roast is far under either, and 7200 matches the milestone cap in
+// profileFromRoast.js. The "huge" values below are 1e6, not the 1e9 of the bug
+// report: against unbounded code 1e9 would not fail this suite, it would hang it
+// (the browser test in e2e/app.spec.js uses the real 1e9).
+describe("buildLiveChartModel bounds every time it sizes rows by", () => {
+  const MAX_S = 7200;
+  const MAX_ROWS = MAX_S + 30 + 1; // 7200 s of roast, the 30 s lookahead, and row 0
+  const milestoneAt = (t) => ({ curve, milestones: [{ label: "CARAMELIZATION", t, temp: 300 }] });
+
+  it("a source curve point at t = 2^32 does not throw, and the rest of the ghost is intact", () => {
+    const huge = { ...plan, curve: [...curve, { t: 2 ** 32, bt: 400 }] };
+    let m;
+    expect(() => { m = buildLiveChartModel({ ...base, plan: huge }); }).not.toThrow();
+    expect(m.planEnd).toBeLessThanOrEqual(MAX_S);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+    expect(m.data[60].planTemp).toBeCloseTo(260, 0);
+  });
+
+  it("a source curve point far past the bound does not stretch the chart", () => {
+    const m = buildLiveChartModel({ ...base, plan: { ...plan, curve: [...curve, { t: 1e6, bt: 400 }] } });
+    expect(m.planEnd).toBeLessThanOrEqual(MAX_S);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+  });
+
+  // "Ignored" means ignored: a point outside 0..7200 is not a reading, so it must
+  // not count towards the two points a ghost needs.
+  it.each([-5, MAX_S + 1, 1e6])("a source curve point at t = %p is ignored, so one real point is still no ghost", (t) => {
+    const m = buildLiveChartModel({ ...base, plan: { curve: [{ t: 10, bt: 200 }, { t, bt: 210 }], milestones: [], source: "found" } });
+    expect(m.ghost).toBe("none");
+    expect(m.ghostReason).toBe("source-no-curve");
+  });
+
+  it("a stored clock of 1e6 s does not make a million rows", () => {
+    const m = buildLiveChartModel({ ...base, elapsedSeconds: 1e6 });
+    expect(m.total).toBeLessThanOrEqual(MAX_S);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+  });
+
+  it("a live curve point at t = 1e6 does not make a million rows", () => {
+    const m = buildLiveChartModel({ ...base, curve: [...live, { t: 1e6, bt: 300 }] });
+    expect(m.total).toBeLessThanOrEqual(MAX_S);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+  });
+
+  it("a DROP logged at t = 1e6 does not make a million rows", () => {
+    const roastLog = [{ type: "phase", label: "COOLING START", t: 1e6, temp: "" }];
+    const m = buildLiveChartModel({ ...base, roastLog });
+    expect(m.total).toBeLessThanOrEqual(MAX_S);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+  });
+
+  it("a milestone far past the bound is not a marker and does not stretch the chart", () => {
+    const m = buildLiveChartModel({ ...base, plan: { ...plan, milestones: [...plan.milestones, { label: "CARAMELIZATION", t: 1e6, temp: 300 }] } });
+    expect(m.planMarkers.map((x) => x.tag)).toEqual(["Y", "FC", "DROP"]);
+    expect(m.planEnd).toBe(100);
+    expect(m.data.length).toBeLessThanOrEqual(MAX_ROWS);
+  });
+
+  it("a milestone exactly at the bound is kept", () => {
+    const m = buildLiveChartModel({ ...base, plan: milestoneAt(MAX_S) });
+    expect(m.planMarkers.map((x) => x.tag)).toEqual(["CAR"]);
+    expect(m.planEnd).toBe(MAX_S);
+  });
+
+  it("a milestone one second past the bound, or before 0:00, is not a marker", () => {
+    expect(buildLiveChartModel({ ...base, plan: milestoneAt(MAX_S + 1) }).planMarkers).toEqual([]);
+    expect(buildLiveChartModel({ ...base, plan: milestoneAt(-1) }).planMarkers).toEqual([]);
+  });
+
+  it("leaves a normal roast alone: same rows, same plan end, an hour-long roast not clipped", () => {
+    const m = buildLiveChartModel({ ...base, plan });
+    expect(m.total).toBe(20);
+    expect(m.planEnd).toBe(100);
+    expect(m.lookahead).toBe(30);
+    expect(m.data).toHaveLength(101);
+
+    const long = buildLiveChartModel({ ...base, elapsedSeconds: 3600 });
+    expect(long.total).toBe(3600);
+    expect(long.data).toHaveLength(3601);
+  });
+});
+
+// Hygiene, not a crash fix: PLAN_MARK is a plain object, so a label like
+// "constructor" or "__proto__" found an inherited Object.prototype member and was
+// treated as a milestone with a junk tag. Nothing throws; a stray marker is the
+// worst of it. The lookup has to ask for the label's OWN entry.
+describe("buildLiveChartModel milestone labels", () => {
+  const INHERITED = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"];
+
+  it("only a label the chart has a tag for becomes a marker", () => {
+    const milestones = [{ label: "__proto__", t: 60 }, { label: "constructor", t: 70 }, { label: "FIRST CRACK", t: 80, temp: 280 }];
+    const m = buildLiveChartModel({ ...base, plan: { curve, milestones } });
+    expect(m.planMarkers).toHaveLength(1);
+    expect(m.planMarkers[0].tag).toBe("FC");
+  });
+
+  it.each(INHERITED)("%s alone is not a marker, so the plan is not markers-only", (label) => {
+    const m = buildLiveChartModel({ ...base, plan: { curve: [], milestones: [{ label, t: 60 }], source: "found" } });
+    expect(m.planMarkers).toEqual([]);
+    expect(m.ghost).toBe("none");
+    expect(m.ghostReason).toBe("source-no-curve");
+  });
+
+  it("every real label keeps its tag, as text", () => {
+    const labels = ["YELLOWING", "FIRST CRACK", "COOLING START", "MAILLARD", "CARAMELIZATION"];
+    const m = buildLiveChartModel({ ...base, plan: { curve, milestones: labels.map((label, i) => ({ label, t: 10 * (i + 1) })) } });
+    expect(m.planMarkers.map((x) => x.tag)).toEqual(["Y", "FC", "DROP", "MAI", "CAR"]);
   });
 });
