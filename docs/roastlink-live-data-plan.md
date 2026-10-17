@@ -265,7 +265,7 @@ curve: [ { t: 0, bt: 312.4 }, { t: 1, bt: 313.1 }, ... ]
 ### Also additive
 
 ```js
-equipment: { setup: "razzo-v5t" | "oem-tube" | "bare", probe: "k-type" | null }
+equipment: { setup: "razzo-v5t" | "oem-tube" | "sr540", probe: "k-type" | null }
 ambient:   { at: 74.1, ah: 38 }   // captured at roast start from the SHT31
 ```
 
@@ -713,7 +713,16 @@ finished-roast History chart at zero risk. The live component reads:
 No new data is required anywhere in this phase — this is a rendering surface
 over state the app already has live, in memory, right now.
 
-### Phase 2 (explicitly deferred): First/Second Crack time estimates
+### Phase 2: First Crack time estimate (shipped in v3.10.0; Second Crack still deferred)
+
+**Shipped (v3.10.0):** a single "FC IN m:ss" chip on the live chart for Razzo roasts,
+`src/lib/fcEta.js`. The estimate is `(400 F - BT) / RoR` (Artisan's constant-rate rule) on the
+live chart's own smoothed series, from caramelization (340 F) until First crack is marked. It
+never disappears: when RoR is flat, negative or falling it holds `(400 - BT) / last good RoR`
+and shows a HELD tag. Back-test on the synthetic mock-device roasts: about 8 s early at 60 s
+before 400 F and 2 s early at 30 s; real SR540 + Razzo accuracy is still unmeasured (it needs
+Case's own roasts, run privately). The design notes below are the original reasoning.
+
 
 Case asked about Artisan-style projected time-to-milestone. This is real work,
 not a quick add — an honest estimate means extrapolating the *current* RoR

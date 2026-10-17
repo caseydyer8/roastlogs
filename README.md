@@ -31,6 +31,7 @@ RoastLogs helps home coffee roasters track every detail of their roasts in real 
 | Live roast screen (timer, milestones, adjustments) | ✅ Live |
 | Roast history + split roast-story charts | ✅ Live |
 | Roast profiles + deviation tracking | ✅ Live |
+| Live chart: RoR ghost line + First Crack ETA chip (Razzo roasts) | ✅ v3.10.0 |
 | Brew & tasting notes | ✅ Live |
 | Bean inventory | ✅ Live |
 | Supabase auth + cloud sync (roasts, tasting notes) | ✅ Live |
