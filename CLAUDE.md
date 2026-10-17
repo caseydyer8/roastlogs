@@ -219,6 +219,60 @@ trapped in agent config.
   deleting BOTH the guard and the comment wrapper.
 - Keep secrets/env files out of git (`.gitignore` is hardened — keep it so).
 
+### Push gate
+
+The repo is public and a push is irreversible, so every push is checked twice. This is
+a **speed bump** against an agent that can edit files: it stops accidents and the
+common spellings, and nothing more. Only a server-side GitHub ruleset on `main`
+(require a pull request, restrict direct pushes) closes the rest. Both layers want a
+`/publish-review` clearance for the exact range being pushed
+(`.session/publish-clearance`); run `git fetch` first so `origin` is fresh.
+
+- **Outer layer, Claude only:** `.claude/hooks/pre-push-guard.sh` reads the text of
+  Claude's command and refuses a push without that clearance. It also refuses the
+  common spellings of going around the inner layer (the hook-skip flag,
+  `core.hooksPath` edits, `GIT_DIR` / `git -c`, wrapped or hidden pushes, writes to
+  the gate's own files and to `refs/remotes`), of running `install-push-gate.sh`, and
+  of deleting a remote branch (the git hook lets Case delete from his own terminal;
+  Claude may not). Write pushes as plain `git push` commands.
+- **Inner layer:** `.githooks/pre-push` is run by git itself, so it sees the real
+  refs, repo and URL. It gates Case's own terminal too, passes a push that publishes
+  no new commit, and lets deletes through. It runs only in a clone where the
+  installer has run.
+- **Install, once per clone, by Case**, from the **main checkout**, in this order:
+  **merge, push, THEN install** (until `origin/main` carries the hook there is
+  nothing reviewed to install): `bash .claude/tools/install-push-gate.sh`. It copies
+  origin/main's committed hook into the git directory and sets an absolute
+  `core.hooksPath` to it, and prints the branch, the commit, a cksum and
+  `hook identical to origin/main: yes|NO`. With origin/main's hook as the source that
+  line is information only, so it installs with no terminal from whatever branch the
+  clone is on; only the pre-merge bootstrap (origin/main has no hook yet, so an
+  unmerged one would be installed) needs a typed confirmation and is refused with no
+  terminal. After the hook changes: merge, pull main in the main
+  checkout, re-run. One run covers every worktree (they share the config), and a
+  worktree on a branch with no `.githooks/` is still gated. The guard denies Claude's
+  pushes when the copy matches none of the committed versions.
+- **claude.ai containers** are a fresh clone every time, so the installer has not run
+  there until Case's Setup script runs it. Case's route (it works from any branch,
+  including one from before the merge): add
+  `bash .claude/tools/install-push-gate.sh` to the environment's **Setup script**
+  (environment menu in the session title bar, Edit, Setup script), which has to run
+  after the repo is cloned.
+- **Install in EVERY clone Claude pushes from** (the Mac, the laptop, each claude.ai
+  container); the gate is complete only where the installer has run.
+- **A commit message or PR body that names the guarded words:** write it to a file
+  and use `git commit -F <file>` or `gh pr create --body-file <file>`.
+- **Rollback, from Case's own terminal** (Claude may not):
+  - one push: `git push --no-verify ...`
+  - the whole clone: `git config --unset core.hooksPath`, then confirm that
+    `git config --get core.hooksPath` prints nothing. The session briefing always
+    prints the effective value.
+- If the review is NOT clear, fix the commits and re-run `/publish-review`.
+  `--no-verify` is only for a gate that misfires, such as a shallow clone or a
+  stale `origin` after a failed fetch, and only Case uses it.
+- **Limits.** This is a speed bump, not a wall. The only full close is a server-side
+  GitHub ruleset on `main`. Known limits are tracked in the private ops notes.
+
 ## Workflow
 
 - Commit only when asked; the user phone-tests on a real SR540 roast before

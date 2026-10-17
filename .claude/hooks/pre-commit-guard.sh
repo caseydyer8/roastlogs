@@ -170,7 +170,7 @@ while IFS="$(printf '\t')" read -r SUB ARGS; do
       fi
       VERIFIED="$(cat .session/verified-hash 2>/dev/null)"
       if [ "$NOW" != "$VERIFIED" ]; then
-        emit_deny "BLOCKED: this state has not passed verification. Run .claude/hooks/verify.sh first (about 45-55s: ledger, secret scan, build, tests). If it exits non-zero, read the failure, fix the cause, run it again, and only commit once it exits 0. Committing moves HEAD and therefore invalidates the proof, so the Stop gate will ask for one more verify.sh afterwards — that is designed, not a loop."
+        emit_deny "BLOCKED: this state has not passed verification. Run .claude/hooks/verify.sh first (about a minute: ledger, secret scan, push gate, build, tests; the push gate step adds a couple of minutes on the first run after a gate file changes and is skipped when nothing there changed). If it exits non-zero, read the failure, fix the cause, run it again, and only commit once it exits 0. Committing moves HEAD and therefore invalidates the proof, so the Stop gate will ask for one more verify.sh afterwards — that is designed, not a loop."
       fi
       ;;
   esac

@@ -18,7 +18,7 @@ echo "verify: ${RL_PROFILE_LINE:-machine=unknown}"
 #    because an item marked done with no acceptance criterion means the record
 #    of what was proven is already wrong. A failing ledger stops the gate as
 #    surely as a failing test: completeness has to be data, not prose.
-echo "  [1/5] ledger"
+echo "  [1/6] ledger"
 if [ -f .claude/tools/ledger.js ] && [ ! -d docs/private ]; then
   # Fail, do not skip: a gate that quietly passes without its ledger is not a
   # gate. The ledger moved to the private repo on 2026-09-23.
@@ -47,7 +47,7 @@ fi
 #    for pre-commit-guard.sh no longer blanket-blocking git add — that guard
 #    watches filenames, this watches CONTENT, so a secret pasted into a
 #    source file or a fixture is caught too.
-echo "  [2/5] secret scan"
+echo "  [2/6] secret scan"
 if [ -x "$HOOK_DIR/secret-scan.sh" ]; then
   if ! "$HOOK_DIR/secret-scan.sh"; then
     echo "FAIL: secret scan. A ledger item was opened at critical severity."
@@ -58,19 +58,43 @@ else
   echo "    (no secret-scan.sh present, skipping)"
 fi
 
-# 3. Build. CI=false because CRA promotes warnings to errors under CI=true,
+# 3. Push gate. The publication gate (the text guard plus the git-native pre-push
+#    hook) is the only thing between a commit and a permanently public repo, and a
+#    later edit to either can reopen a gap without anyone noticing, so its end-to-end
+#    probes run on verify. They need no network: every fixture is a throwaway repo with
+#    a local bare remote. FAIL fails verify; a SKIP (the Linux-simulated Windows
+#    probes under Git Bash) does not. A missing
+#    harness fails too: a gate that quietly passes without its checks is not a gate.
+#    The probes take a couple of minutes, so .claude/tools/verify-push-gate.sh skips
+#    them when the four gate files, the harness and git itself are unchanged since the
+#    last PASS (it prints a note when it does), and it runs BEFORE the build so a gate
+#    failure does not throw away a finished build and browser run. The DOC probes lint
+#    the WORDING of CLAUDE.md and the skills, so they are excluded there: rewording a
+#    sentence must not fail the commit gate. A standalone run still runs them.
+echo "  [3/6] push gate"
+if [ ! -f .claude/tools/verify-push-gate.sh ]; then
+  echo "FAIL: .claude/tools/verify-push-gate.sh is missing, so the push gate cannot be checked."
+  exit 1
+fi
+if ! bash .claude/tools/verify-push-gate.sh; then
+  echo "FAIL: push gate. A publication-gate probe failed or could not run (see the FAIL lines above)."
+  echo "      Re-run with detail: bash .claude/tools/test-push-gate.sh"
+  exit 1
+fi
+
+# 4. Build. CI=false because CRA promotes warnings to errors under CI=true,
 #    which fails the build for lint noise rather than anything real.
-echo "  [3/5] build"
+echo "  [4/6] build"
 if ! CI=false npm run build >/tmp/rl-build.log 2>&1; then
   echo "FAIL: build. Last 30 lines:"
   tail -30 /tmp/rl-build.log
   exit 1
 fi
 
-# 4. Unit tests. A couple of seconds, and they cover the pure logic in src/lib
+# 5. Unit tests. A couple of seconds, and they cover the pure logic in src/lib
 #    and the live-chart model, so they run before the slow browser suite and
 #    fail fast. CI=true makes react-scripts exit instead of watching.
-echo "  [4/5] unit tests"
+echo "  [5/6] unit tests"
 if ! CI=true npm run test:unit >/tmp/rl-unit.log 2>&1; then
   echo "FAIL: unit tests. Last 40 lines:"
   tail -40 /tmp/rl-unit.log
@@ -78,20 +102,20 @@ if ! CI=true npm run test:unit >/tmp/rl-unit.log 2>&1; then
 fi
 grep -E "^(Test Suites|Tests):" /tmp/rl-unit.log | sed 's/^/    /'
 
-# 5. Browser tests. Visual assertions only run where a container can produce the
+# 6. Browser tests. Visual assertions only run where a container can produce the
 #    single -linux.png baseline set; everywhere else they are skipped and
 #    recorded as pending, never silently dropped.
 if [ "$RL_VISUAL" = "container" ]; then
-  echo "  [5/5] full suite (functional + visual)"
+  echo "  [6/6] full suite (functional + visual)"
   npm test || { echo "FAIL: test suite"; exit 1; }
   VISUAL=covered
 else
-  echo "  [5/5] functional only (visual unavailable: docker=${RL_DOCKER})"
+  echo "  [6/6] functional only (visual unavailable: docker=${RL_DOCKER})"
   npm run test:functional || { echo "FAIL: functional tests"; exit 1; }
   VISUAL=pending
 fi
 
-# 6. Record what was proven, and on which machine.
+# 7. Record what was proven, and on which machine.
 "$HOOK_DIR/state-hash.sh" > .session/verified-hash
 {
   echo "verified_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

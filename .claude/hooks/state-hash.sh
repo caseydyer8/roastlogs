@@ -35,7 +35,8 @@ fi
   # .claude/ is deliberately NOT hashed. Hook and tool edits do not change app
   # behaviour, and including them would cost a 45s re-verify for every comment
   # fix in a hook. That is a real gap, consciously left: a broken HOOK is
-  # caught by running it, not by the hash.
+  # caught by running it, not by the hash. (The four gate files below are the one
+  # exception.)
   # It lives in the private roastlogs-ops clone. If that clone is missing the
   # hash records the absence explicitly, so cloning it later still changes the
   # hash and forces a fresh verify.
@@ -44,4 +45,15 @@ fi
   else
     echo "no-private-ledger"
   fi
+  # THE PUSH GATE: the exception to ".claude/ is not hashed" above. These four ARE
+  # the publication gate. verify.sh step 6 runs the gate's own end-to-end probes,
+  # but a proof only means something if changing its input invalidates it. Without
+  # these lines an edit to the git hook, the push guard, the installer or the
+  # harness could be committed against a verified-hash recorded BEFORE the edit,
+  # and the probes meant to catch a reopened gap would never have run on it.
+  # Exactly these four, not .claude/ as a whole: the rest stays out for the reason
+  # above. A file that does not exist yet (an older branch) is simply absent from
+  # the hash, so adding it later changes the hash too.
+  "$H" .githooks/pre-push .claude/hooks/pre-push-guard.sh \
+       .claude/tools/test-push-gate.sh .claude/tools/install-push-gate.sh 2>/dev/null
 } | "$H" | cut -d' ' -f1
