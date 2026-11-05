@@ -100,10 +100,43 @@ trapped in agent config.
   - **Tests:** `npm run test:unit` (Jest, `src/**/*.test.js`) is `verify.sh` step 4.
     In a container the e2e needs `REACT_APP_SUPABASE_URL` set to the real, public
     project URL (the page's CSP only allows that host) with a placeholder anon key.
+- **v3.10.0 rules** (each has a failing-first test; read these before touching the area):
+  - **One RoR recipe:** `chartRor()` in `src/lib/curveSmoothing.js` (a centred +/-15 s
+    least-squares slope over temps smoothed +/-1 s) draws the live RoR line, the RoR
+    ghost (`planRor`) and the History chart. Never write the recipe inline again. The
+    RoR ghost is a faint dashed twin of the bean-temp ghost: it exists exactly when the
+    BT ghost is drawn and stays a gap around any hole in the source roast (no `connectNulls`).
+  - **First Crack (FC) ETA** (`src/lib/fcEta.js`; `FC_TARGET_F=400`, `ROR_MIN=5` F/min,
+    `ROR_RELEASE_S=5`): one "FC IN m:ss" chip on the live chart, Razzo (`hasProbe`) roasts
+    only. It starts at caramelization (`CARAMELIZATION_F=340` from `roastPhases.js`: a
+    logged entry, a stored rising crossing, or a late bridge join after 4:00), counts to
+    400 F, then counts up as "400 deg +m:ss", and is gone at FIRST CRACK or DROP. States:
+    counting / held / overdue. **The number never disappears** on flat, negative or
+    falling RoR: it goes HELD (muted, with a HELD tag) on `(400 - BT) / last good RoR`;
+    the `--:--` placeholder shows only when no usable RoR has ever existed. HELD is also
+    forced when the feed is quiet and when the roast clock is paused (`chipView`, including
+    the overdue state; every reload comes back paused).
+  - **Model contract:** `buildLiveChartModel` passes `lastRealBtT` (the last REAL bean-temp
+    second, not the carried reading) and builds the RoR it feeds fcEta from real samples
+    only at the trailing edge. The late-join latch (`fcEtaPriorRef`) lives in `App.js` so a
+    tab switch or closing the chart keeps it; a reload still loses a start found only by
+    the late-join rule (documented limit in the `fcEta.js` header).
+  - **Chart auto-open** (`src/lib/liveChartAutoOpen.js`): on a probe roast the chart opens
+    itself at START and when a reload lands in a running roast, once per roast, only when it
+    can draw now, within 15 s of START or page load, and never after COOLING START (a late
+    bridge join leaves it collapsed behind the readout). It stays mounted from START until
+    SAVE/DISCARD whatever the feed does. The readout keeps its slot ("Connecting", then
+    "Feed lost" after 15 s; "No signal" unchanged) so the chart can always be closed, and a
+    chart the feed took away is not brought back by the feed.
+  - **Phone layout rule:** nothing that comes and goes may sit above the Mark / PAUSE row.
+    The "Next step" strip sits BELOW it and the bean name shows once (setup bar), so at
+    390x844 with the chart open the Mark buttons end above the bottom nav (e2e-asserted).
+  - **Accuracy is synthetic only** until the back-test runs on real roasts (RL-062): on the
+    mock-device curve the chip reads about 8 s early at 60 s before 400 F, 2 s early at 30 s.
 - `roast.roastLog` is a mixed-type array stored **newest-first**; phase entries
   use labels `START` / `YELLOWING` / `FIRST CRACK` / `COOLING START`; temp
   values may be empty strings.
-- Almost everything lives in `src/App.js` (~5800 lines). Extracted components
+- Almost everything lives in `src/App.js` (~6000 lines). Extracted components
   go in `src/components/` (e.g. `src/components/charts/RoastCurveChart.jsx`).
 
 ## Deployment / Release
@@ -117,7 +150,7 @@ trapped in agent config.
   branch). Pushing `main` does NOT update the live site — deploy is separate.
 - **Version lives in THREE places** — bump all of them together:
   1. `package.json` `version`
-  2. The About modal badge in `src/App.js` (search the current version, e.g. `v3.9.2`)
+  2. The About modal badge in `src/App.js` (search the current version, e.g. `v3.10.0`)
   3. The backup export `appVersion` field in `src/App.js`
 - After deploying, verify: `curl` the live URL for 200, and remind that the
   Pages CDN takes 1–2 min (hard refresh / private window to confirm).

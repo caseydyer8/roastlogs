@@ -23,7 +23,8 @@ import {
 } from "../../lib/roastPhases";
 import { LIVE_GAP_S } from "../../lib/liveSample";
 import { MAX_ROAST_S } from "../../lib/limits";
-import { smoothSeries, rorSeries } from "../../lib/curveSmoothing";
+import { smoothSeries, chartRor, CHART_ROR_HALF_S } from "../../lib/curveSmoothing";
+import { computeFcEta, chipView } from "../../lib/fcEta";
 
 // ---------------------------------------------------------------------------
 // LiveRoastChart — the in-progress roast, drawn while it happens.
@@ -51,6 +52,8 @@ const WINDOW_SECONDS = 180; // the "last 3 minutes" scrolling window
 // visible before you reach them.
 const LOOKAHEAD = 30;
 const PLAN_MARK = { YELLOWING: "Y", "FIRST CRACK": "FC", "COOLING START": "DROP", MAILLARD: "MAI", CARAMELIZATION: "CAR" };
+// Tooltip row order on the temp panel (its series names).
+const TOOLTIP_ROWS = ["Temp", "Temp (plan)", "RoR", "RoR (plan)"];
 
 // The model builds one row per second, so what it sizes rows by must be bounded
 // (RL-030). Source-roast points and milestones outside 0..MAX_ROAST_S are not
@@ -87,6 +90,24 @@ function fillShortHoles(arr, maxRun) {
   return out;
 }
 
+// The source roast's rate of rise, one entry per second of `filled` (its readings
+// after fillShortHoles). chartRor is the live line's own recipe, so the two compare
+// like for like. On its own it would still price a window that merely touches a
+// hole -- rorSeries trims a null at the edge of its window and slopes what is left --
+// so the seconds either side of every hole are cleared too: the RoR ghost breaks
+// where the BT ghost does, a window's width wider. A hole is a null left BETWEEN
+// readings; seconds before the source's first reading are not one.
+function ghostRor(filled) {
+  const out = chartRor(filled);
+  const lead = filled.findIndex((v) => v != null);
+  if (lead < 0) return out;
+  for (let i = lead + 1; i < filled.length; i++) {
+    if (filled[i] != null) continue;
+    for (let k = Math.max(0, i - CHART_ROR_HALF_S); k <= Math.min(filled.length - 1, i + CHART_ROR_HALF_S); k++) out[k] = null;
+  }
+  return out;
+}
+
 // Temp and RoR display smoothing lives in src/lib/curveSmoothing.js, shared with
 // the History chart. The old 12 s difference / +/-4 s average recipe made RoR
 // read as mountain peaks on a real roast.
@@ -109,7 +130,11 @@ const stepSeconds = (step) =>
 // Pure model builder -- exported so the series maths (RoR smoothing, profile
 // overlay, carry-forward dials, phase boundaries) can be verified headlessly
 // rather than only by eyeballing a chart.
-export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, plan = null, elapsedSeconds = 0 }) {
+//
+// `showFcEta` is the equipment gate for the first-crack countdown (the caller passes
+// equipmentHasProbe); `fcEtaPrior` is the previous build's fcEta.nextPrior, which keeps a
+// late-join start alive (see fcEta.js).
+export function buildLiveChartModel({ curve = [], roastLog = [], profile = null, plan = null, elapsedSeconds = 0, showFcEta = false, fcEtaPrior = null }) {
     // Drop ends the tracked roast. The SR540 runs its own 3-minute cool cycle
     // afterwards and there is nothing worth charting in it, so once DROP is
     // logged the chart stops growing instead of trailing a flat empty tail
@@ -221,11 +246,43 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
     // slightly noisier than the settled curve behind it. Gaps stay gaps.
     const rawTemps = data.map((d) => d.temp);
     const shownTemps = smoothSeries(rawTemps, 2);
-    const rors = rorSeries(smoothSeries(rawTemps, 1), 15);
+    const rors = chartRor(rawTemps);
     for (let t = 0; t < data.length; t++) {
       data[t].temp = shownTemps[t] != null ? Math.round(shownTemps[t] * 10) / 10 : null;
       data[t].ror = rors[t] != null ? Math.round(rors[t] * 10) / 10 : null;
     }
+
+    // The first-crack countdown (src/lib/fcEta.js). This block is the other half of the
+    // "A DYING FEED" contract in that file's header:
+    //   temps        the line drawn above, so the number agrees with what it sits on;
+    //   lastRealBtT  the second of the newest REAL sample -- `carried` keeps data[].temp
+    //                non-null for LIVE_GAP_S after the feed dies, and from the arrays alone
+    //                a repeated reading looks measured. Same indexing as btAt (and so as
+    //                curveTs), limited to the seconds this model has a row for;
+    //   rors         the RoR line's own recipe, from real seconds only: nothing past
+    //                lastRealBtT, so a repeated reading can neither extend a run of good
+    //                rate nor flatten the rate a held value divides by. Holes inside the
+    //                reading stay bridged by `carried`, as they are for the line.
+    // A closed equipment gate builds nothing: the verdict is hidden whatever the data says.
+    let fcTemps = [];
+    let fcRors = [];
+    let lastRealBtT = null;
+    if (showFcEta) {
+      for (let i = curveTs.length - 1; i >= 0 && lastRealBtT === null; i--) {
+        if (curveTs[i] <= total) lastRealBtT = curveTs[i];
+      }
+      fcTemps = data.map((d) => d.temp);
+      fcRors = chartRor(rawTemps.map((v, t) => (lastRealBtT !== null && t <= lastRealBtT ? v : null)));
+    }
+    const fcEta = computeFcEta({
+      temps: fcTemps,
+      rors: fcRors,
+      elapsed: Math.min(elapsedSeconds, MAX_ROAST_S),
+      marks: b,
+      hasProbe: showFcEta,
+      prior: fcEtaPrior,
+      lastRealBtT: lastRealBtT !== null ? lastRealBtT : undefined,
+    });
 
     // The ghost. Only while the roast is still running: after DROP the chart stops
     // growing, and there is nothing left to steer by.
@@ -276,26 +333,31 @@ export function buildLiveChartModel({ curve = [], roastLog = [], profile = null,
       lookahead = LOOKAHEAD;
 
       const rowsEnd = Math.max(total + lookahead, planEnd);
-      const ghost = smoothSeries(
-        fillShortHoles(Array.from({ length: lastCurveT + 1 }, (_, t) => (byT.has(t) ? byT.get(t) : null)), LIVE_GAP_S),
-        2
-      );
+      const bridged = fillShortHoles(Array.from({ length: lastCurveT + 1 }, (_, t) => (byT.has(t) ? byT.get(t) : null)), LIVE_GAP_S);
+      const ghost = smoothSeries(bridged, 2);
+      // The pace is read from the bridged readings, not from `ghost`: the live RoR
+      // comes from the raw readings, never from the +/-2 s line you look at, and
+      // the ghost's must too. The BT ghost has no time shift, so neither does
+      // this: both clocks count roast-seconds from START.
+      const ghostRors = ghostStatus === "drawn" ? ghostRor(bridged) : [];
       for (let t = 0; t <= rowsEnd; t++) {
         const planTemp = ghost[t] != null ? Math.round(ghost[t] * 10) / 10 : null;
+        const planRor = ghostRors[t] != null ? Math.round(ghostRors[t] * 10) / 10 : null;
         if (t < data.length) {
           data[t].planTemp = planTemp;
+          data[t].planRor = planRor;
         } else {
           while (sIdx < steps.length && steps[sIdx].t <= t) {
             pHeat = steps[sIdx].heat;
             pFan = steps[sIdx].fan;
             sIdx++;
           }
-          data.push({ t, temp: null, heat: null, fan: null, profHeat: pHeat, profFan: pFan, ror: null, planTemp });
+          data.push({ t, temp: null, heat: null, fan: null, profHeat: pHeat, profFan: pFan, ror: null, planTemp, planRor });
         }
       }
     }
 
-    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead, ghost: ghostStatus, ghostReason };
+    return { data, total, yellowing, maillard, caramelization, firstCrack, drop, moments, lastBt, hasProfile: steps.length > 0, planMarkers, planEnd, lookahead, ghost: ghostStatus, ghostReason, fcEta };
 }
 
 export default function LiveRoastChart({
@@ -307,6 +369,9 @@ export default function LiveRoastChart({
   windowMode = "scroll", // "scroll" (last 3 min, pannable) | "expand" (whole roast)
   onWindowModeChange,
   attached = false, // rendered inside the hero card -> no border/background of its own
+  showFcEta = false, // the first-crack countdown: a Razzo probe roast only (App passes equipmentHasProbe)
+  paused = false, // the roast clock is stopped, so the model is not re-run and a countdown is stale
+  fcEtaPriorRef = null, // App's { current } holding the countdown's memory across this chart's mounts
 }) {
   const [panOffset, setPanOffset] = React.useState(0); // seconds scrolled back from live
   const following = panOffset === 0;
@@ -340,12 +405,30 @@ export default function LiveRoastChart({
     return () => ro.disconnect();
   });
 
+  // The countdown's memory: each build is handed the previous build's verdict-to-be, which
+  // is how a start found by the late-join rule (in no log and no crossing) outlives the bean
+  // dipping back under 340 F. Written after the commit and read by the next build, so
+  // render itself stays pure. The ref is APP's (fcEtaPriorRef, reset when no roast is under
+  // way), not this component's: the Roast tab unmounts on a tab switch and the readout's toggle
+  // unmounts and remounts the chart, and a memory that died with each mount would drop the chip
+  // on return whenever the bean sat under 340 F. A reload is still the limit (see fcEta.js).
+  // Without the prop (nobody above is holding it) the chart keeps its own, per mount.
+  const ownPriorRef = React.useRef(null);
+  const priorRef = fcEtaPriorRef || ownPriorRef;
   const model = React.useMemo(
-    () => buildLiveChartModel({ curve, roastLog, profile, plan, elapsedSeconds }),
-    [curve, roastLog, profile, plan, elapsedSeconds]
+    () => buildLiveChartModel({ curve, roastLog, profile, plan, elapsedSeconds, showFcEta, fcEtaPrior: priorRef.current }),
+    [curve, roastLog, profile, plan, elapsedSeconds, showFcEta, priorRef]
   );
+  React.useEffect(() => {
+    priorRef.current = model.fcEta.nextPrior;
+  }, [model, priorRef]);
 
-  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead, ghostReason } = model;
+  const { data, total, maillard, caramelization, firstCrack, drop, moments, hasProfile, planMarkers, planEnd, lookahead, ghost, ghostReason, fcEta } = model;
+
+  // Paused, the clock is stopped and the model is not re-run, so nothing on the chip is live:
+  // EVERY visible state keeps its own text and takes the held look -- a counting number is stale,
+  // and an overdue +m:ss is frozen, not counting (see chipView).
+  const fcChip = chipView(fcEta, paused);
 
   // X domain: either the whole roast, or a trailing window the user can pan.
   const domain = React.useMemo(() => {
@@ -540,6 +623,7 @@ export default function LiveRoastChart({
           this exact domain and carries the one time ruler for both panels.
           Two identical rulers 80px apart was the single biggest piece of
           restatement in this zone. */}
+      <div className="relative">
       <ResponsiveContainer width="100%" height={attached ? 116 : 134}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="rgb(var(--border-color))" strokeOpacity={0.35} vertical={false} />
@@ -607,6 +691,11 @@ export default function LiveRoastChart({
             contentStyle={{ background: "rgb(var(--bg-surface))", border: "1px solid rgb(var(--border-color))", borderRadius: 12, fontSize: 11 }}
             labelFormatter={tooltipLabel}
             formatter={(v, n) => [v, n]}
+            // Painted above the countdown chip, which sits over the plot's top-left.
+            wrapperStyle={{ zIndex: 20 }}
+            // Each live value with its plan underneath. Recharts' default sorts by
+            // name, which would read RoR first.
+            itemSorter={(item) => TOOLTIP_ROWS.indexOf(item.name)}
           />
           {/* connectNulls is deliberately OFF on these two. This model already
               emits temp: null for a second with no reading (btAt is a per-second
@@ -629,12 +718,21 @@ export default function LiveRoastChart({
               label={{ value: m.tag, position: "insideTopRight", fontSize: 8, fill: "rgb(var(--chart-tick))" }}
             />
           ))}
-          {/* The source roast's bean-temp curve: drawn first so the live curve
-              sits on top of what it is being steered against. No connectNulls:
-              fillShortHoles already bridged every hole of LIVE_GAP_S or less, so
-              a null left in the ghost is a stretch where the source roast's probe
-              was out. It stays a gap rather than a dashed line to steer by over
-              readings that never existed. */}
+          {/* The source roast's pace, the twin of the bean-temp ghost below: the same
+              dash and faintness in the RoR colour. It exists exactly when the BT
+              ghost is drawn (a source too short for a pace simply has none) and,
+              like it, has no connectNulls: the model leaves it null around a source
+              hole. The ghost stack mirrors the live one, so every ghost sits under
+              every live line. */}
+          {ghost === "drawn" && planEnd > 0 && (
+            <Line yAxisId="ror" type="monotone" dataKey="planRor" name="RoR (plan)" stroke="rgb(var(--chart-ror))" strokeWidth={1.2} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} isAnimationActive={false} />
+          )}
+          {/* The source roast's bean-temp curve, drawn before the live lines so the
+              live curve sits on top of what it is being steered against. No
+              connectNulls: fillShortHoles already bridged every hole of LIVE_GAP_S
+              or less, so a null left in the ghost is a stretch where the source
+              roast's probe was out. It stays a gap rather than a dashed line to
+              steer by over readings that never existed. */}
           {planEnd > 0 && (
             <Line yAxisId="temp" type="monotone" dataKey="planTemp" name="Temp (plan)" stroke="rgb(var(--chart-temp))" strokeWidth={1.4} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} isAnimationActive={false} />
           )}
@@ -643,6 +741,41 @@ export default function LiveRoastChart({
           <ReferenceLine x={now} yAxisId="temp" stroke="rgb(var(--accent-fill))" strokeOpacity={0.5} strokeDasharray="2 3" />
         </ComposedChart>
       </ResponsiveContainer>
+      {/* First-crack countdown: one small window over the plot's top-left, where the
+          curve is not yet (it climbs left to right) and, WHILE THE RoR AXIS FLOOR IS 0, the
+          RoR line is not either. That condition is what the placement rests on: a charge dip
+          pulls the floor down to about -99, and a 14-54 F/min RoR can then run under the chip's
+          band in the 3-minute view at 390 px. Not verified on a device yet (visual_pending);
+          the A11 check is the one that looks. An overlay, so nothing under the thumb moves
+          when it arrives, and pointer-events-none so a finger scanning the chart under it still
+          gets the tooltip. 48px = the 42px temp axis + 6. From the 340 F crossing until First
+          crack or DROP; a feed that goes quiet, a paused clock or a flat rate only make it
+          HELD -- the number stays. The HELD tag sits under the label, so a held chip is no
+          wider than a counting one. */}
+      {showFcEta && fcChip.parts && (
+        <div
+          data-testid="fc-eta"
+          data-state={fcChip.state}
+          role="timer"
+          aria-label={fcChip.parts.ariaLabel}
+          className={`pointer-events-none absolute left-[48px] top-2 flex items-center gap-1.5 rounded-md bg-surface/85 px-1.5 py-0.5 ${
+            fcChip.state === "overdue" ? "ring-1 ring-accent/50" : ""
+          }`}
+        >
+          <span className="flex flex-col items-start gap-px font-mono text-[9px] uppercase leading-[11px] tracking-[0.16em] text-ink-muted">
+            <span>{fcChip.parts.label}</span>
+            {fcChip.parts.tag && <span>{fcChip.parts.tag}</span>}
+          </span>
+          <span
+            className={`font-mono text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums ${
+              fcChip.parts.muted ? "text-ink-muted" : "text-accent-text"
+            }`}
+          >
+            {fcChip.parts.numeral}
+          </span>
+        </div>
+      )}
+      </div>
 
       {/* Control map: actual vs planned */}
       <ResponsiveContainer width="100%" height={attached ? 90 : 104}>

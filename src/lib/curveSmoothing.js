@@ -70,3 +70,14 @@ export function rorSeries(values, half = 15) {
     return denom ? (60 * (n * sxy - sx * sy)) / denom : null;
   });
 }
+
+// Half-width of the RoR window the live chart and its source-roast ghost use.
+export const CHART_ROR_HALF_S = 15;
+
+// The RoR recipe the live chart draws: temps lightly smoothed (+/-1 s), then the
+// centred +/-15 s slope. The live line AND the source-roast ghost both call this,
+// so the two cannot drift apart -- a ghost run through a different calculation
+// would show calculation noise, not a difference between the roasts.
+export function chartRor(values) {
+  return rorSeries(smoothSeries(values, 1), CHART_ROR_HALF_S);
+}
