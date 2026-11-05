@@ -1,0 +1,179 @@
+#!/bin/sh
+# roastlogs-push-gate v1
+#
+# Git-native publication gate: the INNER layer. Git itself runs this at push
+# time, inside the repo that is really pushing, and hands it the real facts:
+#   $1  remote name          $2  the URL git will actually push to
+#   stdin, one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+# so it sees the post-commit SHA, every ref, the real repo and the real URL. It fires
+# however git was invoked (wrapper, alias, subshell, GIT_DIR aimed at that clone),
+# for pushes run inside an installed clone. It does NOT fire in a clone the installer
+# has not run in, nor in ANY other repository a command points git at: git runs a
+# hook only where the repo's own config names it. That is why
+# .claude/hooks/pre-push-guard.sh stays as the OUTER layer: it reads the text of
+# Claude's command, refuses to let that command switch this hook off or aim git at
+# another repo, and is the only thing standing in a clone without the hook.
+#
+# POSIX sh plus git only, on purpose: no python, so it cannot fail open on a
+# missing interpreter, and it behaves the same on the Mac and the HP.
+#
+# WHAT IT ENFORCES. A push of ONE branch is allowed only when
+# $TOP/.session/publish-clearance equals the exact range this push publishes,
+# which is the same range /publish-review clears:
+#   existing remote branch   <remote sha>..<local sha>
+#   new remote branch        merge-base(origin/main, <local sha>)..<local sha>
+# Everything else that is not a plain branch push is refused: tags, --mirror's
+# refs/remotes/*, --all and any other multi-ref push (a clearance covers one
+# range), a repo mismatch from GIT_DIR, a malformed line, a range that cannot be
+# resolved. Deletes publish nothing and pass. A push whose range holds no commit
+# (a new branch created AT origin/main, a branch moved back onto commits already
+# there) publishes nothing new and passes; if git cannot count the range, it is
+# refused. Pushes to the PRIVATE ops repo pass; nothing there becomes public. An
+# up-to-date push sends no ref lines.
+#
+# This hook only reads and exits 0 or 1. It never changes a ref or a file.
+#
+# TURNING IT OFF (Case, from his OWN terminal; a PreToolUse hook never sees it):
+#   one push     git push --no-verify ...
+#   this clone   git config --unset core.hooksPath      (all worktrees share it)
+#                git config --get core.hooksPath        (prints nothing, exits 1)
+# It is enabled per clone by .claude/tools/install-push-gate.sh, which COPIES this
+# file to <git dir>/push-gate/pre-push and points core.hooksPath at that directory
+# (absolute). A copy, not a path into a work tree: a checkout of a branch with no
+# .githooks/ would otherwise leave core.hooksPath pointing at nothing, and git
+# then runs no hook and says nothing. After this file changes and is merged, pull main
+# in the main checkout and run the installer again to refresh the copy. The push guard
+# DENIES a copy that matches neither committed version (HEAD, origin/main, or
+# refs/heads/main) of this file, and session-start warns when it differs from the
+# checked-out one.
+#
+# THE LIMITS. This is a speed bump, not a wall. Only a server-side rule on GitHub is a wall.
+
+# The tools below (grep, tr, cat, git) are found through PATH. Pin the system
+# directories first, so a directory put ahead of them on PATH cannot supply a grep
+# that always says yes.
+PATH="/usr/bin:/bin:$PATH"; export PATH
+
+OPS_URL_RE='^(https://([^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)caseydyer8/roastlogs-ops(\.git)?/?$'
+
+deny() {
+  {
+    printf 'push gate: BLOCKED. %s\n' "$1"
+    printf '%s\n' "  Case only, from his own terminal: 'git push --no-verify' skips this for one push;"
+    printf '%s\n' "  'git config --unset core.hooksPath' turns the gate off for this clone."
+  } >&2
+  exit 1
+}
+
+is_sha() {
+  case "$1" in
+    "" | *[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+}
+
+is_zero() {
+  case "$1" in
+    *[!0]*) return 1 ;;
+  esac
+  return 0
+}
+
+INPUT=$(cat) || deny "could not read the list of refs from git. Nothing was pushed."
+
+# 1. An up-to-date push calls the hook with no ref lines: nothing to publish.
+[ -n "$INPUT" ] || exit 0
+
+# 2. The PRIVATE ops repo. Decided on $2, the URL git really uses, anchored at
+#    both ends so a look-alike host cannot borrow the exemption. (The same
+#    expression as pre-push-guard.sh.)
+#    grep -E matches LINE BY LINE, so "anchored at both ends" holds only for one line:
+#    a URL with a second line in it matched on that line. Any control character in
+#    the URL rules the exemption out.
+case "$2" in
+  *[[:cntrl:]]*) ;;
+  *) if printf '%s' "$2" | grep -qE "$OPS_URL_RE"; then exit 0; fi ;;
+esac
+
+# 3. Which repo is this? The clearance and the range live in the checkout this
+#    push runs FROM. Git sets GIT_DIR for ordinary worktree pushes, so "GIT_DIR
+#    is set" is not the test. The test is whether the git dir in force is the
+#    one a plain lookup from the top-level would find. GIT_DIR=<other repo> from
+#    another cwd makes those differ, and the clearance would be read from the
+#    wrong checkout.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+[ -n "$TOP" ] || deny "cannot find the top level of the repository this push runs from."
+GD_NOW=$(git rev-parse --absolute-git-dir 2>/dev/null)
+GD_TOP=$(
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_PREFIX
+  cd "$TOP" 2>/dev/null && git rev-parse --absolute-git-dir 2>/dev/null
+)
+if [ -z "$GD_NOW" ] || [ "$GD_NOW" != "$GD_TOP" ]; then
+  deny "this push runs against a git dir that is not the checkout it was started from (GIT_DIR or --git-dir points at another repository). Nothing was pushed."
+fi
+
+# 4-7. Walk what git is about to send.
+NREF=0
+REF_LSHA=""
+REF_RSHA=""
+while read -r LREF LSHA RREF RSHA EXTRA; do
+  if [ -z "$LREF" ] || [ -z "$RREF" ] || [ -n "$EXTRA" ] || ! is_sha "$LSHA" || ! is_sha "$RSHA"; then
+    deny "git sent a ref line this gate cannot read ('$LREF $LSHA $RREF $RSHA $EXTRA'). Denying rather than guessing."
+  fi
+  # A delete publishes nothing.
+  if is_zero "$LSHA"; then
+    continue
+  fi
+  # Only plain branches. A tag, --mirror's refs/remotes/*, refs/for/*, refs/notes/*
+  # cannot be described by a single reviewed range.
+  case "$RREF" in
+    refs/heads/?*) ;;
+    *) deny "'$RREF' is not a branch. Only a push of one branch (refs/heads/*) can be cleared; tags and other refs cannot." ;;
+  esac
+  NREF=$((NREF + 1))
+  if [ "$NREF" -gt 1 ]; then
+    deny "more than one ref in a single push (--all, --mirror or several refspecs). A clearance covers one range, so push one branch at a time."
+  fi
+  REF_LSHA=$LSHA
+  REF_RSHA=$RSHA
+done <<EOF
+$INPUT
+EOF
+
+[ "$NREF" -gt 0 ] || exit 0
+
+# 8. The range this push publishes. Fail closed if it cannot be resolved: a
+#    shallow clone can lose the merge-base, and a stale origin/main is wrong.
+if is_zero "$REF_RSHA"; then
+  BASE=$(git merge-base refs/remotes/origin/main "$REF_LSHA" 2>/dev/null)
+  [ -n "$BASE" ] || deny "this is a new branch and the merge-base with origin/main cannot be found (shallow clone, or origin/main missing). Run 'git fetch' (or 'git fetch --deepen=50'), then /publish-review."
+else
+  BASE=$REF_RSHA
+fi
+RANGE="${BASE}..${REF_LSHA}"
+
+#    A range with no commit in it publishes nothing new, so there is nothing to
+#    review and /publish-review has no clearance to write for it (it stops on an
+#    X..X range): without this the only way through was --no-verify. Counted, not
+#    string-compared, and FAIL CLOSED: if rev-list cannot count (the remote sha is an
+#    object this clone does not have, say) that is a refusal, never "zero".
+NNEW=$(git rev-list --count "${BASE}..${REF_LSHA}" 2>/dev/null) \
+  || deny "cannot count the commits this push would publish (git rev-list ${RANGE} failed; the remote branch tip is probably an object this clone does not have). Run 'git fetch', then /publish-review."
+case "$NNEW" in
+  "" | *[!0-9]*) deny "cannot read the number of commits this push would publish ('${NNEW}' for ${RANGE}). Denying rather than guessing." ;;
+esac
+if [ "$NNEW" -eq 0 ]; then
+  exit 0
+fi
+
+# 9. Exact match against the clearance /publish-review wrote for this checkout.
+CLEARANCE="$TOP/.session/publish-clearance"
+if [ ! -f "$CLEARANCE" ]; then
+  deny "nothing has been cleared for publication. This repo is PUBLIC and a push is irreversible. Run 'git fetch', then /publish-review. Range needing review: ${RANGE}"
+fi
+CLEARED=$(tr -d ' \t\n\r' < "$CLEARANCE" 2>/dev/null)
+if [ "$CLEARED" != "$RANGE" ]; then
+  deny "the clearance on file does not match what this push publishes. Cleared: '${CLEARED:-none}'. This push: '${RANGE}'. A clearance covers one exact range and any new commit voids it; if origin/<branch> is stale, 'git fetch' first. Re-run /publish-review."
+fi
+
+exit 0

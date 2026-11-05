@@ -19,7 +19,14 @@ file. You report, and a human decides.
 ## What you are reviewing
 
 Your input is the complete outbound payload — not the working tree, not the
-whole repo. Establish it yourself:
+whole repo.
+
+The git-native `pre-push` hook re-checks this same range when git pushes, so
+`origin/$BR` has to be fresh. You are read-only and do not fetch: if the range
+looks stale, say so in your check-in and let the calling session `git fetch`
+and re-run.
+
+Establish the range yourself:
 
 ```bash
 BR="$(git rev-parse --abbrev-ref HEAD)"

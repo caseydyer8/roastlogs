@@ -76,6 +76,40 @@ if [ "$RL_NO_NET" != "1" ]; then
   fi
 fi
 
+# --- 2a. The push gate -------------------------------------------------------
+# .githooks/pre-push is the real publication gate, but it runs only where
+# core.hooksPath points at an installed copy, and that is per-clone local config.
+# A new clone (the HP, a fresh container) is unguarded against wrapped pushes
+# until .claude/tools/install-push-gate.sh has run. This only WARNS: it never
+# sets or changes core.hooksPath. That is all it promises. A deliberate rollback
+# (Case unsetting core.hooksPath) is not undone by this hook, and is not a lock
+# either: what holds Claude back is the rule and the push guard, which both say
+# "Ask Case" and which refuse the common spellings of Claude running the installer. After a
+# rollback the push guard still reads Claude's commands, and Case pushes himself.
+# It also always prints the EFFECTIVE core.hooksPath value, so one that quietly turns
+# the hook off (/dev/null, an empty directory) is obvious at a glance rather than
+# being "a path that exists".
+# Paths: "absolute" includes the drive-letter spelling Git Bash reports (C:/... or
+# C:\...); a bare "C:x" is relative. Keep in step with pre-push-guard.sh.
+GATE_PATH="$(git config --get core.hooksPath 2>/dev/null)"
+OUT="${OUT}  push gate: core.hooksPath = ${GATE_PATH:-(unset)}"$'\n'
+GATE_WHY=""
+GATE_STALE=""
+case "$GATE_PATH" in
+  "") GATE_WHY="core.hooksPath is unset" ;;
+  /?*|[A-Za-z]:/?*|[A-Za-z]:\\?*|\\\\?*)
+    if [ ! -x "$GATE_PATH/pre-push" ] || ! grep -q 'roastlogs-push-gate v1' "$GATE_PATH/pre-push" 2>/dev/null; then
+      GATE_WHY="${GATE_PATH} has no executable pre-push carrying the push-gate marker"
+    elif [ -f .githooks/pre-push ] && [ "$(tr -d '\r' < .githooks/pre-push)" != "$(tr -d '\r' < "$GATE_PATH/pre-push")" ]; then
+      # Differs from THIS checkout's file: the copy is old, or this checkout is.
+      GATE_STALE=1
+    fi
+    ;;
+  *) GATE_WHY="core.hooksPath is relative, so it runs no hook from another directory or a worktree" ;;
+esac
+[ -n "$GATE_WHY" ] && OUT="${OUT}  push gate: NOT installed (${GATE_WHY}). Ask Case to run: bash .claude/tools/install-push-gate.sh"$'\n'
+[ -n "$GATE_STALE" ] && OUT="${OUT}  push gate: STALE copy (the installed pre-push differs from .githooks/pre-push here). Claude's pushes are still allowed if the copy equals the hook committed at HEAD or at origin/main, and denied if it matches neither. If this checkout is the newer one: Ask Case to re-run: bash .claude/tools/install-push-gate.sh (from the main checkout)"$'\n'
+
 # --- 2b. The private ops repo is a SECOND drift point ------------------------
 # docs/private/ is its own git repository (caseydyer8/roastlogs-ops), so the
 # check above cannot see it. A stale ledger is the same 2026-09-07 failure

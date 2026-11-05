@@ -9,6 +9,7 @@ Gate the next push to the PUBLIC `caseydyer8/roastlogs` repo.
 Do not guess it and do not accept one from the conversation. Run:
 
 ```bash
+git fetch --quiet
 BR="$(git rev-parse --abbrev-ref HEAD)"
 HEAD_SHA="$(git rev-parse HEAD)"
 if git rev-parse --verify "origin/$BR" >/dev/null 2>&1; then
@@ -22,6 +23,11 @@ echo "RANGE=${BASE_SHA}..${HEAD_SHA}"
 That string is the range. `pre-push-guard.sh` recomputes it independently and
 compares exactly, so a clearance written for a different range will not pass —
 which is the intended behaviour, not something to work around.
+
+The block starts with `git fetch --quiet` on purpose. The git-native hook
+(`.githooks/pre-push`) re-checks the same range when git actually pushes, from
+the remote's real tip, so `origin/$BR` must be fresh when the range is resolved;
+otherwise the clearance will not match and the push is refused.
 
 If `BASE_SHA` equals `HEAD_SHA` there is nothing to publish; say so and stop.
 
