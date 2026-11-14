@@ -1,12 +1,11 @@
 import React from "react";
 import { supabase } from "../supabaseClient";
+import { USER_DATA_KEYS } from "../lib/userDataKeys";
 
 const AuthContext = React.createContext(null);
 
-// User-owned localStorage caches (NOT device preferences like theme/units).
-// All four are cloud-backed as of Phase 2, so purging them is recoverable.
-const SYNCED_DATA_KEYS = ["roasts", "tastingNotes", "beans"];
-const USER_DATA_KEYS = [...SYNCED_DATA_KEYS, "global_profiles"];
+// User-owned caches purged on an account switch: USER_DATA_KEYS, in src/lib/userDataKeys.js
+// (includes the RL-076 pending-upload list).
 const DATA_OWNER_KEY = "roastlogs_data_owner";
 // Purged data is moved aside rather than deleted, so a bad purge is recoverable.
 // There is no PITR on the Supabase free plan, so "recoverable" matters.
