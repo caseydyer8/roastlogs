@@ -30,14 +30,36 @@ async function currentUserId() {
   }
 }
 
-export async function syncRoastToSupabase(roast) {
+// S2: every roast write is aborted (not merely raced) after this long, so one hung
+// request cannot hold a per-id queue or the single-flight drain forever, and a late
+// write can never land after a newer one. Overridable for tests.
+let requestTimeoutMs = 30000;
+export function setRequestTimeoutMs(ms) {
+  requestTimeoutMs = ms;
+}
+
+// Runs `build(signal)` (a supabase query builder with .abortSignal applied) and aborts it
+// on timeout. An abort surfaces as an error from the builder, which the caller maps to false.
+async function withTimeout(build) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    return await build(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// `expectedUid` (optional): when given and the signed-in user is anyone else, nothing is sent.
+export async function syncRoastToSupabase(roast, expectedUid) {
   console.log('syncRoastToSupabase called with id:', roast.id)
   try {
     // Strip photo fields before syncing
     const cleanRoast = stripPhotoFields(roast);
     const uid = await currentUserId();
+    if (expectedUid != null && uid !== expectedUid) return false;
     
-    const { data, error } = await supabase
+    const { data, error } = await withTimeout((signal) => supabase
       .from('roasts')
       .upsert({
         id: Number(cleanRoast.id),
@@ -56,7 +78,8 @@ export async function syncRoastToSupabase(roast) {
         curve: cleanRoast.curve,
         equipment: cleanRoast.equipment,
         bean_id: cleanRoast.beanId ?? null,
-      });
+      })
+      .abortSignal(signal));
 
     if (error) throw error;
     return true;
@@ -68,10 +91,11 @@ export async function syncRoastToSupabase(roast) {
 
 export async function deleteRoastFromSupabase(id) {
   try {
-    const { error } = await supabase
+    const { error } = await withTimeout((signal) => supabase
       .from('roasts')
       .delete()
-      .eq('id', Number(id));
+      .eq('id', Number(id))
+      .abortSignal(signal));
 
     if (error) throw error;
     return true;

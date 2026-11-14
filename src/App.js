@@ -22,6 +22,7 @@ import { LIVE_GAP_S } from "./lib/liveSample";
 import { CARAMELIZATION_F } from "./lib/roastPhases";
 import { csvEscape } from "./lib/csv";
 import { storedPreheatTarget } from "./lib/preheatTarget";
+import { readPending, markPending, clearPending, markDeleted, hasUploadInFlight, enqueueUpload, sendLatest, drainPending, withoutTombstoned, queueCloudDelete } from "./lib/pendingUploads";
 import { LIVE_CURVE_KEY, SAVED_ROAST_KEY, liveSessionKeys, liveSessionStamp, liveSessionAlreadySaved, markRoastSaved, clearSavedMarker, settleSavedLiveSession } from "./lib/liveSession";
 
 // Brand-mark coffee cup — replaces the ☕ emoji on login / splash / About.
@@ -910,6 +911,9 @@ function App() {
   // far. Both are built so the better one can be chosen from real use.
   const [liveChartWindow, setLiveChartWindow] = React.useState("scroll");
   const { user, signOut } = useAuth();
+  // The id a pending upload is stamped with and drained under (null under the e2e bypass).
+  const userIdRef = React.useRef(null);
+  userIdRef.current = user?.id ?? null;
   const [activeTab, setActiveTab] = React.useState("Roast");
   // IDEA-006: cross-component prefill for "Log a Session" from a Bean Detail view (no localStorage handoff)
   const [prefillBean, setPrefillBean] = React.useState(null);
@@ -1143,6 +1147,7 @@ function App() {
   // the initial sync seeds them — prevProfilesRef is the diff baseline, and
   // profilesDirtyRef records whether the user has already edited profiles.
   const prevProfilesRef = React.useRef(null);
+  const initialFetchOkRef = React.useRef(false); // RL-076: set once the launch roast fetch succeeds
   const profilesDirtyRef = React.useRef(false);
 
   // Supabase sync on mount
@@ -1185,7 +1190,9 @@ function App() {
       const mergedRoasts = [...localRoasts];
       let hasNewData = false;
 
-      cloudRoasts.forEach(cloudRoast => {
+      // A roast the user deleted whose upload landed after the DELETE has a tombstone:
+      // never bring it back (the drain below deletes it from the cloud again).
+      withoutTombstoned(cloudRoasts, readPending(localStorage)).forEach(cloudRoast => {
         const localIndex = mergedRoasts.findIndex(r => Number(r.id) === Number(cloudRoast.id));
         if (localIndex === -1) {
           mergedRoasts.push(cloudRoast);
@@ -1198,7 +1205,24 @@ function App() {
         localStorage.setItem("roasts", JSON.stringify(mergedRoasts));
         setRoastsRev((rev) => rev + 1); // after the write, so livePlan's re-read sees it
       }
-      
+
+      // RL-076: the roast fetch worked, so retry roasts that failed to upload earlier.
+      // Only ids on the pending list and still in local storage are ever sent.
+      // Started now, awaited just before the status is computed, so the brews /
+      // beans / profiles fetches below are not held up behind it.
+      initialFetchOkRef.current = true;
+      const launchUid = userIdRef.current;
+      const launchDrain = drainPending({
+        storage: localStorage,
+        uid: launchUid,
+        upload: syncRoastToSupabase,
+        remove: deleteRoastFromSupabase,
+        // Stop if this instance unmounted or a different account owns the cache now.
+        isCurrent: () =>
+          !cancelled &&
+          (launchUid == null || localStorage.getItem("roastlogs_data_owner") === launchUid),
+      }).catch(() => null);
+
       // Sync brews/tasting notes
       const cloudBrews = await fetchBrewsFromSupabase();
       if (cancelled) return;
@@ -1293,6 +1317,9 @@ function App() {
         }
       }
 
+      await launchDrain;
+      if (cancelled) return;
+
       // NOTE: quarantined caches (`<key>__quarantine`) are deliberately NEVER
       // auto-cleared here. A successful sync only proves THIS account's data is
       // in the cloud — it says nothing about whose data was quarantined. Clearing
@@ -1302,6 +1329,12 @@ function App() {
         cloudBrews !== null && cloudBeans !== null && cloudProfiles !== null;
 
       if (!allFetchesOk) {
+        setSyncStatus('error');
+        return;
+      }
+
+      // A roast still waiting to upload must not read as green.
+      if (readPending(localStorage).length > 0) {
         setSyncStatus('error');
         return;
       }
@@ -1320,6 +1353,51 @@ function App() {
     // the previous user's async writes land AFTER the new user's cache purge —
     // re-seeding their data and even uploading it under the new account's id.
     return () => { cancelled = true; };
+  }, []);
+
+  // RL-076: retry pending uploads when the network returns and when the app comes
+  // back to the foreground (at most once per 30 s). Never before the launch sync's
+  // roast fetch has succeeded once.
+  React.useEffect(() => {
+    let alive = true;
+    let lastRun = 0;
+    const run = async () => {
+      if (readPending(localStorage).length === 0) return;
+      if (!initialFetchOkRef.current) {
+        // The session launched offline, so the launch drain never ran. Prove the
+        // cloud answers before uploading anything.
+        const cloudRoasts = await fetchRoastsFromSupabase();
+        if (!alive || !Array.isArray(cloudRoasts)) return;
+        initialFetchOkRef.current = true;
+      }
+      const uid = userIdRef.current;
+      const res = await drainPending({
+        storage: localStorage,
+        uid,
+        upload: syncRoastToSupabase,
+        remove: deleteRoastFromSupabase,
+        isCurrent: () =>
+          alive && (uid == null || localStorage.getItem("roastlogs_data_owner") === uid),
+      });
+      if (!alive || res.skipped) return; // a drain already running owns the status
+      if (res.remaining > 0) setSyncStatus('error');
+      else if (res.sent > 0) setSyncStatus('success');
+    };
+    const onOnline = () => { run().catch(() => {}); };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastRun < 30000) return;
+      lastRun = now;
+      run().catch(() => {});
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   const startEditing = (roast) => {
@@ -1746,7 +1824,11 @@ function App() {
 
     // Supabase Sync
     setSyncStatus('syncing');
-    const firstSync = syncRoastToSupabase(newRoast).then(success => {
+    // RL-076: on the pending list BEFORE the upload is tried; it comes off only on a
+    // confirmed upload of an unchanged stored copy (a retry handles the rest).
+    markPending(localStorage, newRoast.id, userIdRef.current);
+    const firstSync = enqueueUpload(newRoast.id, () => sendLatest(localStorage, newRoast.id, syncRoastToSupabase)).then(success => {
+      if (success === null) return; // deleted before its turn: nothing sent, no result to show
       setSyncStatus(success ? 'success' : 'error');
     });
 
@@ -2158,7 +2240,11 @@ function App() {
     
     // Supabase Sync
     setSyncStatus('syncing');
-    syncRoastToSupabase(roastToSave).then(success => {
+    // Pending first, so a failed send is retried at the next launch / online event.
+    markPending(localStorage, roastToSave.id, userIdRef.current);
+    // Queued behind any earlier write of this roast; sends what is stored when its turn comes.
+    enqueueUpload(roastToSave.id, () => sendLatest(localStorage, roastToSave.id, syncRoastToSupabase)).then(success => {
+      if (success === null) return; // deleted meanwhile: nothing sent
       setSyncStatus(success ? 'success' : 'error');
     });
 
@@ -2203,9 +2289,19 @@ function App() {
     })();
     const updatedRoasts = (existingRoasts || []).filter((r) => r.id !== id);
     localStorage.setItem("roasts", JSON.stringify(updatedRoasts));
+    // An upload in flight or queued may still (re)create the cloud row: leave a
+    // tombstone so the drain deletes it. Otherwise it is just housekeeping.
+    const uploadWasInFlight = hasUploadInFlight(id);
+    if (uploadWasInFlight) markDeleted(localStorage, id, userIdRef.current);
+    else clearPending(localStorage, id);
     
     // Supabase Sync
     setSyncStatus('syncing');
+    // Sent at once, NOT queued behind an upload in flight. If one was in flight it may
+    // land after this DELETE, so a second DELETE is queued behind it; the tombstone
+    // comes off only when THAT one resolves exactly true (not on this reply, which can
+    // arrive out of order).
+    if (uploadWasInFlight) queueCloudDelete(localStorage, id, deleteRoastFromSupabase);
     deleteRoastFromSupabase(id).then((ok) => {
       // The helper resolves false (it never rejects) on a failed cloud delete;
       // surface that as 'error' so a silently-failed delete isn't shown as
@@ -2292,13 +2388,26 @@ function App() {
       const goneBrews = new Set(matchedBrews);
       localStorage.setItem("roasts", JSON.stringify(existingRoasts.filter(r => !goneRoasts.has(r))));
       localStorage.setItem("tastingNotes", JSON.stringify(existingBrews.filter(t => !goneBrews.has(t))));
+      const wasInFlight = new Set();
+      matchedRoasts.forEach((r) => {
+        if (!r || r.id == null) return;
+        // Tombstone when an upload of it is in flight or queued (see handleDeleteRoast).
+        if (hasUploadInFlight(r.id)) {
+          wasInFlight.add(r);
+          markDeleted(localStorage, r.id, userIdRef.current);
+        } else clearPending(localStorage, r.id);
+      });
 
       // A record without a usable id is removed locally (above) but never sent to the cloud: a
       // missing id would otherwise become id=eq.NaN, and null or "" would become id=eq.0.
       const hasCloudId = (x) => x.id != null && x.id !== "" && Number.isFinite(Number(x.id)) && Number(x.id) > 0;
       setSyncStatus('syncing');
       Promise.all([
-        ...matchedRoasts.filter(hasCloudId).map(r => deleteRoastFromSupabase(r.id)),
+        ...matchedRoasts.filter(hasCloudId).map(r => {
+          // Follow-up DELETE behind an upload that was in flight (see handleDeleteRoast).
+          if (wasInFlight.has(r)) queueCloudDelete(localStorage, r.id, deleteRoastFromSupabase);
+          return deleteRoastFromSupabase(r.id);
+        }),
         ...matchedBrews.filter(hasCloudId).map(t => deleteBrewFromSupabase(t.id)),
         ...(bean.id ? [deleteBeanFromSupabase(bean.id)] : []),
       ]).then((results) => setSyncStatus(results.every(Boolean) ? 'success' : 'error'))
@@ -2642,9 +2751,10 @@ function App() {
   // weight onto THAT roast -- found by id in a fresh read of storage, because the
   // launch sync can merge other roasts in ahead of it while the prompt is open -- and
   // sends it through the usual upsert, chained behind the save's own write so a slow
-  // first upsert cannot land last and reset roasted_weight to 0. That is ONE cloud
-  // write with no retry: if the app is killed or offline first, the weight stays on
-  // this device only (a History edit re-syncs it). Anything that is not a real
+  // first upsert cannot land last and reset roasted_weight to 0. The roast is marked
+  // pending just before that write, so if it fails (or the app is killed first) the
+  // pending-upload drain re-sends the stored copy, weight included, at the next launch
+  // or online event. Anything that is not a real
   // weight saves nothing: an empty entry is never stored as 0.
   //
   // The chained write is built when it is SENT, not when SAVE WEIGHT was tapped: it
@@ -2668,7 +2778,10 @@ function App() {
           const latest = readStoredRoasts().find((r) => r && Number(r.id) === Number(roast.id));
           if (!latest) return null; // deleted meanwhile: send nothing, and it is not an error
           setSyncStatus('syncing');
-          return syncRoastToSupabase(latest);
+          // Pending first (a failed send is retried by the drain); the entry clears on success.
+          markPending(localStorage, latest.id, userIdRef.current);
+          // Queued behind every earlier write of this roast; re-reads storage when its turn comes.
+          return enqueueUpload(latest.id, () => sendLatest(localStorage, latest.id, syncRoastToSupabase));
         }).then(success => {
           if (success === null) return; // nothing was sent, so there is no result to show
           setSyncStatus(success ? 'success' : 'error');

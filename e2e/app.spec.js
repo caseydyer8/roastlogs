@@ -2982,8 +2982,10 @@ test("drop weight: a roast edited while its weight write waits is sent as edited
     expect(edited.id).toBe(saved.id);
     expect(edited.beanName).toBe("Edited While Waiting");
     expect(edited.roastedWeight).toBe(190);
-    // The edit's own upsert goes straight out (it is not queued behind the first).
-    await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the edit's own write" }).toBe(2);
+    // The edit's upsert is queued behind the first write of this roast (RL-076: one
+    // roast's writes land in order). Nothing new is sent while the first is held.
+    await page.waitForTimeout(600);
+    expect(cloud.forRoast(saved.id).length, "the edit waits for the held first write").toBe(1);
 
     first.release();
     await expect.poll(() => cloud.forRoast(saved.id).length, { message: "the weight's write, after the first settled" }).toBe(3);
@@ -5157,4 +5159,286 @@ test("fc-eta: at 390x844 the chip sits inside the plot's top-left corner and Mar
   await expectOnScreen(page, "Mark First crack");
   await expectOnScreen(page, "PAUSE");
   expect(await dialLabelsOf(page)).toEqual(["fan", "heat", "temp"]);
+});
+
+// ---------------------------------------------------------------------------
+// Retry roasts that failed to upload (RL-076). A roast saved with bad signal is
+// put on a device-side pending list (localStorage `pendingRoastUploads`) and
+// uploaded later: at launch once the roast fetch works, and on the browser's
+// `online` event. Every test asserts on the network calls the app actually makes
+// (the 'request' event fires even for a request that is then aborted), so none can
+// pass because the app simply sent nothing.
+// ---------------------------------------------------------------------------
+
+// The cloud as these tests need it: every read answers [], and writes to `roasts`
+// are aborted until `cloud.writesOk = true`, then answered 201 (204 for a delete).
+// Page routes win over beforeEach's context abort. Call BEFORE the reload that
+// should see it. Records every roasts GET and every roasts write by id.
+async function retryCloud(page) {
+  const cloud = { writesOk: false, readsOk: true, gets: 0, posts: [], rows: [], deletes: [], events: [], getRows: [], hold: null };
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
+  page.on("request", (req) => {
+    if (!/\/rest\/v1\/roasts(\?|$)/.test(req.url())) return;
+    if (req.method() === "GET") cloud.gets += 1;
+    if (req.method() === "POST") {
+      let body = null;
+      try { body = JSON.parse(req.postData() || "null"); } catch (e) { /* ignore */ }
+      for (const row of [].concat(body || [])) { cloud.posts.push(Number(row.id)); cloud.rows.push(row); }
+    }
+    if (req.method() === "DELETE") cloud.deletes.push(req.url());
+  });
+  await page.route(/\/rest\/v1\/(roasts|tasting_notes|beans|roast_profiles)(\?|$)/, async (route) => {
+    const m = route.request().method();
+    const isRoastWrite = /\/rest\/v1\/roasts(\?|$)/.test(route.request().url()) && m !== "GET" && m !== "OPTIONS";
+    if (m === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (m === "GET" && !cloud.readsOk) return route.abort(); // the launch fetch fails, as when offline
+    if (m === "GET") {
+      const isRoasts = /\/rest\/v1\/roasts(\?|$)/.test(route.request().url());
+      return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(isRoasts ? cloud.getRows : []) });
+    }
+    if (isRoastWrite && !cloud.writesOk) return route.abort();
+    if (isRoastWrite && cloud.hold && m === "POST") { cloud.events.push("POST held"); await cloud.hold; cloud.events.push("POST landed"); }
+    if (isRoastWrite && m === "DELETE") cloud.events.push("DELETE");
+    if (isRoastWrite) return route.fulfill({ status: m === "DELETE" ? 204 : 201, headers: cors, body: "" });
+    return route.fallback();
+  });
+  cloud.postsFor = (id) => cloud.posts.filter((x) => x === Number(id)).length;
+  return cloud;
+}
+
+const pendingList = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("pendingRoastUploads") || "[]"));
+
+// Reload keeping the roasts on the device, the way a real phone does.
+async function reloadKeepingRoasts(page) {
+  await keepRoastsAcrossReload(page);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+}
+
+// Setup + save one roast while the cloud refuses writes; returns the saved roast.
+async function saveRoastWhileWritesFail(page, cloud) {
+  await seedSetup(page, { profiles: [singleStepProfile] }); // reload: launch sync runs against the cloud mock
+  await expect.poll(() => cloud.gets, { message: "launch roast fetch answered" }).toBeGreaterThan(0);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2 });
+  const saved = (await storedRoasts(page))[0];
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the save's own upload attempt" }).toBe(1);
+  return saved;
+}
+
+test("retry: a roast saved while writes fail uploads at the next launch once the cloud answers", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  const saved = await saveRoastWhileWritesFail(page, cloud);
+  // It is on the pending list, and still only on this device.
+  expect((await pendingList(page)).map((e) => Number(e.id))).toEqual([saved.id]);
+
+  cloud.writesOk = true;
+  const before = cloud.postsFor(saved.id);
+  await reloadKeepingRoasts(page);
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "retry POST for the roast at launch", timeout: 15_000 }).toBe(before + 1);
+  await expect.poll(() => pendingList(page), { message: "pending list after a successful upload" }).toEqual([]);
+  // Nothing else was sent: the fixture roast was never pending.
+  expect([...new Set(cloud.posts)].sort()).toEqual([saved.id]);
+  expect((await storedRoasts(page)).some((r) => r.id === saved.id)).toBe(true); // retry never touches the device copy
+});
+
+test("retry: a roast saved offline uploads when the browser comes back online", async ({ page, context }) => {
+  const cloud = await retryCloud(page);
+  // seedSetup reloads: the launch roast fetch must succeed first (the online retry
+  // never runs before it has).
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  await expect.poll(() => cloud.gets).toBeGreaterThan(0);
+  await expect.poll(() => syncDotTitle(page)).not.toBe("Sync status: syncing");
+  // Count real window 'online' events so we know whether setOffline fires one here.
+  await page.evaluate(() => { window.__onlineEvents = 0; window.addEventListener("online", () => { window.__onlineEvents += 1; }); });
+
+  await context.setOffline(true);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2 });
+  const saved = (await storedRoasts(page))[0];
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the save's upload attempt, made offline" }).toBe(1);
+  expect((await pendingList(page)).map((e) => Number(e.id))).toEqual([saved.id]);
+
+  cloud.writesOk = true;
+  await context.setOffline(false);
+  // If this Chromium's setOffline(false) did not fire 'online', dispatch it ourselves
+  // (same event the browser fires on reconnect) and record that we had to.
+  await page.waitForTimeout(500);
+  if ((await page.evaluate(() => window.__onlineEvents)) === 0) {
+    test.info().annotations.push({ type: "online-event", description: "setOffline(false) fired no 'online' event; dispatched window 'online' explicitly" });
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  }
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "retry POST after coming back online", timeout: 15_000 }).toBe(2);
+  await expect.poll(() => pendingList(page)).toEqual([]);
+});
+
+test("retry: a session that launched offline still uploads once the connection is back", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  cloud.readsOk = false; // the launch roast fetch fails, so the launch drain never runs
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  await expect.poll(() => cloud.gets, { message: "launch roast fetch attempted" }).toBeGreaterThan(0);
+  await expect.poll(() => syncDotTitle(page)).toBe("Sync status: error");
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2 });
+  const saved = (await storedRoasts(page))[0];
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the save's own attempt" }).toBe(1);
+  expect((await pendingList(page)).map((e) => Number(e.id))).toEqual([saved.id]);
+
+  // Connection back: reads and writes answer. The page was never reloaded.
+  cloud.readsOk = true;
+  cloud.writesOk = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "retry POST after the offline launch", timeout: 15_000 }).toBe(2);
+  await expect.poll(() => pendingList(page)).toEqual([]);
+});
+
+test("retry: a roast deleted before the connection returns is never uploaded", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  const doomed = await saveRoastWhileWritesFail(page, cloud);
+  // A second roast stays pending as the control: the launch retry demonstrably RAN
+  // and chose between them.
+  await expect(page.getByTestId("roast-setup")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2 });
+  await expect.poll(() => roastCount(page)).toBe(3);
+  const kept = (await storedRoasts(page)).find((r) => r.id !== doomed.id && r.id !== fixtureRoast.id);
+  await expect.poll(() => cloud.postsFor(kept.id)).toBe(1);
+  expect((await pendingList(page)).map((e) => Number(e.id)).sort()).toEqual([doomed.id, kept.id].sort());
+
+  // Delete the first from History, as Case would.
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("Unnamed Bean").nth((await storedRoasts(page))[0].id === doomed.id ? 0 : 1).click();
+  await page.getByRole("button", { name: "DELETE ROAST" }).click();
+  await page.getByRole("button", { name: "DELETE", exact: true }).click();
+  expect((await storedRoasts(page)).some((r) => r.id === doomed.id)).toBe(false);
+
+  cloud.writesOk = true;
+  const keptBefore = cloud.postsFor(kept.id);
+  const doomedBefore = cloud.postsFor(doomed.id);
+  await reloadKeepingRoasts(page);
+  await expect.poll(() => cloud.postsFor(kept.id), { message: "control: the still-pending roast uploads", timeout: 15_000 }).toBe(keptBefore + 1);
+  await page.waitForTimeout(500);
+  expect(cloud.postsFor(doomed.id), "the deleted roast must never be uploaded").toBe(doomedBefore);
+  expect((await pendingList(page)).map((e) => Number(e.id))).not.toContain(doomed.id);
+});
+
+test("retry: a local roast with no pending entry is never pushed at launch", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  cloud.writesOk = true; // even with a cloud that would accept it
+  // beforeEach seeds the fixture roast locally; the cloud has nothing, and no
+  // pending entry exists (an older roast, or one the cloud already took and the
+  // other device deleted). Wait for the launch sync to finish, then count POSTs.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => cloud.gets, { message: "launch roast fetch answered" }).toBeGreaterThan(0);
+  await expect.poll(() => syncDotTitle(page), { timeout: 15_000 }).not.toBe("Sync status: syncing");
+  await page.waitForTimeout(500);
+  expect((await storedRoasts(page)).map((r) => r.id)).toEqual([fixtureRoast.id]);
+  expect(await pendingList(page)).toEqual([]);
+  expect(cloud.posts, "no roast may be pushed that was never marked pending").toEqual([]);
+});
+
+test("retry: the sync dot reads Sync status: error after a launch that leaves a roast pending", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  const saved = await saveRoastWhileWritesFail(page, cloud);
+  const attempts = cloud.postsFor(saved.id);
+
+  // Reload: every read answers, but writes still fail, so the roast stays pending.
+  await reloadKeepingRoasts(page);
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the launch retry was attempted", timeout: 15_000 }).toBe(attempts + 1);
+  await expect.poll(() => syncDotTitle(page), { timeout: 15_000 }).not.toBe("Sync status: syncing");
+  expect(await syncDotTitle(page)).toBe("Sync status: error");
+  expect((await pendingList(page)).map((e) => Number(e.id))).toEqual([saved.id]);
+});
+
+// ---------------------------------------------------------------------------
+// Second-round review fixes (RL-075/076/077): tombstones at launch, the follow-up
+// DELETE, and retried drop-weight writes.
+// ---------------------------------------------------------------------------
+
+const deleteRoastFromHistory = async (page, id) => {
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByText("Unnamed Bean").nth((await storedRoasts(page))[0].id === id ? 0 : 1).click();
+  await page.getByRole("button", { name: "DELETE ROAST" }).click();
+  await page.getByRole("button", { name: "DELETE", exact: true }).click();
+  expect((await storedRoasts(page)).some((r) => r.id === id)).toBe(false);
+};
+
+test("retry: a cloud roast with a delete tombstone is not merged back locally at launch", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  cloud.writesOk = true;
+  const ghostId = 987650001, liveId = 987650002;
+  const row = (id) => ({ id, date: "2026-01-02", bean_name: "Cloud Bean", green_weight: 200, roast_log: [], profile: null });
+  cloud.getRows = [row(ghostId), row(liveId)];
+  // Seed the tombstone for the NEXT load only. Writing it into the page that is already
+  // running lets that old instance's own retry (a visibility or online event) find it,
+  // delete it and clear it before the reload, which made this test flaky.
+  await page.addInitScript((id) => window.localStorage.setItem("pendingRoastUploads", JSON.stringify([{ id, uid: null, deleted: true }])), ghostId);
+  // Carry the device's roasts over the reload, WITHOUT the ghost: the page that is already
+  // running may have merged the mock's rows itself, and reloadKeepingRoasts would copy that.
+  const keep = (await storedRoasts(page)).filter((r) => r.id !== ghostId && r.id !== liveId);
+  await page.addInitScript((roasts) => window.localStorage.setItem("roasts", JSON.stringify(roasts)), keep);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => cloud.gets, { message: "launch roast fetch answered" }).toBeGreaterThan(0);
+  await expect.poll(async () => (await storedRoasts(page)).some((r) => r.id === liveId), { message: "control: the other cloud roast merges", timeout: 15_000 }).toBe(true);
+  expect((await storedRoasts(page)).some((r) => r.id === ghostId), "the tombstoned roast must stay gone").toBe(false);
+});
+
+test("retry: an upload that lands after a delete is followed by a second DELETE, and the tombstone clears only after it", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  cloud.writesOk = true;
+  let release;
+  cloud.hold = new Promise((r) => { release = r; });
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  await expect.poll(() => cloud.gets).toBeGreaterThan(0);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2 });
+  const saved = (await storedRoasts(page))[0];
+  await expect.poll(() => cloud.events.includes("POST held")).toBe(true);
+
+  await deleteRoastFromHistory(page, saved.id);
+  await expect.poll(() => cloud.deletes.length, { message: "the immediate DELETE goes out at once" }).toBe(1);
+  expect((await pendingList(page)).some((e) => Number(e.id) === saved.id && e.deleted === true), "tombstone while the upload is in flight").toBe(true);
+
+  release();
+  await expect.poll(() => cloud.deletes.length, { message: "second DELETE after the upload landed", timeout: 15_000 }).toBe(2);
+  await expect.poll(async () => (await pendingList(page)).some((e) => Number(e.id) === saved.id), { timeout: 15_000 }).toBe(false);
+  expect(cloud.events.slice(-2)).toEqual(["POST landed", "DELETE"]);
+});
+
+async function saveRoastAndEnterWeight(page, cloud, grams) {
+  await seedSetup(page, { profiles: [singleStepProfile] });
+  await expect.poll(() => cloud.gets).toBeGreaterThan(0);
+  await page.getByRole("button", { name: /E2E Profile/ }).click();
+  await runQuickRoast(page, { fan: "5", heat: "6", clockPast: 2, dropWeight: "leave" });
+  const saved = (await storedRoasts(page))[0];
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the save's own attempt" }).toBe(1);
+  await dropWeightInput(page).fill(grams);
+  await saveDropWeightButton(page).click();
+  await expect.poll(() => cloud.postsFor(saved.id), { message: "the weight's own attempt" }).toBe(2);
+  return saved;
+}
+
+test("retry: a drop weight whose write fails reaches the cloud on the next online event, weight set", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  const saved = await saveRoastAndEnterWeight(page, cloud, "190");
+  expect((await pendingList(page)).map((e) => Number(e.id))).toEqual([saved.id]);
+
+  cloud.writesOk = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => cloud.postsFor(saved.id), { timeout: 15_000 }).toBe(3);
+  expect(cloud.rows[cloud.rows.length - 1].roasted_weight).toBe(190);
+  await expect.poll(() => pendingList(page)).toEqual([]);
+});
+
+test("retry: a drop weight that failed is never sent for a roast deleted meanwhile", async ({ page }) => {
+  const cloud = await retryCloud(page);
+  const saved = await saveRoastAndEnterWeight(page, cloud, "190");
+  await deleteRoastFromHistory(page, saved.id);
+  cloud.writesOk = true;
+  const before = cloud.postsFor(saved.id);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.waitForTimeout(1500);
+  expect(cloud.postsFor(saved.id), "a deleted roast must never be uploaded").toBe(before);
 });
